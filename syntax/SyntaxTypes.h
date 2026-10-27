@@ -18,3 +18,12 @@ struct PatternRule {
     TokenRole role = TokenRole::Text;
     QRegularExpression regex;
 };
+
+// A region whose lines are highlighted by another language, e.g. a Markdown
+// fenced code block. `start` captures the language hint (fence info string)
+// in group `languageCapture`; lines up to one matching `end` belong to it.
+struct EmbedRule {
+    QRegularExpression start;
+    QRegularExpression end;
+    int languageCapture = 1;
+};

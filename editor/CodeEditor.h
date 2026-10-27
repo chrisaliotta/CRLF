@@ -7,6 +7,7 @@ class FoldingLayout;
 class Gutter;
 class Highlighter;
 class LanguageDefinition;
+class LanguageRegistry;
 class Theme;
 
 // The editing surface for one document: a QPlainTextEdit with a FoldingLayout
@@ -17,7 +18,9 @@ class CodeEditor : public QPlainTextEdit
     Q_OBJECT
 
 public:
-    explicit CodeEditor(QWidget *parent = nullptr);
+    // The registry resolves languages embedded in this document (e.g. code
+    // fenced inside Markdown).
+    explicit CodeEditor(const LanguageRegistry *registry, QWidget *parent = nullptr);
 
     void setTheme(const Theme *theme);
     void setLanguage(const LanguageDefinition *definition);
@@ -50,6 +53,7 @@ private:
     Gutter *m_gutter = nullptr;
     FoldController *m_foldController = nullptr;
     Highlighter *m_highlighter = nullptr;
+    const LanguageRegistry *m_registry;
     const Theme *m_theme = nullptr;
     const LanguageDefinition *m_definition = nullptr;
     int m_basePointSize = 0;

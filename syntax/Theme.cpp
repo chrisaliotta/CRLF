@@ -20,6 +20,7 @@ Theme Theme::fromJsonFile(const QString &path)
     theme.selection = QColor(editor.value(QLatin1String("selection")).toString());
     theme.gutterBackground = QColor(editor.value(QLatin1String("gutterBackground")).toString());
     theme.gutterForeground = QColor(editor.value(QLatin1String("gutterForeground")).toString());
+    theme.codeBlockBackground = QColor(editor.value(QLatin1String("codeBlockBackground")).toString());
 
     const QJsonObject tokens = root.value(QLatin1String("tokens")).toObject();
     for (auto it = tokens.begin(); it != tokens.end(); ++it) {

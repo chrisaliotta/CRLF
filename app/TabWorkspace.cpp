@@ -123,7 +123,7 @@ void TabWorkspace::openFile(const QString &path)
 
 CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &text)
 {
-    auto *editor = new CodeEditor(this);
+    auto *editor = new CodeEditor(m_registry, this);
     editor->setTheme(m_theme);
     editor->setLanguage(m_registry->definitionForPath(file.path()));
     editor->setLineWrapMode(m_wordWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);

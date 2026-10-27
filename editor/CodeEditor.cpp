@@ -25,8 +25,9 @@ QStyle *foldMarkerStyle()
 
 } // namespace
 
-CodeEditor::CodeEditor(QWidget *parent)
+CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     : QPlainTextEdit(parent)
+    , m_registry(registry)
 {
     // The document must carry a FoldingLayout before setDocument() so the
     // editor wires its scrollbar updates to this layout instance.
@@ -78,7 +79,7 @@ void CodeEditor::setLanguage(const LanguageDefinition *definition)
 void CodeEditor::rebuildHighlighter()
 {
     delete m_highlighter;
-    m_highlighter = new Highlighter(document(), m_definition, m_theme);
+    m_highlighter = new Highlighter(document(), m_definition, m_registry, m_theme);
 }
 
 void CodeEditor::moveCursorOutOfHiddenBlock()

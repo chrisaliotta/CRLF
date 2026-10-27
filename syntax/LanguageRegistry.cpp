@@ -32,3 +32,29 @@ const LanguageDefinition *LanguageRegistry::definitionForName(const QString &nam
     }
     return &m_definitions.at(m_plainTextIndex);
 }
+
+const LanguageDefinition *LanguageRegistry::definitionForFenceInfo(const QString &info) const
+{
+    static const QHash<QString, QString> aliases = {
+        {QStringLiteral("c++"), QStringLiteral("cpp")},
+        {QStringLiteral("c"), QStringLiteral("cpp")},
+        {QStringLiteral("python3"), QStringLiteral("py")},
+        {QStringLiteral("js"), QStringLiteral("json")},
+        {QStringLiteral("jsonc"), QStringLiteral("json")},
+        {QStringLiteral("text"), QStringLiteral("txt")},
+        {QStringLiteral("plaintext"), QStringLiteral("txt")},
+    };
+    const QString key = info.trimmed().toLower();
+    if (m_byExtension.contains(key))
+        return &m_definitions.at(m_byExtension.value(key));
+    for (const LanguageDefinition &def : m_definitions) {
+        if (def.name.toLower() == key)
+            return &def;
+    }
+    return &m_definitions.at(m_byExtension.value(aliases.value(key), m_plainTextIndex));
+}
+
+int LanguageRegistry::indexOf(const LanguageDefinition *definition) const
+{
+    return int(definition - m_definitions.constData());
+}

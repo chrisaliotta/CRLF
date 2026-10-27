@@ -6,7 +6,8 @@
     "currentLine": "#eaf2fb",
     "selection": "#add6ff",
     "gutterBackground": "#f5f5f5",
-    "gutterForeground": "#909090"
+    "gutterForeground": "#909090",
+    "codeBlockBackground": "#f0f2f5"
   },
   "tokens": {
     "text": { "color": "#1f1f1f" },

@@ -22,6 +22,8 @@ public:
     QColor selection;
     QColor gutterBackground;
     QColor gutterForeground;
+    // Behind text inside embedded regions such as Markdown fenced code.
+    QColor codeBlockBackground;
 
 private:
     QHash<int, QTextCharFormat> m_formats;

@@ -25,6 +25,7 @@ public:
     QRegularExpression keywordRegex;
     QRegularExpression typeRegex;
     QList<PatternRule> patterns;
+    QList<EmbedRule> embedded;
 
     FoldMode foldMode = FoldMode::Indent;
     QList<FoldPair> foldPairs;

@@ -61,6 +61,15 @@ LanguageDefinition LanguageDefinition::fromJsonFile(const QString &path)
         def.patterns.append(rule);
     }
 
+    for (const QJsonValue &value : root.value(QLatin1String("embedded")).toArray()) {
+        const QJsonObject obj = value.toObject();
+        EmbedRule rule;
+        rule.start = QRegularExpression(obj.value(QLatin1String("start")).toString());
+        rule.end = QRegularExpression(obj.value(QLatin1String("end")).toString());
+        rule.languageCapture = obj.value(QLatin1String("languageCapture")).toInt(1);
+        def.embedded.append(rule);
+    }
+
     const QJsonObject folding = root.value(QLatin1String("folding")).toObject();
     def.foldMode = foldModeFromName(folding.value(QLatin1String("mode")).toString());
     for (const QJsonValue &value : folding.value(QLatin1String("pairs")).toArray()) {

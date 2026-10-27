@@ -2,6 +2,7 @@
 
 #include "editor/BlockData.h"
 #include "syntax/LanguageDefinition.h"
+#include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
 
 namespace {
@@ -30,9 +31,11 @@ int headingLevel(const QString &text)
 
 } // namespace
 
-Highlighter::Highlighter(QTextDocument *document, const LanguageDefinition *definition, const Theme *theme)
+Highlighter::Highlighter(QTextDocument *document, const LanguageDefinition *definition,
+                         const LanguageRegistry *registry, const Theme *theme)
     : QSyntaxHighlighter(document)
     , m_definition(definition)
+    , m_registry(registry)
     , m_theme(theme)
 {
 }
@@ -41,33 +44,66 @@ void Highlighter::highlightBlock(const QString &text)
 {
     const int packedIn = previousBlockState();
     const int lexerIn = packedIn < 0 ? kLexerNormal : (packedIn & 0xFF);
-    const int depthIn = packedIn < 0 ? 0 : (packedIn >> 8);
+    const int embeddedIn = packedIn < 0 ? 0 : ((packedIn >> 8) & 0xFF);
+    const int foldIn = packedIn < 0 ? 0 : (packedIn >> 16);
 
-    applyPatternRules(text);
+    int depth = foldIn;
+    int minDepth = foldIn;
+    int lexerOut = kLexerNormal;
+    int embeddedOut = 0;
+    Region region = Region::Outside;
 
-    int depth = depthIn;
-    int minDepth = depthIn;
-    const int lexerOut = scanLexicalRegions(text, lexerIn, depth, minDepth);
+    if (embeddedIn > 0) {
+        // A closing fence ends the region even mid-comment in the inner
+        // language, matching how Markdown renderers treat it.
+        if (matchEmbedEnd(text)) {
+            region = Region::Closing;
+            formatFenceLine(text);
+        } else {
+            region = Region::Inside;
+            const LanguageDefinition *inner = m_registry->definitionAt(embeddedIn - 1);
+            applyPatternRules(text, inner);
+            // The inner language's fold delimiters must not disturb the
+            // outer fold state, so they count into throwaway counters.
+            int innerDepth = 0;
+            int innerMinDepth = 0;
+            lexerOut = scanLexicalRegions(text, inner, lexerIn, innerDepth, innerMinDepth);
+            embeddedOut = embeddedIn;
+            applyBackground(text.length(), m_theme->codeBlockBackground);
+        }
+    } else {
+        const int opened = lexerIn == kLexerNormal ? matchEmbedStart(text) : -1;
+        if (opened >= 0) {
+            region = Region::Opening;
+            embeddedOut = opened + 1;
+            formatFenceLine(text);
+        } else {
+            applyPatternRules(text, m_definition);
+            lexerOut = scanLexicalRegions(text, m_definition, lexerIn, depth, minDepth);
+        }
+    }
 
-    int foldingIndent = qMax(minDepth, 0);
+    // Fold level: the base comes from the language's fold mode; lines inside
+    // an embedded region sit one deeper so the opening fence folds them.
+    int base = qMax(minDepth, 0);
     switch (m_definition->foldMode) {
     case FoldMode::Indent:
-        foldingIndent = indentFoldLevel();
+        base = indentFoldLevel();
         break;
     case FoldMode::Heading: {
         // The carried state is a bitmask of open heading levels (bit L-1).
         // A heading closes every level >= its own and sits at the depth of
         // its remaining ancestors, so siblings align even when levels are
-        // skipped (e.g. "##" with no "#"); its body sits one deeper. A '#'
-        // inside a fenced code block is not a heading.
-        int open = depthIn;
-        const int level = lexerIn == kLexerNormal ? headingLevel(text) : 0;
+        // skipped (e.g. "##" with no "#"); its body sits one deeper. Lines
+        // inside a fence are never headings.
+        int open = foldIn;
+        const int level = region == Region::Outside ? headingLevel(text) : 0;
         if (level > 0) {
             open &= (1 << (level - 1)) - 1;
-            foldingIndent = qPopulationCount(quint32(open));
+            base = qPopulationCount(quint32(open));
             open |= 1 << (level - 1);
         } else {
-            foldingIndent = qPopulationCount(quint32(open));
+            base = qPopulationCount(quint32(open));
         }
         depth = open;
         break;
@@ -75,12 +111,55 @@ void Highlighter::highlightBlock(const QString &text)
     default:
         break;
     }
-    BlockData::get(currentBlock())->foldingIndent = foldingIndent;
+    BlockData::get(currentBlock())->foldingIndent = region == Region::Inside ? base + 1 : base;
 
-    setCurrentBlockState((qMax(depth, 0) << 8) | lexerOut);
+    setCurrentBlockState((qMax(depth, 0) << 16) | (embeddedOut << 8) | lexerOut);
 }
 
-void Highlighter::applyPatternRules(const QString &text)
+int Highlighter::matchEmbedStart(const QString &text) const
+{
+    for (const EmbedRule &rule : m_definition->embedded) {
+        const QRegularExpressionMatch match = rule.start.match(text);
+        if (match.hasMatch()) {
+            const LanguageDefinition *inner =
+                m_registry->definitionForFenceInfo(match.captured(rule.languageCapture));
+            return m_registry->indexOf(inner);
+        }
+    }
+    return -1;
+}
+
+bool Highlighter::matchEmbedEnd(const QString &text) const
+{
+    for (const EmbedRule &rule : m_definition->embedded) {
+        if (rule.end.match(text).hasMatch())
+            return true;
+    }
+    return false;
+}
+
+void Highlighter::formatFenceLine(const QString &text)
+{
+    QTextCharFormat format = m_theme->tokenFormat(TokenRole::String);
+    format.setBackground(m_theme->codeBlockBackground);
+    setFormat(0, text.length(), format);
+}
+
+void Highlighter::applyBackground(int length, const QColor &color)
+{
+    int start = 0;
+    while (start < length) {
+        QTextCharFormat run = format(start);
+        int end = start + 1;
+        while (end < length && format(end) == run)
+            ++end;
+        run.setBackground(color);
+        setFormat(start, end - start, run);
+        start = end;
+    }
+}
+
+void Highlighter::applyPatternRules(const QString &text, const LanguageDefinition *def)
 {
     const auto applyRegex = [this, &text](const QRegularExpression &regex, TokenRole role) {
         if (regex.pattern().isEmpty())
@@ -93,13 +172,14 @@ void Highlighter::applyPatternRules(const QString &text)
         }
     };
 
-    applyRegex(m_definition->keywordRegex, TokenRole::Keyword);
-    applyRegex(m_definition->typeRegex, TokenRole::Type);
-    for (const PatternRule &rule : m_definition->patterns)
+    applyRegex(def->keywordRegex, TokenRole::Keyword);
+    applyRegex(def->typeRegex, TokenRole::Type);
+    for (const PatternRule &rule : def->patterns)
         applyRegex(rule.regex, rule.role);
 }
 
-int Highlighter::scanLexicalRegions(const QString &text, int lexerIn, int &depth, int &minDepth)
+int Highlighter::scanLexicalRegions(const QString &text, const LanguageDefinition *def,
+                                    int lexerIn, int &depth, int &minDepth)
 {
     const QTextCharFormat commentFormat = m_theme->tokenFormat(TokenRole::Comment);
     const QTextCharFormat stringFormat = m_theme->tokenFormat(TokenRole::String);
@@ -108,15 +188,15 @@ int Highlighter::scanLexicalRegions(const QString &text, int lexerIn, int &depth
 
     // Finish a construct carried over from the previous block.
     if (lexerIn == kLexerInBlockComment) {
-        const int end = text.indexOf(m_definition->blockCommentEnd);
+        const int end = text.indexOf(def->blockCommentEnd);
         if (end < 0) {
             setFormat(0, length, commentFormat);
             return kLexerInBlockComment;
         }
-        pos = end + m_definition->blockCommentEnd.length();
+        pos = end + def->blockCommentEnd.length();
         setFormat(0, pos, commentFormat);
     } else if (lexerIn >= kLexerInString) {
-        const StringRule &rule = m_definition->strings.at(lexerIn - kLexerInString);
+        const StringRule &rule = def->strings.at(lexerIn - kLexerInString);
         int scan = 0;
         int close = -1;
         while (scan < length) {
@@ -139,27 +219,26 @@ int Highlighter::scanLexicalRegions(const QString &text, int lexerIn, int &depth
     }
 
     while (pos < length) {
-        if (matchesAt(text, pos, m_definition->lineComment)) {
+        if (matchesAt(text, pos, def->lineComment)) {
             setFormat(pos, length - pos, commentFormat);
             return kLexerNormal;
         }
 
-        if (matchesAt(text, pos, m_definition->blockCommentStart)) {
-            const int end = text.indexOf(m_definition->blockCommentEnd,
-                                         pos + m_definition->blockCommentStart.length());
+        if (matchesAt(text, pos, def->blockCommentStart)) {
+            const int end = text.indexOf(def->blockCommentEnd, pos + def->blockCommentStart.length());
             if (end < 0) {
                 setFormat(pos, length - pos, commentFormat);
                 return kLexerInBlockComment;
             }
-            const int close = end + m_definition->blockCommentEnd.length();
+            const int close = end + def->blockCommentEnd.length();
             setFormat(pos, close - pos, commentFormat);
             pos = close;
             continue;
         }
 
         bool consumed = false;
-        for (int i = 0; i < m_definition->strings.size(); ++i) {
-            const StringRule &rule = m_definition->strings.at(i);
+        for (int i = 0; i < def->strings.size(); ++i) {
+            const StringRule &rule = def->strings.at(i);
             if (!matchesAt(text, pos, rule.start))
                 continue;
             int scan = pos + rule.start.length();
@@ -190,9 +269,9 @@ int Highlighter::scanLexicalRegions(const QString &text, int lexerIn, int &depth
         if (consumed)
             continue;
 
-        if (m_definition->foldMode == FoldMode::Delimiter) {
+        if (def->foldMode == FoldMode::Delimiter) {
             bool moved = false;
-            for (const FoldPair &pair : m_definition->foldPairs) {
+            for (const FoldPair &pair : def->foldPairs) {
                 if (matchesAt(text, pos, pair.open)) {
                     ++depth;
                     pos += pair.open.length();
