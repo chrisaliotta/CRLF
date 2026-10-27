@@ -1,0 +1,53 @@
+{
+  "name": "C#",
+  "extensions": ["cs", "csx"],
+  "lineComment": "//",
+  "blockComment": { "start": "/*", "end": "*/" },
+  "strings": [
+    { "start": "$\"\"\"", "end": "\"\"\"", "multiline": true },
+    { "start": "\"\"\"", "end": "\"\"\"", "multiline": true },
+    { "start": "$@\"", "end": "\"", "multiline": true },
+    { "start": "@$\"", "end": "\"", "multiline": true },
+    { "start": "@\"", "end": "\"", "multiline": true },
+    { "start": "$\"", "end": "\"", "escape": "\\" },
+    { "start": "\"", "end": "\"", "escape": "\\" },
+    { "start": "'", "end": "'", "escape": "\\" }
+  ],
+  "keywords": [
+    "abstract", "as", "base", "break", "case", "catch", "checked", "class",
+    "const", "continue", "default", "delegate", "do", "else", "enum", "event",
+    "explicit", "extern", "false", "finally", "fixed", "for", "foreach",
+    "goto", "if", "implicit", "in", "interface", "internal", "is", "lock",
+    "namespace", "new", "null", "operator", "out", "override", "params",
+    "private", "protected", "public", "readonly", "ref", "return", "sealed",
+    "sizeof", "stackalloc", "static", "struct", "switch", "this", "throw",
+    "true", "try", "typeof", "unchecked", "unsafe", "using", "virtual",
+    "volatile", "while", "add", "alias", "and", "args", "ascending", "async",
+    "await", "by", "descending", "equals", "extension", "field", "file",
+    "from", "get", "global", "group", "init", "into", "join", "let",
+    "managed", "nameof", "not", "notnull", "on", "or", "orderby", "partial",
+    "record", "remove", "required", "scoped", "select", "set", "unmanaged",
+    "value", "when", "where", "with", "yield"
+  ],
+  "types": [
+    "bool", "byte", "char", "decimal", "double", "dynamic", "float", "int",
+    "long", "nint", "nuint", "object", "sbyte", "short", "string", "uint",
+    "ulong", "ushort", "var", "void", "Boolean", "Byte", "Char", "Decimal",
+    "Double", "Int16", "Int32", "Int64", "IntPtr", "Object", "SByte",
+    "Single", "String", "UInt16", "UInt32", "UInt64", "UIntPtr"
+  ],
+  "patterns": [
+    { "role": "number", "regex": "\\b(0[xX][0-9a-fA-F_]+|0[bB][01_]+|\\d[\\d_]*(\\.[\\d_]+)?([eE][+-]?\\d[\\d_]*)?)[fFdDmMuUlL]*\\b" },
+    { "role": "preprocessor", "regex": "^\\s*#\\s*\\w+" },
+    { "role": "preprocessor", "regex": "(?<![\\w\\]])\\[[A-Za-z_][\\w.]*" },
+    { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\s*\\()" },
+    { "role": "text", "regex": "@[A-Za-z_]\\w*" }
+  ],
+  "folding": {
+    "mode": "delimiter",
+    "pairs": [
+      { "open": "{", "close": "}" },
+      { "open": "#region", "close": "#endregion" }
+    ]
+  }
+}

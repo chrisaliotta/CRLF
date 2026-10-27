@@ -38,6 +38,8 @@ const LanguageDefinition *LanguageRegistry::definitionForFenceInfo(const QString
     static const QHash<QString, QString> aliases = {
         {QStringLiteral("c++"), QStringLiteral("cpp")},
         {QStringLiteral("c"), QStringLiteral("cpp")},
+        {QStringLiteral("c#"), QStringLiteral("cs")},
+        {QStringLiteral("csharp"), QStringLiteral("cs")},
         {QStringLiteral("python3"), QStringLiteral("py")},
         {QStringLiteral("js"), QStringLiteral("json")},
         {QStringLiteral("jsonc"), QStringLiteral("json")},

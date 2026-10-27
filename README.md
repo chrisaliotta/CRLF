@@ -7,7 +7,7 @@ bundled JSON language definitions and collapsible (foldable) text regions.
 ## Features
 
 - Tabbed editing: closable, reorderable tabs with dirty markers and save prompts
-- Syntax highlighting for C++, Python, JSON, XML/HTML, SQL, Markdown, and plain text
+- Syntax highlighting for C++, C#, Python, JSON, XML/HTML, SQL, Markdown, and plain text
 - Code folding: delimiter-based (braces/brackets) or indentation-based per language,
   toggled from the gutter, plus Fold All / Unfold All
 - Line-number gutter with clickable fold markers
