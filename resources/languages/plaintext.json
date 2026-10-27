@@ -1,0 +1,5 @@
+{
+  "name": "Plain Text",
+  "extensions": ["txt", "log", "text", "ini", "cfg", "conf"],
+  "folding": { "mode": "indent" }
+}

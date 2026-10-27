@@ -1,0 +1,37 @@
+{
+  "name": "C++",
+  "extensions": ["cpp", "cxx", "cc", "c", "hpp", "hxx", "hh", "h", "inl"],
+  "lineComment": "//",
+  "blockComment": { "start": "/*", "end": "*/" },
+  "strings": [
+    { "start": "\"", "end": "\"", "escape": "\\" },
+    { "start": "'", "end": "'", "escape": "\\" }
+  ],
+  "keywords": [
+    "alignas", "alignof", "asm", "break", "case", "catch", "class", "concept",
+    "const", "consteval", "constexpr", "constinit", "const_cast", "continue",
+    "co_await", "co_return", "co_yield", "decltype", "default", "delete", "do",
+    "dynamic_cast", "else", "enum", "explicit", "export", "extern", "false",
+    "final", "for", "friend", "goto", "if", "inline", "mutable", "namespace",
+    "new", "noexcept", "nullptr", "operator", "override", "private",
+    "protected", "public", "reinterpret_cast", "requires", "return", "sizeof",
+    "static", "static_assert", "static_cast", "struct", "switch", "template",
+    "this", "thread_local", "throw", "true", "try", "typedef", "typeid",
+    "typename", "union", "using", "virtual", "volatile", "while"
+  ],
+  "types": [
+    "auto", "bool", "char", "char8_t", "char16_t", "char32_t", "double",
+    "float", "int", "long", "short", "signed", "unsigned", "void", "wchar_t",
+    "size_t", "ptrdiff_t", "int8_t", "int16_t", "int32_t", "int64_t",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t", "qreal", "qsizetype"
+  ],
+  "patterns": [
+    { "role": "number", "regex": "\\b(0[xXbB][0-9a-fA-F']+|\\d[\\d']*(\\.\\d+)?([eE][+-]?\\d+)?)[fFuUlLzZ]*\\b" },
+    { "role": "preprocessor", "regex": "^\\s*#\\s*\\w+" },
+    { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\s*\\()" }
+  ],
+  "folding": {
+    "mode": "delimiter",
+    "pairs": [{ "open": "{", "close": "}" }]
+  }
+}

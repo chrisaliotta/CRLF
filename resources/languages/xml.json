@@ -1,0 +1,15 @@
+{
+  "name": "XML",
+  "extensions": ["xml", "html", "htm", "svg", "ui", "qrc", "xaml", "csproj", "config"],
+  "blockComment": { "start": "<!--", "end": "-->" },
+  "strings": [
+    { "start": "\"", "end": "\"" },
+    { "start": "'", "end": "'" }
+  ],
+  "patterns": [
+    { "role": "keyword", "regex": "</?[A-Za-z][\\w.:-]*|/?>" },
+    { "role": "type", "regex": "\\b[A-Za-z_][\\w.:-]*(?=\\s*=)" },
+    { "role": "number", "regex": "&#?\\w+;" }
+  ],
+  "folding": { "mode": "indent" }
+}

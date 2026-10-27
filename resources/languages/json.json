@@ -1,0 +1,19 @@
+{
+  "name": "JSON",
+  "extensions": ["json", "jsonc", "geojson"],
+  "lineComment": "//",
+  "strings": [
+    { "start": "\"", "end": "\"", "escape": "\\" }
+  ],
+  "keywords": ["true", "false", "null"],
+  "patterns": [
+    { "role": "number", "regex": "-?\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?\\b" }
+  ],
+  "folding": {
+    "mode": "delimiter",
+    "pairs": [
+      { "open": "{", "close": "}" },
+      { "open": "[", "close": "]" }
+    ]
+  }
+}

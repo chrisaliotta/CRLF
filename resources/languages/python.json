@@ -1,0 +1,29 @@
+{
+  "name": "Python",
+  "extensions": ["py", "pyw", "pyi"],
+  "lineComment": "#",
+  "strings": [
+    { "start": "\"\"\"", "end": "\"\"\"", "escape": "\\", "multiline": true },
+    { "start": "'''", "end": "'''", "escape": "\\", "multiline": true },
+    { "start": "\"", "end": "\"", "escape": "\\" },
+    { "start": "'", "end": "'", "escape": "\\" }
+  ],
+  "keywords": [
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break",
+    "case", "class", "continue", "def", "del", "elif", "else", "except",
+    "finally", "for", "from", "global", "if", "import", "in", "is", "lambda",
+    "match", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+    "while", "with", "yield"
+  ],
+  "types": [
+    "bool", "bytes", "dict", "float", "frozenset", "int", "list", "object",
+    "set", "str", "tuple", "self", "cls", "print", "len", "range",
+    "enumerate", "zip", "map", "filter", "super", "isinstance", "type"
+  ],
+  "patterns": [
+    { "role": "number", "regex": "\\b(0[xXbBoO][0-9a-fA-F_]+|\\d[\\d_]*(\\.\\d+)?([eE][+-]?\\d+)?[jJ]?)\\b" },
+    { "role": "preprocessor", "regex": "^\\s*@[\\w.]+" },
+    { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\()" }
+  ],
+  "folding": { "mode": "indent" }
+}

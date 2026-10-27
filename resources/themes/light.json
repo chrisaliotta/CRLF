@@ -1,0 +1,22 @@
+{
+  "name": "Light",
+  "editor": {
+    "background": "#ffffff",
+    "foreground": "#1f1f1f",
+    "currentLine": "#eaf2fb",
+    "selection": "#add6ff",
+    "gutterBackground": "#f5f5f5",
+    "gutterForeground": "#909090"
+  },
+  "tokens": {
+    "text": { "color": "#1f1f1f" },
+    "keyword": { "color": "#0000ff", "bold": true },
+    "type": { "color": "#267f99" },
+    "string": { "color": "#a31515" },
+    "number": { "color": "#098658" },
+    "comment": { "color": "#008000", "italic": true },
+    "preprocessor": { "color": "#af00db" },
+    "function": { "color": "#795e26" },
+    "operator": { "color": "#1f1f1f" }
+  }
+}

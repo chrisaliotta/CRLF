@@ -1,0 +1,16 @@
+{
+  "name": "Markdown",
+  "extensions": ["md", "markdown"],
+  "strings": [
+    { "start": "```", "end": "```", "multiline": true }
+  ],
+  "patterns": [
+    { "role": "keyword", "regex": "^#{1,6}\\s.*$" },
+    { "role": "type", "regex": "\\*\\*[^*]+\\*\\*|__[^_]+__" },
+    { "role": "string", "regex": "`[^`]+`" },
+    { "role": "function", "regex": "\\[[^\\]]*\\]\\([^)]*\\)" },
+    { "role": "operator", "regex": "^\\s*([-*+]|\\d+\\.)\\s" },
+    { "role": "comment", "regex": "^>.*$" }
+  ],
+  "folding": { "mode": "heading" }
+}

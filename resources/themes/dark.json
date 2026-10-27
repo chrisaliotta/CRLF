@@ -1,0 +1,22 @@
+{
+  "name": "Dark",
+  "editor": {
+    "background": "#1e1e1e",
+    "foreground": "#d4d4d4",
+    "currentLine": "#2a2a2e",
+    "selection": "#264f78",
+    "gutterBackground": "#1e1e1e",
+    "gutterForeground": "#6e7681"
+  },
+  "tokens": {
+    "text": { "color": "#d4d4d4" },
+    "keyword": { "color": "#569cd6", "bold": true },
+    "type": { "color": "#4ec9b0" },
+    "string": { "color": "#ce9178" },
+    "number": { "color": "#b5cea8" },
+    "comment": { "color": "#6a9955", "italic": true },
+    "preprocessor": { "color": "#c586c0" },
+    "function": { "color": "#dcdcaa" },
+    "operator": { "color": "#d4d4d4" }
+  }
+}

@@ -1,0 +1,53 @@
+; Inno Setup script template. CMake configures it into the build directory as
+; CRLF.iss; compile that copy with ISCC after `cmake --install`.
+
+#define AppExe "{app}\bin\@PROJECT_NAME@.exe"
+
+[Setup]
+; Never change AppId: it is how later versions find and upgrade this install.
+AppId={{828469E7-A885-42DF-A307-BC03E74134BB}
+AppName=@PROJECT_NAME@
+AppVersion=@PROJECT_VERSION@
+DefaultDirName={autopf}\@PROJECT_NAME@
+DisableProgramGroupPage=yes
+PrivilegesRequiredOverridesAllowed=dialog
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=@INSTALLER_ICON@
+UninstallDisplayIcon={#AppExe}
+OutputDir=@INSTALLER_OUTPUT_DIR@
+OutputBaseFilename=@PROJECT_NAME@-@PROJECT_VERSION@-Setup
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+CloseApplications=yes
+ChangesAssociations=yes
+
+[Tasks]
+Name: desktopicon; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: contextmenu; Description: "Add ""Open with @PROJECT_NAME@"" to the Explorer context menu"; GroupDescription: "Explorer integration:"
+
+[InstallDelete]
+; Upgrades replace the whole deployment so files dropped by a newer build
+; (e.g. an unused Qt plugin) do not linger.
+Type: filesandordirs; Name: "{app}\bin"
+Type: filesandordirs; Name: "{app}\plugins"
+Type: filesandordirs; Name: "{app}\translations"
+
+[Files]
+Source: "@INSTALLER_STAGING_DIR@\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{autoprograms}\@PROJECT_NAME@"; Filename: "{#AppExe}"
+Name: "{autodesktop}\@PROJECT_NAME@"; Filename: "{#AppExe}"; Tasks: desktopicon
+
+[Registry]
+; Lists the app in Explorer's "Open with" chooser.
+Root: HKA; Subkey: "Software\Classes\Applications\@PROJECT_NAME@.exe"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Applications\@PROJECT_NAME@.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{#AppExe}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\*\shell\@PROJECT_NAME@"; ValueType: string; ValueName: ""; ValueData: "Open with @PROJECT_NAME@"; Flags: uninsdeletekey; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\*\shell\@PROJECT_NAME@"; ValueType: string; ValueName: "Icon"; ValueData: """{#AppExe}"""; Tasks: contextmenu
+Root: HKA; Subkey: "Software\Classes\*\shell\@PROJECT_NAME@\command"; ValueType: string; ValueName: ""; ValueData: """{#AppExe}"" ""%1"""; Tasks: contextmenu
+
+[Run]
+Filename: "{#AppExe}"; Description: "{cm:LaunchProgram,@PROJECT_NAME@}"; Flags: nowait postinstall skipifsilent
