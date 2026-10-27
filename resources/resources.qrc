@@ -6,6 +6,7 @@
         <file>languages/xml.json</file>
         <file>languages/markdown.json</file>
         <file>languages/plaintext.json</file>
+        <file>languages/sql.json</file>
         <file>themes/dark.json</file>
         <file>themes/light.json</file>
         <file>images/CRLF_basic.png</file>

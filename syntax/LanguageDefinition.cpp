@@ -7,14 +7,15 @@
 
 namespace {
 
-QRegularExpression wordListRegex(const QJsonArray &words)
+QRegularExpression wordListRegex(const QJsonArray &words, QRegularExpression::PatternOptions options)
 {
     if (words.isEmpty())
         return QRegularExpression();
     QStringList escaped;
     for (const QJsonValue &word : words)
         escaped.append(QRegularExpression::escape(word.toString()));
-    return QRegularExpression(QStringLiteral("\\b(?:%1)\\b").arg(escaped.join(QLatin1Char('|'))));
+    return QRegularExpression(QStringLiteral("\\b(?:%1)\\b").arg(escaped.join(QLatin1Char('|'))),
+                              options);
 }
 
 } // namespace
@@ -45,8 +46,12 @@ LanguageDefinition LanguageDefinition::fromJsonFile(const QString &path)
         def.strings.append(rule);
     }
 
-    def.keywordRegex = wordListRegex(root.value(QLatin1String("keywords")).toArray());
-    def.typeRegex = wordListRegex(root.value(QLatin1String("types")).toArray());
+    // Languages such as SQL treat SELECT, select and Select as the same word.
+    const QRegularExpression::PatternOptions wordOptions =
+        root.value(QLatin1String("ignoreCase")).toBool() ? QRegularExpression::CaseInsensitiveOption
+                                                         : QRegularExpression::NoPatternOption;
+    def.keywordRegex = wordListRegex(root.value(QLatin1String("keywords")).toArray(), wordOptions);
+    def.typeRegex = wordListRegex(root.value(QLatin1String("types")).toArray(), wordOptions);
 
     for (const QJsonValue &value : root.value(QLatin1String("patterns")).toArray()) {
         const QJsonObject obj = value.toObject();

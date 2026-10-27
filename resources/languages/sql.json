@@ -1,0 +1,41 @@
+{
+  "name": "SQL",
+  "extensions": ["sql", "ddl", "dml", "pgsql", "plsql", "tsql", "mysql"],
+  "ignoreCase": true,
+  "lineComment": "--",
+  "blockComment": { "start": "/*", "end": "*/" },
+  "strings": [
+    { "start": "'", "end": "'", "multiline": true }
+  ],
+  "keywords": [
+    "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BEGIN", "BETWEEN", "BY",
+    "CASCADE", "CASE", "CHECK", "COLUMN", "COMMIT", "CONSTRAINT", "CREATE",
+    "CROSS", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURSOR",
+    "DATABASE", "DECLARE", "DEFAULT", "DELETE", "DESC", "DISTINCT", "DROP",
+    "ELSE", "END", "ESCAPE", "EXCEPT", "EXEC", "EXECUTE", "EXISTS", "FALSE",
+    "FETCH", "FIRST", "FOR", "FOREIGN", "FROM", "FULL", "FUNCTION", "GO",
+    "GRANT", "GROUP", "HAVING", "IF", "IN", "INDEX", "INNER", "INSERT",
+    "INTERSECT", "INTO", "IS", "JOIN", "KEY", "LAST", "LEFT", "LIKE", "LIMIT",
+    "MERGE", "NEXT", "NOT", "NULL", "NULLS", "OFFSET", "ON", "ONLY", "OR",
+    "ORDER", "OUTER", "OVER", "PARTITION", "PRIMARY", "PROCEDURE", "RECURSIVE",
+    "REFERENCES", "REPLACE", "RETURN", "RETURNS", "REVOKE", "RIGHT",
+    "ROLLBACK", "ROWS", "SCHEMA", "SELECT", "SET", "TABLE", "THEN", "TOP",
+    "TRANSACTION", "TRIGGER", "TRUE", "TRUNCATE", "UNION", "UNIQUE", "UPDATE",
+    "USING", "VALUES", "VIEW", "WHEN", "WHERE", "WHILE", "WINDOW", "WITH"
+  ],
+  "types": [
+    "BIGINT", "BINARY", "BIT", "BLOB", "BOOLEAN", "BOOL", "CHAR", "CHARACTER",
+    "CLOB", "DATE", "DATETIME", "DATETIME2", "DATETIMEOFFSET", "DECIMAL",
+    "DOUBLE", "FLOAT", "INT", "INTEGER", "INTERVAL", "JSON", "JSONB", "MONEY",
+    "NCHAR", "NUMERIC", "NVARCHAR", "REAL", "SERIAL", "SMALLINT", "TEXT",
+    "TIME", "TIMESTAMP", "TIMESTAMPTZ", "TINYINT", "UNIQUEIDENTIFIER", "UUID",
+    "VARBINARY", "VARCHAR", "XML"
+  ],
+  "patterns": [
+    { "role": "number", "regex": "\\b(0[xX][0-9a-fA-F]+|\\d+(\\.\\d+)?([eE][+-]?\\d+)?)\\b" },
+    { "role": "preprocessor", "regex": "@@?[A-Za-z_]\\w*|(?<![:\\w]):[A-Za-z_]\\w*|\\$\\d+" },
+    { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\()" },
+    { "role": "text", "regex": "\"[^\"]*\"|\\[[^\\]]*\\]|`[^`]*`" }
+  ],
+  "folding": { "mode": "indent" }
+}

@@ -7,7 +7,7 @@ bundled JSON language definitions and collapsible (foldable) text regions.
 ## Features
 
 - Tabbed editing: closable, reorderable tabs with dirty markers and save prompts
-- Syntax highlighting for C++, Python, JSON, XML/HTML, Markdown, and plain text
+- Syntax highlighting for C++, Python, JSON, XML/HTML, SQL, Markdown, and plain text
 - Code folding: delimiter-based (braces/brackets) or indentation-based per language,
   toggled from the gutter, plus Fold All / Unfold All
 - Line-number gutter with clickable fold markers
@@ -75,4 +75,5 @@ cascade rehighlighting exactly as far as needed.
 Drop a new JSON file into `resources/languages/`, register it in
 `resources/resources.qrc`, and rebuild. See `cpp.json` for the schema:
 keywords, types, string/comment delimiters, regex patterns per token role, and
-a folding mode (`delimiter` with pairs, or `indent`).
+a folding mode (`delimiter` with pairs, or `indent`). Set `"ignoreCase": true`
+for languages whose keywords and types are case-insensitive (see `sql.json`).
