@@ -1,18 +1,24 @@
 # CRLF
 
 A lightweight tabbed text editor for Windows built with Qt Widgets, intended as a
-replacement for Notepad and Notepad++. It provides syntax highlighting driven by
+minimalist replacement for Notepad and Notepad++. It provides syntax highlighting driven by
 bundled JSON language definitions and collapsible (foldable) text regions.
 
 ## Features
 
 - Tabbed editing: closable, reorderable tabs with dirty markers and save prompts
-- Syntax highlighting for C++, C#, Python, JSON, XML/HTML, SQL, Markdown, and plain text
+- Explorer panel (File > Open Folder, toggle with View > Explorer or Ctrl+B):
+  a file tree scoped to the chosen folder; click a file to open it. Expand/collapse
+  all, rescope to a subfolder or the parent, reveal in File Explorer, and cut, copy,
+  paste, rename, or delete (to the Recycle Bin) from the context menu
+- Syntax highlighting for C++, C#, Python, JSON, XML/HTML, SQL, SQL Run (`.sqlrun`), Markdown, and plain text
 - Code folding: delimiter-based (braces/brackets) or indentation-based per language,
   toggled from the gutter, plus Fold All / Unfold All
 - Line-number gutter with clickable fold markers
-- Find and replace with wrap-around, Go to Line
-- Dark and light themes (View > Theme)
+- Find and replace (top of the window) with wrap-around, match highlighting,
+  and Find All results that jump to each match; Go to Line
+- Dark, Cool Dark, and light themes (View > Theme). Cool Dark uses the
+  blue-black of the application icon
 - Word wrap toggle, zoom in/out/reset
 - Status bar with cursor position, language, encoding, and line endings
 - Session persistence (on by default): unsaved edits, open tabs, and cursor
@@ -70,10 +76,20 @@ whether a brace sits inside a string or comment, so it computes a per-block
 consume. Brace depth is bit-packed into the highlighter's block state so edits
 cascade rehighlighting exactly as far as needed.
 
-## Adding a language
+## Adding a language or theme
 
-Drop a new JSON file into `resources/languages/`, register it in
-`resources/resources.qrc`, and rebuild. See `cpp.json` for the schema:
+Drop a JSON file into the program folder and restart. Languages go in `styles`,
+themes in `themes`. A dev build reads those folders next to `CRLF.exe`; an
+installed copy reads them from the install folder, one level above `bin`
+(`C:\Program Files\CRLF\styles` and `themes`), so an upgrade that replaces
+`bin` leaves them in place. A file whose `name` matches a built-in language or
+theme replaces it; any other name is added to the Language or Theme menu.
+
+The same files can instead be compiled in: drop a language into
+`resources/languages/` (or a theme into `resources/themes/`), register it in
+`resources/resources.qrc`, and rebuild. See `cpp.json` for the language schema:
 keywords, types, string/comment delimiters, regex patterns per token role, and
 a folding mode (`delimiter` with pairs, or `indent`). Set `"ignoreCase": true`
-for languages whose keywords and types are case-insensitive (see `sql.json`).
+for languages whose keywords and types are case-insensitive (see `sql.json`), and
+`"insideStrings": true` on a pattern to also color its matches inside quoted strings
+(see the `@@variable` rule in `sqlrun.json`).

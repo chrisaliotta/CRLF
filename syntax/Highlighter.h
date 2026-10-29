@@ -38,6 +38,9 @@ private:
     enum class Region { Outside, Opening, Inside, Closing };
 
     void applyPatternRules(const QString &text, const LanguageDefinition *def);
+    // Runs after the lexical scan: re-applies insideStrings rules wherever
+    // they match within string-formatted text.
+    void applyInStringRules(const QString &text, const LanguageDefinition *def);
     // Formats comments/strings, counts fold delimiters outside them, and
     // returns the lexer state at end of line. depth/minDepth are running
     // delimiter counters seeded with the depth carried in from the previous

@@ -1,5 +1,6 @@
 #include "app/MainWindow.h"
 
+#include "app/ExplorerPanel.h"
 #include "app/FindBar.h"
 #include "app/TabWorkspace.h"
 #include "app/TitleBar.h"
@@ -11,12 +12,15 @@
 
 #include <QActionGroup>
 #include <QCloseEvent>
+#include <QDir>
 #include <QCoreApplication>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QInputDialog>
 #include <QLabel>
 #include <QMenuBar>
 #include <QSettings>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -27,6 +31,9 @@
 
 namespace {
 constexpr auto kPersistSetting = "persistUnsavedEdits";
+constexpr auto kExplorerRootSetting = "explorerRoot";
+constexpr auto kExplorerVisibleSetting = "explorerVisible";
+constexpr auto kThemeSetting = "theme";
 constexpr int kSessionSnapshotIntervalMs = 30000;
 constexpr int kResizeMargin = 6;
 
@@ -85,6 +92,20 @@ FindBar { background: %1; }
 FindBar QLabel { color: %2; }
 FindBar QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px; }
 FindBar QToolButton:hover { background: %4; }
+FindBar QListWidget { background: %7; color: %2; border: none; outline: 0; }
+FindBar QListWidget::item { padding: 2px 8px; }
+FindBar QListWidget::item:selected { background: %6; color: %2; }
+ExplorerPanel { background: %1; }
+#explorerTitle { color: %2; font-weight: bold; padding: 6px 12px; }
+ExplorerPanel QToolButton { border: none; border-radius: 4px; background: transparent; color: %2; }
+ExplorerPanel QToolButton:hover { background: %4; }
+ExplorerPanel QToolButton:pressed { background: %5; }
+ExplorerPanel QToolButton:disabled { color: %3; }
+ExplorerPanel QTreeView { background: %1; color: %2; border: none; outline: 0; }
+ExplorerPanel QTreeView::item { padding: 2px 0; }
+ExplorerPanel QTreeView::item:hover { background: %4; }
+ExplorerPanel QTreeView::item:selected { background: %6; color: %2; }
+QSplitter::handle { background: %3; }
 QLineEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px;
             padding: 3px 8px; selection-background-color: %6; }
 QLineEdit:focus { border-color: %6; }
@@ -105,23 +126,64 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
              rgbaString(scrollHandle));
 }
 
+QList<Theme> loadThemes()
+{
+    QList<Theme> themes;
+    const auto add = [&themes](const QString &path) {
+        const Theme theme = Theme::fromJsonFile(path);
+        for (int i = 0; i < themes.size(); ++i) {
+            if (themes.at(i).name == theme.name) {
+                themes[i] = theme;
+                return;
+            }
+        }
+        themes.append(theme);
+    };
+    const QDir bundled(QStringLiteral(":/themes"));
+    for (const QString &file : bundled.entryList({QStringLiteral("*.json")}, QDir::Files))
+        add(bundled.filePath(file));
+    const QDir dir(QDir(programDirectory()).filePath(QStringLiteral("themes")));
+    for (const QString &file : dir.entryList({QStringLiteral("*.json")}, QDir::Files))
+        add(dir.filePath(file));
+    return themes;
+}
+
+const Theme *themeNamed(const QList<Theme> &themes, const QString &name)
+{
+    for (const Theme &theme : themes) {
+        if (theme.name == name)
+            return &theme;
+    }
+    return &themes.first();
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , m_darkTheme(Theme::fromJsonFile(QStringLiteral(":/themes/dark.json")))
-    , m_lightTheme(Theme::fromJsonFile(QStringLiteral(":/themes/light.json")))
+    , m_themes(loadThemes())
     , m_actions(this)
 {
-    m_tabs = new TabWorkspace(&m_registry, &m_darkTheme, this);
+    const Theme *startupTheme =
+        themeNamed(m_themes, QSettings().value(kThemeSetting, QStringLiteral("Dark")).toString());
+    m_tabs = new TabWorkspace(&m_registry, startupTheme, this);
     m_findBar = new FindBar(this);
+    m_explorer = new ExplorerPanel(this);
+    m_explorer->hide();
+
+    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->setHandleWidth(1);
+    splitter->setChildrenCollapsible(false);
+    splitter->addWidget(m_explorer);
+    splitter->addWidget(m_tabs);
+    splitter->setStretchFactor(1, 1);
 
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    layout->addWidget(m_tabs, 1);
     layout->addWidget(m_findBar);
+    layout->addWidget(splitter, 1);
     setCentralWidget(central);
 
     m_cursorLabel = new QLabel(this);
@@ -140,7 +202,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     connectActions();
 
-    m_actions.persistEdits->setChecked(QSettings().value(kPersistSetting, true).toBool());
+    const QSettings settings;
+    m_actions.persistEdits->setChecked(settings.value(kPersistSetting, true).toBool());
+
+    // The saved folder may have been deleted or its drive unplugged since.
+    const QString explorerRoot = settings.value(kExplorerRootSetting).toString();
+    if (QFileInfo(explorerRoot).isDir()) {
+        m_explorer->setRootPath(explorerRoot);
+        m_actions.explorer->setChecked(settings.value(kExplorerVisibleSetting).toBool());
+    }
 
     // Periodic snapshot so unsaved edits also survive crashes and power loss,
     // not just graceful exits.
@@ -150,7 +220,7 @@ MainWindow::MainWindow(QWidget *parent)
     sessionTimer->start();
 
     resize(1100, 750);
-    applyTheme(&m_darkTheme);
+    applyTheme(startupTheme);
     applyCustomFrame();
     refreshStatus();
 }
@@ -235,7 +305,7 @@ void MainWindow::startSession(const QStringList &paths)
     }
     for (const QString &path : paths)
         m_tabs->openFile(path);
-    if (m_tabs->count() == 0)
+    if (m_tabs->documentCount() == 0)
         m_tabs->newDocument();
 }
 
@@ -261,6 +331,7 @@ void MainWindow::buildMenus()
     QMenu *file = m_menuBar->addMenu(QStringLiteral("&File"));
     file->addAction(m_actions.newFile);
     file->addAction(m_actions.open);
+    file->addAction(m_actions.openFolder);
     file->addSeparator();
     file->addAction(m_actions.save);
     file->addAction(m_actions.saveAs);
@@ -282,6 +353,8 @@ void MainWindow::buildMenus()
     edit->addAction(m_actions.gotoLine);
 
     QMenu *view = m_menuBar->addMenu(QStringLiteral("&View"));
+    view->addAction(m_actions.explorer);
+    view->addSeparator();
     view->addAction(m_actions.wordWrap);
     view->addAction(m_actions.hexMode);
     view->addSeparator();
@@ -289,9 +362,14 @@ void MainWindow::buildMenus()
     view->addAction(m_actions.zoomOut);
     view->addAction(m_actions.zoomReset);
     view->addSeparator();
-    QMenu *theme = view->addMenu(QStringLiteral("&Theme"));
-    theme->addAction(m_actions.themeDark);
-    theme->addAction(m_actions.themeLight);
+    QMenu *themeMenu = view->addMenu(QStringLiteral("&Theme"));
+    m_themeGroup = new QActionGroup(this);
+    for (const Theme &theme : m_themes) {
+        QAction *action = themeMenu->addAction(theme.name);
+        action->setCheckable(true);
+        m_themeGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, theme = &theme] { applyTheme(theme); });
+    }
     view->addSeparator();
     view->addAction(m_actions.foldAll);
     view->addAction(m_actions.unfoldAll);
@@ -314,6 +392,24 @@ void MainWindow::connectActions()
 {
     connect(m_actions.newFile, &QAction::triggered, m_tabs, &TabWorkspace::newDocument);
     connect(m_actions.open, &QAction::triggered, this, &MainWindow::openFileDialog);
+    connect(m_actions.openFolder, &QAction::triggered, this, [this] {
+        if (chooseExplorerFolder())
+            m_actions.explorer->setChecked(true);
+    });
+    connect(m_actions.explorer, &QAction::toggled, this, [this](bool visible) {
+        if (visible && m_explorer->rootPath().isEmpty() && !chooseExplorerFolder()) {
+            m_actions.explorer->setChecked(false);
+            return;
+        }
+        m_explorer->setVisible(visible);
+        QSettings().setValue(kExplorerVisibleSetting, visible);
+    });
+    connect(m_explorer, &ExplorerPanel::rootPathChanged, this,
+            [](const QString &path) { QSettings().setValue(kExplorerRootSetting, path); });
+    connect(m_explorer, &ExplorerPanel::fileActivated, m_tabs, &TabWorkspace::openFile);
+    connect(m_explorer, &ExplorerPanel::pathMoved, m_tabs, &TabWorkspace::retargetPath);
+    connect(m_explorer, &ExplorerPanel::closeRequested, this,
+            [this] { m_actions.explorer->setChecked(false); });
     connect(m_actions.save, &QAction::triggered, m_tabs, &TabWorkspace::saveCurrent);
     connect(m_actions.saveAs, &QAction::triggered, m_tabs, &TabWorkspace::saveCurrentAs);
     connect(m_actions.persistEdits, &QAction::toggled, this, [this](bool enabled) {
@@ -341,8 +437,6 @@ void MainWindow::connectActions()
     connect(m_actions.zoomIn, &QAction::triggered, this, [this] { m_tabs->currentEditor()->zoom(1); });
     connect(m_actions.zoomOut, &QAction::triggered, this, [this] { m_tabs->currentEditor()->zoom(-1); });
     connect(m_actions.zoomReset, &QAction::triggered, this, [this] { m_tabs->currentEditor()->resetZoom(); });
-    connect(m_actions.themeDark, &QAction::triggered, this, [this] { applyTheme(&m_darkTheme); });
-    connect(m_actions.themeLight, &QAction::triggered, this, [this] { applyTheme(&m_lightTheme); });
     connect(m_actions.foldAll, &QAction::triggered, this,
             [this] { m_tabs->currentEditor()->foldController()->foldAll(); });
     connect(m_actions.unfoldAll, &QAction::triggered, this,
@@ -352,7 +446,7 @@ void MainWindow::connectActions()
     connect(m_tabs, &QTabWidget::currentChanged, this,
             [this] { m_findBar->setEditor(m_tabs->currentEditor()); });
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
-        if (m_tabs->closeTab(index) && m_tabs->count() == 0)
+        if (m_tabs->closeTab(index) && m_tabs->documentCount() == 0)
             m_tabs->newDocument();
     });
 }
@@ -364,9 +458,19 @@ void MainWindow::openFileDialog()
         m_tabs->openFile(path);
 }
 
+bool MainWindow::chooseExplorerFolder()
+{
+    const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("Open Folder"),
+                                                           m_explorer->rootPath());
+    if (path.isEmpty())
+        return false;
+    m_explorer->setRootPath(path);
+    return true;
+}
+
 void MainWindow::closeCurrentTab()
 {
-    if (m_tabs->closeTab(m_tabs->currentIndex()) && m_tabs->count() == 0)
+    if (m_tabs->closeTab(m_tabs->currentIndex()) && m_tabs->documentCount() == 0)
         m_tabs->newDocument();
 }
 
@@ -390,11 +494,14 @@ void MainWindow::applyTheme(const Theme *theme)
 {
     m_tabs->setTheme(theme);
     setStyleSheet(chromeStyleSheet(*theme));
+    for (QAction *action : m_themeGroup->actions())
+        action->setChecked(action->text() == theme->name);
+    QSettings().setValue(kThemeSetting, theme->name);
 }
 
 void MainWindow::refreshStatus()
 {
-    if (m_tabs->count() == 0) {
+    if (m_tabs->documentCount() == 0) {
         setWindowTitle(QCoreApplication::applicationName());
         return;
     }
@@ -441,7 +548,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
     m_sessionStore.clear();
-    while (m_tabs->count() > 0) {
+    while (m_tabs->documentCount() > 0) {
         if (!m_tabs->closeTab(0)) {
             event->ignore();
             return;

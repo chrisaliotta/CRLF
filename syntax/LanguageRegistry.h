@@ -4,9 +4,15 @@
 
 #include <QHash>
 #include <QList>
+#include <QString>
 
-// Loads every language JSON bundled under :/languages and resolves a file
-// path to its definition by extension. Unknown extensions map to Plain Text.
+// Install folder for a packaged build ({app}\bin\CRLF.exe lives one level
+// down), or the directory containing the executable for a dev build.
+QString programDirectory();
+
+// Loads every language JSON bundled under :/languages, then every file in
+// the program folder's styles directory. A file whose name matches one
+// already loaded replaces it. Unknown extensions map to Plain Text.
 class LanguageRegistry
 {
 public:

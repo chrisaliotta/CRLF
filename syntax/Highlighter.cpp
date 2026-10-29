@@ -68,6 +68,7 @@ void Highlighter::highlightBlock(const QString &text)
             int innerDepth = 0;
             int innerMinDepth = 0;
             lexerOut = scanLexicalRegions(text, inner, lexerIn, innerDepth, innerMinDepth);
+            applyInStringRules(text, inner);
             embeddedOut = embeddedIn;
             applyBackground(text.length(), m_theme->codeBlockBackground);
         }
@@ -80,6 +81,7 @@ void Highlighter::highlightBlock(const QString &text)
         } else {
             applyPatternRules(text, m_definition);
             lexerOut = scanLexicalRegions(text, m_definition, lexerIn, depth, minDepth);
+            applyInStringRules(text, m_definition);
         }
     }
 
@@ -176,6 +178,22 @@ void Highlighter::applyPatternRules(const QString &text, const LanguageDefinitio
     applyRegex(def->typeRegex, TokenRole::Type);
     for (const PatternRule &rule : def->patterns)
         applyRegex(rule.regex, rule.role);
+}
+
+void Highlighter::applyInStringRules(const QString &text, const LanguageDefinition *def)
+{
+    const QTextCharFormat stringFormat = m_theme->tokenFormat(TokenRole::String);
+    for (const PatternRule &rule : def->patterns) {
+        if (!rule.insideStrings)
+            continue;
+        QRegularExpressionMatchIterator it = rule.regex.globalMatch(text);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch match = it.next();
+            const int start = int(match.capturedStart());
+            if (format(start) == stringFormat)
+                setFormat(start, int(match.capturedLength()), m_theme->tokenFormat(rule.role));
+        }
+    }
 }
 
 int Highlighter::scanLexicalRegions(const QString &text, const LanguageDefinition *def,

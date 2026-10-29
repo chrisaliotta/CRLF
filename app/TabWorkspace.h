@@ -31,7 +31,10 @@ public:
     QString titleFor(QWidget *page) const;
 
     void newDocument();
+    // Focuses the existing tab when the file is already open.
     void openFile(const QString &path);
+    // Points tabs at a renamed/moved file, or at files inside a moved folder.
+    void retargetPath(const QString &from, const QString &to);
     bool saveCurrent();
     bool saveCurrentAs();
     // Returns false when the user cancels the unsaved-changes prompt.
@@ -51,16 +54,13 @@ public:
     // unsaved buffer as Markdown before it has an extension to detect from.
     void setCurrentLanguage(const LanguageDefinition *definition);
 
+    // Open documents; count() also includes the trailing + tab.
+    int documentCount() const;
+
 signals:
     // Cursor moved, document swapped, or file identity changed; the status
     // bar and window title re-read everything on this signal.
     void statusChanged();
-
-protected:
-    void tabInserted(int index) override;
-    void tabRemoved(int index) override;
-    void resizeEvent(QResizeEvent *event) override;
-    void showEvent(QShowEvent *event) override;
 
 private:
     struct Page {
@@ -77,13 +77,12 @@ private:
     // controlled; Qt ignores stylesheet margins on QTabBar::close-button.
     void installCloseButton(int index);
     void refreshTabTitle(QWidget *page);
-    // The + button floats directly after the last tab, like a browser's
-    // new-tab button, and follows every tab insert/remove/move/retitle.
-    void positionNewTabButton();
 
     const LanguageRegistry *m_registry;
     const Theme *m_theme;
-    QToolButton *m_newTabButton = nullptr;
+    // Empty page behind the always-last + tab, which scrolls with the
+    // documents like a browser's new-tab button.
+    QWidget *m_newTabPage = nullptr;
     QHash<QWidget *, Page> m_pages;
     bool m_wordWrap = false;
     int m_untitledCount = 0;

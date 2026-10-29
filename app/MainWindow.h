@@ -5,8 +5,10 @@
 #include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
 
+#include <QList>
 #include <QMainWindow>
 
+class ExplorerPanel;
 class FindBar;
 class QActionGroup;
 class QLabel;
@@ -39,6 +41,8 @@ private:
     void applyCustomFrame();
     void connectActions();
     void openFileDialog();
+    // Returns false when the user cancels the folder picker.
+    bool chooseExplorerFolder();
     void closeCurrentTab();
     void gotoLine();
     void applyTheme(const Theme *theme);
@@ -47,15 +51,19 @@ private:
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
-    Theme m_darkTheme;
-    Theme m_lightTheme;
+    // Built-in themes, then any JSON in the program folder's themes
+    // directory. A later file with the same name replaces the earlier one.
+    // Pointers into this list stay valid: nothing is added after startup.
+    QList<Theme> m_themes;
     Actions m_actions;
 
     TabWorkspace *m_tabs = nullptr;
+    ExplorerPanel *m_explorer = nullptr;
     FindBar *m_findBar = nullptr;
     QMenuBar *m_menuBar = nullptr;
     TitleBar *m_titleBar = nullptr;
     QActionGroup *m_languageGroup = nullptr;
+    QActionGroup *m_themeGroup = nullptr;
     QLabel *m_cursorLabel = nullptr;
     QLabel *m_languageLabel = nullptr;
     QLabel *m_encodingLabel = nullptr;

@@ -34,6 +34,10 @@ Type: filesandordirs; Name: "{app}\bin"
 Type: filesandordirs; Name: "{app}\plugins"
 Type: filesandordirs; Name: "{app}\translations"
 
+[Dirs]
+Name: "{app}\styles"
+Name: "{app}\themes"
+
 [Files]
 Source: "@INSTALLER_STAGING_DIR@\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

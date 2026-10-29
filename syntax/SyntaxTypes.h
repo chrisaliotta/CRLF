@@ -17,6 +17,9 @@ struct StringRule {
 struct PatternRule {
     TokenRole role = TokenRole::Text;
     QRegularExpression regex;
+    // Also colors matches inside strings, e.g. variables substituted into
+    // quoted text, which the string pass would otherwise paint over.
+    bool insideStrings = false;
 };
 
 // A region whose lines are highlighted by another language, e.g. a Markdown

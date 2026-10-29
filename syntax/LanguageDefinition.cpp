@@ -58,6 +58,7 @@ LanguageDefinition LanguageDefinition::fromJsonFile(const QString &path)
         PatternRule rule;
         rule.role = tokenRoleFromName(obj.value(QLatin1String("role")).toString());
         rule.regex = QRegularExpression(obj.value(QLatin1String("regex")).toString());
+        rule.insideStrings = obj.value(QLatin1String("insideStrings")).toBool();
         def.patterns.append(rule);
     }
 

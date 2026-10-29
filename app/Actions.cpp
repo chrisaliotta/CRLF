@@ -13,6 +13,7 @@ Actions::Actions(QObject *parent)
 
     newFile = make(QStringLiteral("&New"), QKeySequence::New);
     open = make(QStringLiteral("&Open..."), QKeySequence::Open);
+    openFolder = make(QStringLiteral("Open &Folder..."), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     save = make(QStringLiteral("&Save"), QKeySequence::Save);
     saveAs = make(QStringLiteral("Save &As..."), QKeySequence::SaveAs);
     persistEdits = make(QStringLiteral("&Remember Unsaved Edits"), QKeySequence());
@@ -29,6 +30,8 @@ Actions::Actions(QObject *parent)
     find = make(QStringLiteral("&Find/Replace..."), QKeySequence::Find);
     gotoLine = make(QStringLiteral("&Go to Line..."), QKeySequence(Qt::CTRL | Qt::Key_G));
 
+    explorer = make(QStringLiteral("&Explorer"), QKeySequence(Qt::CTRL | Qt::Key_B));
+    explorer->setCheckable(true);
     wordWrap = make(QStringLiteral("&Word Wrap"), QKeySequence());
     wordWrap->setCheckable(true);
     hexMode = make(QStringLiteral("&Hex Editor"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
@@ -36,15 +39,6 @@ Actions::Actions(QObject *parent)
     zoomIn = make(QStringLiteral("Zoom &In"), QKeySequence::ZoomIn);
     zoomOut = make(QStringLiteral("Zoom &Out"), QKeySequence::ZoomOut);
     zoomReset = make(QStringLiteral("&Reset Zoom"), QKeySequence(Qt::CTRL | Qt::Key_0));
-
-    themeDark = make(QStringLiteral("&Dark"), QKeySequence());
-    themeDark->setCheckable(true);
-    themeDark->setChecked(true);
-    themeLight = make(QStringLiteral("&Light"), QKeySequence());
-    themeLight->setCheckable(true);
-    themeGroup = new QActionGroup(parent);
-    themeGroup->addAction(themeDark);
-    themeGroup->addAction(themeLight);
 
     foldAll = make(QStringLiteral("&Fold All"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft));
     unfoldAll = make(QStringLiteral("&Unfold All"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketRight));

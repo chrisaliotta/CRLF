@@ -1,0 +1,16 @@
+{
+  "name": "SQL Run",
+  "extensions": ["sqlrun"],
+  "lineComment": "#",
+  "strings": [
+    { "start": "\"", "end": "\"" }
+  ],
+  "patterns": [
+    { "role": "keyword", "regex": "^\\s*@\\w+" },
+    { "role": "type", "regex": "(?<=@provider\\s)\\w+" },
+    { "role": "function", "regex": "(?<=@var\\s)\\w+" },
+    { "role": "string", "regex": "(?<=@import\\s)\\S+" },
+    { "role": "preprocessor", "regex": "@@\\w+", "insideStrings": true }
+  ],
+  "folding": { "mode": "indent" }
+}

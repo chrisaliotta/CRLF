@@ -1,5 +1,6 @@
 #include "app/TabWorkspace.h"
 
+#include "app/DocumentTabBar.h"
 #include "editor/CodeEditor.h"
 #include "hex/HexView.h"
 #include "syntax/LanguageRegistry.h"
@@ -21,6 +22,13 @@ bool isPageModified(QWidget *page)
     return static_cast<HexView *>(page)->isModified();
 }
 
+// Absolute, forward-slashed form for comparing paths from dialogs, the
+// command line (backslashes), and the explorer. Untitled documents have none.
+QString normalizedPath(const QString &path)
+{
+    return path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
+}
+
 void setPageModified(QWidget *page, bool modified)
 {
     if (auto *editor = qobject_cast<CodeEditor *>(page))
@@ -36,57 +44,33 @@ TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme,
     , m_registry(registry)
     , m_theme(theme)
 {
+    auto *bar = new DocumentTabBar(this);
+    setTabBar(bar);
     setMovable(true);
     setDocumentMode(true);
+    bar->setExpanding(false);
+    // Closing the rightmost document must land on its neighbour, not on +.
+    bar->setSelectionBehaviorOnRemove(QTabBar::SelectLeftTab);
 
-    m_newTabButton = new QToolButton(this);
-    m_newTabButton->setText(QStringLiteral("+"));
-    m_newTabButton->setToolTip(QStringLiteral("New Document (Ctrl+N)"));
-    QFont plusFont = m_newTabButton->font();
-    plusFont.setPointSize(plusFont.pointSize() + 2);
-    m_newTabButton->setFont(plusFont);
-    m_newTabButton->setStyleSheet(QStringLiteral(
-        "QToolButton { border: none; background: transparent; }"
-        "QToolButton:hover { background: rgba(128, 128, 128, 0.3); border-radius: 4px; }"));
-    connect(m_newTabButton, &QToolButton::clicked, this, &TabWorkspace::newDocument);
-    connect(tabBar(), &QTabBar::tabMoved, this, [this] { positionNewTabButton(); });
+    m_newTabPage = new QWidget(this);
+    addTab(m_newTabPage, QStringLiteral("+"));
+    setTabToolTip(0, QStringLiteral("New Document (Ctrl+N)"));
 
-    connect(this, &QTabWidget::currentChanged, this, [this] { emit statusChanged(); });
+    connect(bar, &DocumentTabBar::newTabRequested, this, &TabWorkspace::newDocument);
+    connect(this, &QTabWidget::currentChanged, this, [this](int index) {
+        // Wheel or keyboard navigation can still select +; step back onto
+        // the last document. Clicks never select it (see DocumentTabBar).
+        if (widget(index) == m_newTabPage && documentCount() > 0) {
+            setCurrentIndex(index - 1);
+            return;
+        }
+        emit statusChanged();
+    });
 }
 
-void TabWorkspace::positionNewTabButton()
+int TabWorkspace::documentCount() const
 {
-    const int side = tabBar()->height() - 4;
-    m_newTabButton->setFixedSize(side, side);
-    const QRect lastTab = tabBar()->tabRect(count() - 1);
-    const int x = qMin(tabBar()->x() + lastTab.right() + 4,
-                       width() - m_newTabButton->width() - 2);
-    m_newTabButton->move(x, tabBar()->y() + (tabBar()->height() - side) / 2);
-    m_newTabButton->raise();
-}
-
-void TabWorkspace::tabInserted(int index)
-{
-    QTabWidget::tabInserted(index);
-    positionNewTabButton();
-}
-
-void TabWorkspace::tabRemoved(int index)
-{
-    QTabWidget::tabRemoved(index);
-    positionNewTabButton();
-}
-
-void TabWorkspace::resizeEvent(QResizeEvent *event)
-{
-    QTabWidget::resizeEvent(event);
-    positionNewTabButton();
-}
-
-void TabWorkspace::showEvent(QShowEvent *event)
-{
-    QTabWidget::showEvent(event);
-    positionNewTabButton();
+    return count() - 1;
 }
 
 CodeEditor *TabWorkspace::currentEditor() const
@@ -116,9 +100,37 @@ void TabWorkspace::newDocument()
 
 void TabWorkspace::openFile(const QString &path)
 {
+    const QString absolutePath = normalizedPath(path);
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (normalizedPath(it->file.path()).compare(absolutePath, Qt::CaseInsensitive) == 0) {
+            setCurrentWidget(it.key());
+            it.key()->setFocus();
+            return;
+        }
+    }
+
     DocumentFile file(path);
     const QString text = file.load();
     addEditor(file, text, file.fileName());
+}
+
+void TabWorkspace::retargetPath(const QString &from, const QString &to)
+{
+    const QString moved = normalizedPath(from);
+    for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
+        const QString path = normalizedPath(it->file.path());
+        if (path.compare(moved, Qt::CaseInsensitive) != 0
+            && !path.startsWith(moved + QLatin1Char('/'), Qt::CaseInsensitive))
+            continue;
+        const QString newPath = normalizedPath(to) + path.mid(moved.length());
+        it->file.setPath(newPath);
+        it->title = it->file.fileName();
+        if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+            editor->setLanguage(m_registry->definitionForPath(newPath));
+        setTabToolTip(indexOf(it.key()), newPath);
+        refreshTabTitle(it.key());
+    }
+    emit statusChanged();
 }
 
 CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &text)
@@ -170,7 +182,7 @@ CodeEditor *TabWorkspace::addEditor(const DocumentFile &file, const QString &tex
                                     const QString &title)
 {
     CodeEditor *editor = createEditor(file, text);
-    insertPage(count(), editor, file, title);
+    insertPage(documentCount(), editor, file, title);
     return editor;
 }
 
@@ -292,7 +304,7 @@ Session TabWorkspace::captureSession() const
 {
     Session session;
     session.activeIndex = currentIndex();
-    for (int i = 0; i < count(); ++i) {
+    for (int i = 0; i < documentCount(); ++i) {
         QWidget *page = widget(i);
         const Page &entry = *m_pages.constFind(page);
         SessionTab tab;
@@ -324,7 +336,7 @@ void TabWorkspace::restoreSession(const Session &session)
             const QByteArray bytes = tab.modified || tab.path.isEmpty() ? tab.bytes
                                                                         : file.loadBytes();
             HexView *view = createHexView(bytes);
-            insertPage(count(), view, file, tab.title);
+            insertPage(documentCount(), view, file, tab.title);
             view->setModified(tab.modified);
             view->setCursorOffset(tab.cursorPosition);
         } else {
@@ -382,5 +394,4 @@ void TabWorkspace::refreshTabTitle(QWidget *page)
     const Page &entry = m_pages[page];
     const bool modified = isPageModified(page);
     setTabText(indexOf(page), modified ? entry.title + QStringLiteral(" \u2022") : entry.title);
-    positionNewTabButton();
 }

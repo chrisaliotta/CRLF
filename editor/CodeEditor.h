@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QPlainTextEdit>
 
 class FoldController;
@@ -32,6 +33,9 @@ public:
     void zoom(int steps);
     void resetZoom();
 
+    // Highlights every occurrence. An empty term clears the highlights.
+    void setFindTerm(const QString &term);
+
     // Gutter geometry and event handling, called by the Gutter child widget.
     int gutterWidth() const;
     void paintGutter(QPaintEvent *event);
@@ -45,6 +49,7 @@ private:
     void updateGutterWidth();
     void updateGutterArea(const QRect &rect, int dy);
     void highlightCurrentLine();
+    void refreshFindSelections();
     int foldMarkerWidth() const;
     void drawFoldMarker(QPainter &painter, const QRect &rect, bool expanded) const;
     void applyTabStop();
@@ -57,4 +62,6 @@ private:
     const Theme *m_theme = nullptr;
     const LanguageDefinition *m_definition = nullptr;
     int m_basePointSize = 0;
+    QString m_findTerm;
+    QList<QTextEdit::ExtraSelection> m_findSelections;
 };

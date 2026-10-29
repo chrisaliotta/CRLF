@@ -27,8 +27,8 @@ TitleBar::TitleBar(QMenuBar *menuBar, QWidget *parent)
     setAttribute(Qt::WA_StyledBackground, true);
     setFixedHeight(kBarHeight);
 
-    auto *icon = new QLabel(this);
-    icon->setPixmap(QApplication::windowIcon().pixmap(20, 20));
+    m_iconLabel = new QLabel(this);
+    m_iconLabel->setPixmap(QApplication::windowIcon().pixmap(20, 20));
 
     menuBar->setParent(this);
 
@@ -61,7 +61,7 @@ TitleBar::TitleBar(QMenuBar *menuBar, QWidget *parent)
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(10, 0, 0, 0);
     layout->setSpacing(8);
-    layout->addWidget(icon);
+    layout->addWidget(m_iconLabel);
     layout->addWidget(menuBar, 0, Qt::AlignVCenter);
     layout->addStretch(1);
     layout->addWidget(m_titleLabel);

@@ -51,6 +51,10 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::highlightCurrentLine);
+    connect(document(), &QTextDocument::contentsChange, this, [this] {
+        refreshFindSelections();
+        highlightCurrentLine();
+    });
 
     updateGutterWidth();
 }
@@ -154,14 +158,43 @@ void CodeEditor::resizeEvent(QResizeEvent *event)
     m_gutter->setGeometry(QRect(cr.left(), cr.top(), gutterWidth(), cr.height()));
 }
 
+void CodeEditor::setFindTerm(const QString &term)
+{
+    m_findTerm = term;
+    refreshFindSelections();
+    highlightCurrentLine();
+}
+
+void CodeEditor::refreshFindSelections()
+{
+    m_findSelections.clear();
+    if (m_findTerm.isEmpty() || m_theme == nullptr)
+        return;
+    QTextCharFormat format;
+    const bool dark = m_theme->background.lightness() < 128;
+    format.setBackground(dark ? QColor(255, 220, 0, 90) : QColor(255, 200, 0, 140));
+    QTextCursor match = document()->find(m_findTerm, 0);
+    while (!match.isNull()) {
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = match;
+        selection.format = format;
+        m_findSelections.append(selection);
+        match = document()->find(m_findTerm, match);
+    }
+}
+
 void CodeEditor::highlightCurrentLine()
 {
+    if (m_theme == nullptr)
+        return;
     QTextEdit::ExtraSelection selection;
     selection.format.setBackground(m_theme->currentLine);
     selection.format.setProperty(QTextFormat::FullWidthSelection, true);
     selection.cursor = textCursor();
     selection.cursor.clearSelection();
-    setExtraSelections({selection});
+    QList<QTextEdit::ExtraSelection> selections{selection};
+    selections.append(m_findSelections);
+    setExtraSelections(selections);
 }
 
 void CodeEditor::paintGutter(QPaintEvent *event)
