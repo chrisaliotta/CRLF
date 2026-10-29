@@ -8,10 +8,14 @@
 #include <QList>
 #include <QMainWindow>
 
+class CommandRunner;
 class ExplorerPanel;
 class FindBar;
+class OutputPanel;
 class QActionGroup;
+class QFileSystemWatcher;
 class QLabel;
+class QMenu;
 class QMenuBar;
 class TabWorkspace;
 class TitleBar;
@@ -48,6 +52,9 @@ private:
     void applyTheme(const Theme *theme);
     void refreshStatus();
     void persistSession();
+    // Reloads the .crlf discovered from the explorer root, or from the active
+    // file when no folder is scoped, and rebuilds the Run menu from it.
+    void reloadCommands();
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
@@ -60,7 +67,12 @@ private:
     TabWorkspace *m_tabs = nullptr;
     ExplorerPanel *m_explorer = nullptr;
     FindBar *m_findBar = nullptr;
+    OutputPanel *m_output = nullptr;
+    CommandRunner *m_runner = nullptr;
+    QFileSystemWatcher *m_commandWatcher = nullptr;
+    QString m_projectFile;
     QMenuBar *m_menuBar = nullptr;
+    QMenu *m_runMenu = nullptr;
     TitleBar *m_titleBar = nullptr;
     QActionGroup *m_languageGroup = nullptr;
     QActionGroup *m_themeGroup = nullptr;

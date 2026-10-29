@@ -22,6 +22,7 @@ public:
     // The registry resolves languages embedded in this document (e.g. code
     // fenced inside Markdown).
     explicit CodeEditor(const LanguageRegistry *registry, QWidget *parent = nullptr);
+    ~CodeEditor() override;
 
     void setTheme(const Theme *theme);
     void setLanguage(const LanguageDefinition *definition);

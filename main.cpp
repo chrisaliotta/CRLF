@@ -35,11 +35,17 @@ int main(int argc, char *argv[])
     loadBundledFonts();
     app.setFont(QFont(QStringLiteral("Ubuntu"), 10));
 
-    // Resolve relative arguments against this launch's working directory
-    // before they cross into another process or a restored session.
+    // Explorer's Open with passes the selected file. Skip switches and
+    // directories; a missing file is still opened so the path is kept.
     QStringList paths;
-    for (const QString &arg : app.arguments().mid(1))
-        paths.append(QFileInfo(arg).absoluteFilePath());
+    for (const QString &arg : app.arguments().mid(1)) {
+        if (arg.startsWith(QLatin1Char('-')))
+            continue;
+        const QFileInfo info(arg);
+        if (info.exists() && info.isDir())
+            continue;
+        paths.append(info.absoluteFilePath());
+    }
 
     SingleInstance instance;
     if (!instance.isPrimary()) {

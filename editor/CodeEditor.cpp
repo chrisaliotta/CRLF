@@ -59,6 +59,11 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     updateGutterWidth();
 }
 
+CodeEditor::~CodeEditor()
+{
+    delete m_foldController;
+}
+
 void CodeEditor::setTheme(const Theme *theme)
 {
     m_theme = theme;

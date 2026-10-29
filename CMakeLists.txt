@@ -39,6 +39,12 @@ set(APP_SOURCES
     app/DocumentTabBar.cpp
     app/ExplorerPanel.h
     app/ExplorerPanel.cpp
+    app/CommandRunner.h
+    app/CommandRunner.cpp
+    app/OutputPanel.h
+    app/OutputPanel.cpp
+    app/OpenWith.h
+    app/OpenWith.cpp
 )
 
 set(EDITOR_SOURCES
@@ -76,6 +82,8 @@ set(IO_SOURCES
     io/FileOperations.cpp
     io/SessionStore.h
     io/SessionStore.cpp
+    io/ProjectCommands.h
+    io/ProjectCommands.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}
