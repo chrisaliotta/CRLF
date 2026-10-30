@@ -10,9 +10,9 @@
 // down), or the directory containing the executable for a dev build.
 QString programDirectory();
 
-// Loads every language JSON bundled under :/languages, then every file in
-// the program folder's styles directory. A file whose name matches one
-// already loaded replaces it. Unknown extensions map to Plain Text.
+// Loads every language JSON from the program folder's styles directory.
+// A file whose name matches one already loaded replaces it. Unknown
+// extensions map to Plain Text.
 class LanguageRegistry
 {
 public:

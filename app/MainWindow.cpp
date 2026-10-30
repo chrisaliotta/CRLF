@@ -180,9 +180,6 @@ QList<Theme> loadThemes()
         }
         themes.append(theme);
     };
-    const QDir bundled(QStringLiteral(":/themes"));
-    for (const QString &file : bundled.entryList({QStringLiteral("*.json")}, QDir::Files))
-        add(bundled.filePath(file));
     const QDir dir(QDir(programDirectory()).filePath(QStringLiteral("themes")));
     for (const QString &file : dir.entryList({QStringLiteral("*.json")}, QDir::Files))
         add(dir.filePath(file));

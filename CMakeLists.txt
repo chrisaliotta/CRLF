@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CRLF VERSION 1.0.0 LANGUAGES CXX)
+project(CRLF VERSION 1.0.1 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -124,9 +124,33 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 
 include(GNUInstallDirs)
+# Languages, themes, and fonts are files beside the program, not data inside
+# the executable. A dev build reads them next to the exe; an installed copy
+# reads them from the install folder, one level above bin.
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/languages"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/styles"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/themes"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/themes"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/fonts"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts"
+)
+
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/languages/"
+    DESTINATION styles
+    FILES_MATCHING PATTERN "*.json")
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/themes/"
+    DESTINATION themes
+    FILES_MATCHING PATTERN "*.json")
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/fonts/"
+    DESTINATION fonts
+    FILES_MATCHING PATTERN "*.ttf" PATTERN "*.txt")
 
 qt_generate_deploy_app_script(
     TARGET ${PROJECT_NAME}

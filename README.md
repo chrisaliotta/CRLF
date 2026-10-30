@@ -114,8 +114,9 @@ and sessions in `%APPDATA%\CRLF` are kept.
 | `hex/` | `HexView` |
 | `syntax/` | JSON-driven `LanguageDefinition`/`LanguageRegistry`, `Theme`, `Highlighter` |
 | `io/` | `DocumentFile` (load/save, encoding, line endings), `SessionStore`, `ProjectCommands`, `WslPath` |
-| `resources/languages/` | One JSON file per language definition |
-| `resources/themes/` | Dark and light theme JSON |
+| `resources/languages/` | One JSON file per language definition, copied to `styles` on build and install |
+| `resources/themes/` | Theme JSON, copied to `themes` on build and install |
+| `resources/fonts/` | Ubuntu fonts, copied to `fonts` on build and install |
 | `packaging/` | Inno Setup installer script template |
 
 The highlighter is the single authority on fold levels: only the lexer knows
@@ -126,16 +127,18 @@ cascade rehighlighting exactly as far as needed.
 
 ## Adding a language or theme
 
-Drop a JSON file into the program folder and restart. Languages go in `styles`,
-themes in `themes`. A dev build reads those folders next to `CRLF.exe`; an
-installed copy reads them from the install folder, one level above `bin`
-(`C:\Program Files\CRLF\styles` and `themes`), so an upgrade that replaces
-`bin` leaves them in place. A file whose `name` matches a built-in language or
-theme replaces it; any other name is added to the Language or Theme menu.
+Languages, themes, and fonts are files next to the program, not data inside
+the executable. A dev build reads `styles`, `themes`, and `fonts` beside
+`CRLF.exe` (CMake copies them there after each build). An installed copy reads
+them from the install folder, one level above `bin`
+(`C:\Program Files\CRLF\styles`, `themes`, and `fonts`), and the installer
+ships the copies from `resources/`. An upgrade that replaces `bin` leaves these
+folders in place and refreshes the files that share a shipped name.
 
-The same files can instead be compiled in: drop a language into
-`resources/languages/` (or a theme into `resources/themes/`), register it in
-`resources/resources.qrc`, and rebuild. See `cpp.json` for the language schema:
+Drop a JSON file into `styles` or `themes` and restart. A file whose `name`
+matches one already loaded replaces it; any other name is added to the Language
+or Theme menu. To change a shipped definition, edit it under `resources/` and
+rebuild. See `cpp.json` for the language schema:
 keywords, types, string/comment delimiters, regex patterns per token role, and
 a folding mode (`delimiter` with pairs, `indent`, or `heading`). Set `"ignoreCase": true`
 for languages whose keywords and types are case-insensitive (see `sql.json`), and

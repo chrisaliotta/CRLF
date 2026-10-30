@@ -1,7 +1,9 @@
 #include "app/MainWindow.h"
 #include "app/SingleInstance.h"
+#include "syntax/LanguageRegistry.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
@@ -9,17 +11,14 @@
 
 namespace {
 
-// The Ubuntu family ships inside the executable so the editor renders
+// The Ubuntu family is installed next to the program so the editor renders
 // identically on machines without the fonts installed.
 void loadBundledFonts()
 {
-    const char *files[] = {
-        "Ubuntu-R.ttf",     "Ubuntu-B.ttf",     "Ubuntu-RI.ttf",
-        "UbuntuMono-R.ttf", "UbuntuMono-B.ttf", "UbuntuMono-RI.ttf",
-        "UbuntuMono-BI.ttf",
-    };
-    for (const char *file : files)
-        QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/") + QLatin1String(file));
+    const QDir dir(QDir(programDirectory()).filePath(QStringLiteral("fonts")));
+    const QStringList files = dir.entryList({QStringLiteral("*.ttf")}, QDir::Files);
+    for (const QString &file : files)
+        QFontDatabase::addApplicationFont(dir.filePath(file));
 }
 
 } // namespace

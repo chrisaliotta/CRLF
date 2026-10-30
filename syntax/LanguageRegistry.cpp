@@ -56,7 +56,6 @@ void loadDirectory(QList<LanguageDefinition> &definitions, QHash<QString, int> &
 
 LanguageRegistry::LanguageRegistry()
 {
-    loadDirectory(m_definitions, m_byExtension, m_plainTextIndex, QStringLiteral(":/languages"));
     loadDirectory(m_definitions, m_byExtension, m_plainTextIndex,
                   QDir(programDirectory()).filePath(QStringLiteral("styles")));
 }
