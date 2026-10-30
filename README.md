@@ -9,12 +9,13 @@ custom menu commands that will run scripts or shell commands.
 
 ### Editing
 
-- Tabbed documents. The `+` button opens an untitled tab. Drag tabs to reorder them; a right-click offers Pin, Close, Close Others, Close to the Right, and Close All. Pinned tabs stay on the left, are marked with a diamond, and are skipped by the batch close commands. Closing the last document opens a fresh untitled tab
+- Tabbed documents. The `+` button opens an untitled tab. Drag tabs to reorder them; a right-click offers Pin, Close, Close Others, Close to the Right, and Close All. Pinned tabs stay on the left, are marked with a diamond, and are skipped by the batch close commands. Closing the last document opens a fresh untitled tab, and that tab is Untitled 1 again
 - Inactive tab titles are muted and their close buttons stay hidden until the tab is hovered or selected. A modified document's title is italic until it is saved
 - Save and Save As. Scoping a folder sets the directory Save As suggests; a successful save remembers that file's directory for the next one
 - Find and replace along the top of the window, with wrap-around, match highlighting, and Find All results that jump to each match. Go to Line is Ctrl+G
+- Tab indents the highlighted lines instead of replacing them. Shift+Tab removes one indent. `.crlf` can set spaces or a tab character, the width, and a different rule per file extension
 - Word wrap, and zoom in, out, or reset (Ctrl+0)
-- Line-number gutter with clickable fold markers. Fold All and Unfold All are on the View menu
+- Line-number gutter with clickable fold markers. View > Line Numbers hides the numbers and leaves the fold markers. Fold All and Unfold All are on the View menu
 - Status bar with cursor position, language, encoding, and line endings
 - Encoding (UTF-8 and UTF-16, with BOM detection) and CRLF/LF preservation on save
 - One instance per user. Opening a file from Explorer, or passing paths on the command line, forwards them to the window that is already running
@@ -28,7 +29,9 @@ File > Open Folder (Ctrl+Shift+O), or View > Explorer (Ctrl+B). The tree is scop
 - Listings are read off the UI thread. The panel shows Loading… until the folder's contents arrive, and an expanded folder shows the same state on its row
 - Context menu: scope to the folder or its parent, New File (the name is typed on the new row), Reveal in File Explorer, Cut, Copy, Paste, Rename, and Delete. Windows files go to the Recycle Bin; files on a WSL share are deleted directly
 - Cut rows are faded. Dragging a file or folder onto another folder asks before the move, and holding the drag over a collapsed folder expands it
-- Hide Dot Folders hides directories whose names start with `.` (`.git`, `.cursor`, and so on). Dot files such as `.crlf` stay visible
+- Hide Dot Folders hides directories whose names start with `.` (`.git`, `.cursor`, and so on). Dot files such as `.crlf` stay visible. A `.crlf` `hide` list drops other names from the tree, such as `node_modules` or `*.log`
+- File icons come from a theme in the `icons` folder (View > File Icons). The shipped theme is Seti. A file uses the theme's file name, then its file extension, then the VS Code language id from `icons/languages.json` (`jsx` is `javascriptreact`, `md` is `markdown`). Another theme is a subdirectory with a VS Code icon-theme JSON file; image paths and font files are resolved next to that JSON. A folder with no `name` uses the directory name
+- A `.crlf` file can define virtual folders that group files without creating a directory. A group can be limited to one path or applied in its subfolders. A group with no matching files is hidden unless `showIfEmpty` is true. New Virtual Folder on the explorer menu creates one, and dragging a file onto it records the file in `.crlf`. Changing those rules leaves the explorer expanded where it was. See [docs/commands.md](docs/commands.md)
 - The chosen folder is restored on the next launch
 
 ### WSL
@@ -116,6 +119,7 @@ and sessions in `%APPDATA%\CRLF` are kept.
 | `io/` | `DocumentFile` (load/save, encoding, line endings), `SessionStore`, `ProjectCommands`, `WslPath` |
 | `resources/languages/` | One JSON file per language definition, copied to `styles` on build and install |
 | `resources/themes/` | Theme JSON, copied to `themes` on build and install |
+| `resources/icons/` | File-icon themes, copied to `icons` on build and install |
 | `resources/fonts/` | Ubuntu fonts, copied to `fonts` on build and install |
 | `packaging/` | Inno Setup installer script template |
 
@@ -127,13 +131,13 @@ cascade rehighlighting exactly as far as needed.
 
 ## Adding a language or theme
 
-Languages, themes, and fonts are files next to the program, not data inside
-the executable. A dev build reads `styles`, `themes`, and `fonts` beside
-`CRLF.exe` (CMake copies them there after each build). An installed copy reads
-them from the install folder, one level above `bin`
-(`C:\Program Files\CRLF\styles`, `themes`, and `fonts`), and the installer
-ships the copies from `resources/`. An upgrade that replaces `bin` leaves these
-folders in place and refreshes the files that share a shipped name.
+Languages, themes, file icons, and fonts are files next to the program, not
+data inside the executable. A dev build reads `styles`, `themes`, `icons`, and
+`fonts` beside `CRLF.exe` (CMake copies them there after each build). An
+installed copy reads them from the install folder, one level above `bin`
+(`C:\Program Files\CRLF\styles`, `themes`, `icons`, and `fonts`), and the
+installer ships the copies from `resources/`. An upgrade that replaces `bin`
+leaves these folders in place and refreshes the files that share a shipped name.
 
 Drop a JSON file into `styles` or `themes` and restart. A file whose `name`
 matches one already loaded replaces it; any other name is added to the Language

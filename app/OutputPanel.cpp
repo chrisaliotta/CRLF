@@ -14,7 +14,6 @@ OutputPanel::OutputPanel(QWidget *parent)
     : QWidget(parent)
 {
     setAttribute(Qt::WA_StyledBackground, true);
-    setFixedHeight(220);
 
     m_commands = new QComboBox(this);
     m_status = new QLabel(this);
@@ -24,10 +23,6 @@ OutputPanel::OutputPanel(QWidget *parent)
     clearButton->setText(QStringLiteral("Clear"));
     clearButton->setToolTip(QStringLiteral("Clear output"));
     clearButton->setAutoRaise(true);
-    auto *closeButton = new QToolButton(this);
-    closeButton->setText(QStringLiteral("\u2715"));
-    closeButton->setToolTip(QStringLiteral("Close"));
-    closeButton->setAutoRaise(true);
 
     m_output = new QPlainTextEdit(this);
     m_output->setReadOnly(true);
@@ -44,7 +39,6 @@ OutputPanel::OutputPanel(QWidget *parent)
     header->addWidget(m_status);
     header->addWidget(m_stop);
     header->addWidget(clearButton);
-    header->addWidget(closeButton);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -59,12 +53,6 @@ OutputPanel::OutputPanel(QWidget *parent)
         m_logs[name].text.clear();
         m_output->clear();
     });
-    connect(closeButton, &QToolButton::clicked, this, [this] {
-        m_closed = true;
-        hide();
-    });
-
-    hide();
 }
 
 void OutputPanel::showCommand(const QString &name)
@@ -72,8 +60,8 @@ void OutputPanel::showCommand(const QString &name)
     ensureCommand(name);
     m_commands->setCurrentText(name);
     m_closed = false;
-    show();
     showSelected();
+    emit showRequested();
 }
 
 void OutputPanel::appendOutput(const QString &name, const QString &text)
@@ -86,7 +74,12 @@ void OutputPanel::appendOutput(const QString &name, const QString &text)
         m_output->moveCursor(QTextCursor::End);
     }
     if (!m_closed)
-        show();
+        emit keepVisible();
+}
+
+void OutputPanel::suppress()
+{
+    m_closed = true;
 }
 
 void OutputPanel::setState(const QString &name, bool running, int exitCode)

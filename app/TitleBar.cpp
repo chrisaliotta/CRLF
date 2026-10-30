@@ -75,7 +75,7 @@ QToolButton *TitleBar::makeCaptionButton(QChar glyph, const QString &objectName,
     auto *button = new QToolButton(this);
     button->setObjectName(objectName);
     button->setToolTip(toolTip);
-    button->setFocusPolicy(Qt::NoFocus);
+    button->setFocusPolicy(Qt::TabFocus);
     button->setFixedSize(kCaptionButtonWidth, kBarHeight);
     QFont glyphFont(QStringLiteral("Segoe MDL2 Assets"));
     glyphFont.setPixelSize(10);

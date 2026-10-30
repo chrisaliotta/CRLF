@@ -8,6 +8,7 @@
 #include "syntax/Theme.h"
 
 #include <QEvent>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
@@ -96,7 +97,32 @@ void CodeEditor::setLanguage(const LanguageDefinition *definition)
 void CodeEditor::rebuildHighlighter()
 {
     delete m_highlighter;
+    m_highlighter = nullptr;
+    if (m_definition == nullptr || m_theme == nullptr)
+        return;
     m_highlighter = new Highlighter(document(), m_definition, m_registry, m_theme);
+    if (blockCount() > 200)
+        m_highlighter->highlightGradually();
+    else {
+        m_highlighter->setAutomatic(true);
+        m_highlighter->rehighlight();
+    }
+}
+
+void CodeEditor::replaceText(const QString &text)
+{
+    if (m_highlighter)
+        m_highlighter->setAutomatic(false);
+    setPlainText(text);
+    document()->setModified(false);
+    if (m_highlighter == nullptr)
+        return;
+    if (blockCount() > 200)
+        m_highlighter->highlightGradually();
+    else {
+        m_highlighter->setAutomatic(true);
+        m_highlighter->rehighlight();
+    }
 }
 
 void CodeEditor::moveCursorOutOfHiddenBlock()
@@ -130,7 +156,78 @@ void CodeEditor::resetZoom()
 
 void CodeEditor::applyTabStop()
 {
-    setTabStopDistance(4 * fontMetrics().horizontalAdvance(QLatin1Char(' ')));
+    setTabStopDistance(m_indentSize * fontMetrics().horizontalAdvance(QLatin1Char(' ')));
+}
+
+void CodeEditor::setIndent(bool spaces, int size)
+{
+    m_indentSpaces = spaces;
+    m_indentSize = size;
+    applyTabStop();
+}
+
+QString CodeEditor::indentUnit() const
+{
+    return m_indentSpaces ? QString(m_indentSize, QLatin1Char(' ')) : QStringLiteral("\t");
+}
+
+void CodeEditor::indentLines(int direction)
+{
+    QTextCursor cursor = textCursor();
+    const int anchor = cursor.selectionStart();
+    const int position = cursor.selectionEnd();
+    cursor.setPosition(anchor);
+    const int first = cursor.blockNumber();
+    cursor.setPosition(position);
+    int last = cursor.blockNumber();
+    if (position > anchor && cursor.positionInBlock() == 0)
+        --last;
+
+    cursor.beginEditBlock();
+    for (int number = first; number <= last; ++number) {
+        const QTextBlock block = document()->findBlockByNumber(number);
+        if (direction > 0) {
+            QTextCursor line(block);
+            line.insertText(indentUnit());
+            continue;
+        }
+        const QString text = block.text();
+        int remove = 0;
+        if (text.startsWith(QLatin1Char('\t')))
+            remove = 1;
+        else {
+            while (remove < m_indentSize && remove < text.size() && text.at(remove) == QLatin1Char(' '))
+                ++remove;
+        }
+        if (remove == 0)
+            continue;
+        QTextCursor line(block);
+        line.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, remove);
+        line.removeSelectedText();
+    }
+    const QTextBlock startBlock = document()->findBlockByNumber(first);
+    const QTextBlock endBlock = document()->findBlockByNumber(last);
+    QTextCursor selected(document());
+    selected.setPosition(startBlock.position());
+    selected.setPosition(endBlock.position() + endBlock.length() - 1, QTextCursor::KeepAnchor);
+    setTextCursor(selected);
+    cursor.endEditBlock();
+}
+
+void CodeEditor::keyPressEvent(QKeyEvent *event)
+{
+    const bool tab = event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier;
+    const bool backtab = event->key() == Qt::Key_Backtab
+                         || (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier);
+    if (tab && !textCursor().hasSelection()) {
+        insertPlainText(indentUnit());
+        return;
+    }
+    if ((tab && textCursor().hasSelection()) || backtab) {
+        indentLines(tab ? 1 : -1);
+        return;
+    }
+    QPlainTextEdit::keyPressEvent(event);
 }
 
 int CodeEditor::foldMarkerWidth() const
@@ -139,8 +236,17 @@ int CodeEditor::foldMarkerWidth() const
     return lineSpacing + lineSpacing % 2 + 1;
 }
 
+void CodeEditor::setLineNumbersVisible(bool visible)
+{
+    m_lineNumbers = visible;
+    updateGutterWidth();
+    m_gutter->update();
+}
+
 int CodeEditor::gutterWidth() const
 {
+    if (!m_lineNumbers)
+        return 4 + foldMarkerWidth();
     int digits = 1;
     for (int max = qMax(1, blockCount()); max >= 10; max /= 10)
         ++digits;
@@ -242,7 +348,8 @@ void CodeEditor::paintGutter(QPaintEvent *event)
     painter.setFont(font());
     painter.setPen(m_theme->gutterForeground);
 
-    const int numberWidth = m_gutter->width() - foldMarkerWidth() - 4;
+    const int numberWidth = m_lineNumbers ? m_gutter->width() - foldMarkerWidth() - 4 : 0;
+    const int markerX = m_lineNumbers ? numberWidth + 4 : 0;
     const int lineHeight = fontMetrics().height();
 
     QTextBlock block = firstVisibleBlock();
@@ -251,10 +358,12 @@ void CodeEditor::paintGutter(QPaintEvent *event)
 
     while (block.isValid() && top <= event->rect().bottom()) {
         if (block.isVisible() && bottom >= event->rect().top()) {
-            painter.drawText(0, top, numberWidth, lineHeight, Qt::AlignRight,
-                             QString::number(block.blockNumber() + 1));
+            if (m_lineNumbers) {
+                painter.drawText(0, top, numberWidth, lineHeight, Qt::AlignRight,
+                                 QString::number(block.blockNumber() + 1));
+            }
             if (FoldController::isFoldHeader(block)) {
-                const QRect markerRect(numberWidth + 4, top, foldMarkerWidth(), lineHeight);
+                const QRect markerRect(markerX, top, foldMarkerWidth(), lineHeight);
                 drawFoldMarker(painter, markerRect, block.next().isVisible());
             }
         }
@@ -280,7 +389,7 @@ void CodeEditor::drawFoldMarker(QPainter &painter, const QRect &rect, bool expan
 
 void CodeEditor::gutterMousePress(QMouseEvent *event)
 {
-    if (event->pos().x() < m_gutter->width() - foldMarkerWidth())
+    if (m_lineNumbers && event->pos().x() < m_gutter->width() - foldMarkerWidth())
         return;
     // cursorForPosition with x forced to 0 maps a y-coordinate to its block.
     const QTextBlock block = cursorForPosition(QPoint(0, event->pos().y())).block();

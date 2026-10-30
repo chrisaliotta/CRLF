@@ -8,7 +8,7 @@ CRLF looks for a file named `.crlf`. The search starts at the folder the explore
 
 The first `.crlf` found is the project file. Saving that file, or switching to a document that resolves to a different one, reloads the menus. A command that disappeared from the file is stopped.
 
-The file is a JSON array. An entry needs `name` and `command`. A second entry with the same `name` is ignored, because the name identifies the running process and its output log.
+The file is a JSON array of commands, or an object with a `commands` array and an optional `groups` array. An entry needs `name` and `command`. A second entry with the same `name` is ignored, because the name identifies the running process and its output log. A file that is neither an array nor an object leaves Run hidden and shows "Couldn't read .crlf" in the status bar.
 
 ```json
 [
@@ -37,7 +37,65 @@ The file is a JSON array. An entry needs `name` and `command`. A second entry wi
 
 A `key` that is not a bare function key is ignored. When two commands ask for the same key, the first one in the file keeps it.
 
-If the file is missing, Run shows "No .crlf in this folder". If the file is not a JSON array, Run shows "Couldn't read .crlf".
+Run is shown only when at least one command is placed in it. A missing file leaves Run hidden.
+
+## Virtual folders
+
+`groups` is read only from the object form. Each group is a virtual folder in the explorer. Nothing is created on disk. A file is claimed by the first group whose pattern matches its name, and directories are left where they are.
+
+With no `path`, the group applies in the directory that contains `.crlf`. `path` limits it to a folder under that directory. `recursive` also applies it in subfolders of that location. A group with no matching files is not shown, including in the directory named by `path`. `showIfEmpty` set to `true` shows the folder anyway.
+
+```json
+{
+  "commands": [],
+  "groups": [
+    {
+      "name": "Configuration",
+      "icon": "config",
+      "path": "src",
+      "recursive": true,
+      "showIfEmpty": false,
+      "files": [".gitattributes", ".gitignore", "package.json", "*.config.js"]
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | The folder's label in the explorer |
+| `files` | no | File names to fold into the folder. A pattern that contains `*` or `?` is a wildcard; any other pattern is an exact name |
+| `icon` | no | Folder name passed to the file-icon theme. The default is `name` |
+| `path` | no | Folder under the `.crlf` directory. The default is the `.crlf` directory itself |
+| `recursive` | no | Also apply the group in subfolders of `path` |
+| `showIfEmpty` | no | When `false` (the default), hide the folder wherever it has no matching files |
+
+Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `recursive` field, and it can be toggled on the virtual folder's menu. Drag a file from that same folder onto the virtual folder to add its name to `files`. The file stays where it is on disk. Saving `.crlf`, or either of those actions, reloads the groups.
+
+## Hidden names
+
+`hide` is a list of file and folder names to leave out of the explorer. A pattern that contains `*` or `?` is a wildcard. Any other pattern is an exact name. Matching ignores case. The files stay on disk.
+
+```json
+"hide": ["node_modules", "dist", "*.log"]
+```
+
+## Indent
+
+`indent` sets what Tab inserts. `style` is `spaces` or `tab`. `size` is how many spaces a spaces-style Tab inserts, and how many columns a tab character is wide. With no `indent` key, Tab inserts one tab character four columns wide.
+
+`types` overrides that for file extensions. A file with no extension is matched on its file name, so `Makefile` uses an extension entry of `makefile`. The first matching type wins. A selection indents each highlighted line; Shift+Tab removes one indent from those lines.
+
+```json
+"indent": {
+  "style": "spaces",
+  "size": 4,
+  "types": [
+    { "extensions": ["py"], "style": "spaces", "size": 4 },
+    { "extensions": ["go", "makefile"], "style": "tab", "size": 4 }
+  ]
+}
+```
 
 ## Menus
 
@@ -52,7 +110,7 @@ These two paths are the same menu: Run, then Build, then Debug, then the command
 
 A slash or a backslash separates the string form. Each entry in the array is one title, so a title written that way can contain a slash. Empty parts are dropped. Leaving `menu` out places the command on Run.
 
-Commands appear in the order they are written. A menu is created the first time a command needs it. Choosing the same menu again adds the next command to that menu. Reloading the file removes the commands and any menus that were created for them. File, Edit, View, Language, and Run stay.
+Commands appear in the order they are written. A menu is created the first time a command needs it. Choosing the same menu again adds the next command to that menu. Reloading the file removes the commands and any menus that were created for them. File, Edit, View, and Language stay. Run stays too, and is hidden while it has no commands.
 
 A command that is running shows a check mark. The check follows the command into whatever menu it occupies.
 

@@ -1,5 +1,6 @@
 #include "app/MainWindow.h"
 
+#include "app/BottomPanel.h"
 #include "app/CommandRunner.h"
 #include "app/ExplorerPanel.h"
 #include "app/FindBar.h"
@@ -32,6 +33,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTextCursor>
+#include <QThreadPool>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -43,8 +45,11 @@ namespace {
 constexpr auto kPersistSetting = "persistUnsavedEdits";
 constexpr auto kExplorerRootSetting = "explorerRoot";
 constexpr auto kExplorerVisibleSetting = "explorerVisible";
+constexpr auto kTerminalVisibleSetting = "terminalVisible";
 constexpr auto kThemeSetting = "theme";
+constexpr auto kFileIconThemeSetting = "fileIconTheme";
 constexpr auto kHexColumnsSetting = "hexBytesPerRow";
+constexpr auto kLineNumbersSetting = "lineNumbers";
 constexpr auto kSaveDirectorySetting = "saveDirectory";
 constexpr int kSessionSnapshotIntervalMs = 30000;
 constexpr int kResizeMargin = 6;
@@ -85,15 +90,16 @@ QString chromeStyleSheet(const Theme &theme)
 QMainWindow { background: %1; }
 #TitleBar { background: %1; }
 #TitleBar QLabel { color: %2; background: transparent; }
-#TitleBar QToolButton { border: none; background: transparent; color: %2; }
-#TitleBar QToolButton:hover { background: %4; }
-#TitleBar QToolButton:pressed { background: %5; }
-#closeButton:hover { background: #e81123; color: #ffffff; }
+#TitleBar QToolButton { border: none; background: transparent; color: %9; outline: none; }
+#TitleBar QToolButton:hover, #TitleBar QToolButton:focus { background: %4; color: %2; }
+#TitleBar QToolButton:pressed { background: %5; color: %2; }
+#closeButton:hover, #closeButton:focus { background: #e81123; color: #ffffff; }
 #closeButton:pressed { background: #f1707a; color: #ffffff; }
 QMenuBar { background: transparent; color: %2; }
-QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 6px; }
-QMenuBar::item:selected { background: %4; }
-QMenuBar::item:pressed { background: %5; }
+QMenuBar::item { background: transparent; color: %9; padding: 4px 10px; border-radius: 6px; }
+QMenuBar::item:hover { color: %2; }
+QMenuBar::item:selected { background: %4; color: %2; }
+QMenuBar::item:pressed, QMenuBar::item:open { background: %5; color: %2; }
 QMenu { background: %1; color: %2; border: 1px solid %3; border-radius: 8px; padding: 4px; }
 QMenu::item { padding: 5px 28px 5px 16px; border-radius: 5px; }
 QMenu::item:selected { background: %6; }
@@ -120,13 +126,14 @@ FindBar QToolButton:hover { background: %4; }
 FindBar QListWidget { background: %7; color: %2; border: none; outline: 0; }
 FindBar QListWidget::item { padding: 2px 8px; }
 FindBar QListWidget::item:selected { background: %6; color: %2; }
-OutputPanel { background: %1; }
-OutputPanel QLabel { color: %2; }
-OutputPanel QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px; }
-OutputPanel QToolButton:hover { background: %4; }
+OutputPanel, TerminalPanel, BottomPanel { background: %1; }
+OutputPanel QLabel, TerminalPanel QLabel, BottomPanel QLabel { color: %2; }
+OutputPanel QToolButton, TerminalPanel QToolButton, BottomPanel QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px 8px; }
+OutputPanel QToolButton:hover, TerminalPanel QToolButton:hover, BottomPanel QToolButton:hover { background: %4; }
+#outputPage:checked, #terminalPage:checked { background: %5; }
 OutputPanel QPlainTextEdit { background: %7; color: %2; }
-OutputPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
-OutputPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
+OutputPanel QComboBox, TerminalPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
+OutputPanel QComboBox QAbstractItemView, TerminalPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 ExplorerPanel { background: %1; }
 #explorerTitle { color: %2; font-weight: bold; padding: 6px 12px; }
 #explorerLoading { color: %2; }
@@ -134,7 +141,7 @@ ExplorerPanel QToolButton { border: none; border-radius: 4px; background: transp
 ExplorerPanel QToolButton:hover { background: %4; }
 ExplorerPanel QToolButton:pressed { background: %5; }
 ExplorerPanel QToolButton:disabled { color: %3; }
-ExplorerPanel QTreeView { background: %1; color: %2; border: none; outline: 0; }
+ExplorerPanel QTreeView { background: %1; color: %2; border: none; outline: 0; padding-left: 12px; }
 ExplorerPanel QTreeView::item { padding: 2px 0; }
 ExplorerPanel QTreeView::item:hover { background: %4; }
 ExplorerPanel QTreeView::item:selected { background: %6; color: %2; }
@@ -164,7 +171,7 @@ CodeEditor QScrollBar[expanded="true"]::handle:horizontal { margin: 1px; border-
 )")
         .arg(chrome.name(), theme.foreground.name(), border.name(), rgbaString(hover),
              rgbaString(pressed), theme.selection.name(), theme.background.name(),
-             rgbaString(scrollHandle));
+             rgbaString(scrollHandle), theme.gutterForeground.name());
 }
 
 QList<Theme> loadThemes()
@@ -193,6 +200,15 @@ const Theme *themeNamed(const QList<Theme> &themes, const QString &name)
             return &theme;
     }
     return &themes.first();
+}
+
+const FileIconTheme *iconThemeNamed(const QList<FileIconTheme> &themes, const QString &name)
+{
+    for (const FileIconTheme &theme : themes) {
+        if (theme.name == name)
+            return &theme;
+    }
+    return themes.isEmpty() ? nullptr : &themes.first();
 }
 
 constexpr auto kProjectItem = "projectItem";
@@ -288,20 +304,26 @@ void markRunningCommands(QMenu *menu, const CommandRunner *runner)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_themes(loadThemes())
+    , m_iconThemes(FileIconTheme::loadInstalled())
     , m_actions(this)
 {
     const Theme *startupTheme =
         themeNamed(m_themes, QSettings().value(kThemeSetting, QStringLiteral("Dark")).toString());
 
-    QStringList extensions;
-    for (const LanguageDefinition &definition : m_registry.definitions())
-        extensions.append(definition.extensions);
-    registerOpenWith(extensions);
-
     m_tabs = new TabWorkspace(&m_registry, startupTheme, this);
     m_findBar = new FindBar(this);
     m_explorer = new ExplorerPanel(this);
-    m_output = new OutputPanel(this);
+    m_bottom = new BottomPanel(this);
+    m_output = m_bottom->output();
+    m_bottom->setDirectoryProvider([this] {
+        QString directory = m_explorer->rootPath();
+        if (directory.isEmpty() && m_tabs->documentCount() > 0) {
+            const QString path = m_tabs->fileFor(m_tabs->currentWidget()).path();
+            if (!path.isEmpty())
+                directory = QFileInfo(path).absolutePath();
+        }
+        return directory;
+    });
     m_runner = new CommandRunner(this);
     m_runner->setContextProvider([this] { return commandVariables(); });
     m_commandWatcher = new QFileSystemWatcher(this);
@@ -314,14 +336,32 @@ MainWindow::MainWindow(QWidget *parent)
     splitter->addWidget(m_tabs);
     splitter->setStretchFactor(1, 1);
 
+    auto *vertical = new QSplitter(Qt::Vertical, this);
+    vertical->setHandleWidth(1);
+    vertical->setChildrenCollapsible(false);
+    vertical->addWidget(splitter);
+    vertical->addWidget(m_bottom);
+    vertical->setStretchFactor(0, 1);
+
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(m_findBar);
-    layout->addWidget(splitter, 1);
-    layout->addWidget(m_output);
+    layout->addWidget(vertical, 1);
     setCentralWidget(central);
+
+    connect(m_bottom, &BottomPanel::opened, vertical, [vertical, this] {
+        QTimer::singleShot(0, vertical, [vertical, this] {
+            if (!m_bottom->isVisible() || vertical->property("bottomSized").toBool())
+                return;
+            int total = vertical->height();
+            if (total < 120)
+                total = qMax(400, height() - 120);
+            vertical->setProperty("bottomSized", true);
+            vertical->setSizes({total - 220, 220});
+        });
+    });
 
     m_cursorLabel = new QLabel(this);
     m_languageLabel = new QLabel(this);
@@ -342,6 +382,8 @@ MainWindow::MainWindow(QWidget *parent)
     const QSettings settings;
     m_actions.persistEdits->setChecked(settings.value(kPersistSetting, true).toBool());
     m_tabs->setBytesPerRow(settings.value(kHexColumnsSetting, 16).toInt());
+    m_actions.lineNumbers->setChecked(settings.value(kLineNumbersSetting, true).toBool());
+    m_tabs->setLineNumbersVisible(m_actions.lineNumbers->isChecked());
     m_scopedRoot = settings.value(kExplorerRootSetting).toString();
     m_saveDirectory = settings.value(kSaveDirectorySetting).toString();
     if (m_saveDirectory.isEmpty())
@@ -365,9 +407,19 @@ MainWindow::MainWindow(QWidget *parent)
 
     resize(1100, 750);
     applyTheme(startupTheme);
+    if (settings.value(kTerminalVisibleSetting, false).toBool())
+        m_actions.terminal->setChecked(true);
+    applyFileIconTheme(iconThemeNamed(
+        m_iconThemes, QSettings().value(kFileIconThemeSetting, QStringLiteral("Seti")).toString()));
     applyCustomFrame();
-    reloadCommands();
     refreshStatus();
+
+    QStringList extensions;
+    for (const LanguageDefinition &definition : m_registry.definitions())
+        extensions.append(definition.extensions);
+    QTimer::singleShot(0, this, [extensions] {
+        QThreadPool::globalInstance()->start([extensions] { registerOpenWith(extensions); });
+    });
 }
 
 // Forces Windows to resend WM_NCCALCSIZE now that this window handles it,
@@ -443,14 +495,30 @@ bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr
 
 void MainWindow::startSession(const QStringList &paths)
 {
-    if (m_actions.persistEdits->isChecked()) {
-        const Session session = m_sessionStore.load();
-        if (!session.tabs.isEmpty())
-            m_tabs->restoreSession(session);
+    if (!m_actions.persistEdits->isChecked()) {
+        finishStartup(paths);
+        return;
     }
+    QThreadPool::globalInstance()->start([this, paths] {
+        const Session session = m_sessionStore.load();
+        QMetaObject::invokeMethod(this, [this, session, paths] {
+            if (session.tabs.isEmpty()) {
+                finishStartup(paths);
+                return;
+            }
+            connect(m_tabs, &TabWorkspace::sessionRestored, this, [this, paths] {
+                finishStartup(paths);
+            }, Qt::SingleShotConnection);
+            m_tabs->restoreSession(session);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void MainWindow::finishStartup(const QStringList &paths)
+{
     for (const QString &path : paths)
         m_tabs->openFile(path);
-    if (m_tabs->documentCount() == 0)
+    if (paths.isEmpty() && m_tabs->documentCount() == 0)
         m_tabs->newDocument();
 }
 
@@ -500,8 +568,10 @@ void MainWindow::buildMenus()
 
     QMenu *view = m_menuBar->addMenu(QStringLiteral("&View"));
     view->addAction(m_actions.explorer);
+    view->addAction(m_actions.terminal);
     view->addSeparator();
     view->addAction(m_actions.wordWrap);
+    view->addAction(m_actions.lineNumbers);
     view->addAction(m_actions.hexMode);
     view->addAction(m_actions.byteColumns);
     view->addSeparator();
@@ -516,6 +586,14 @@ void MainWindow::buildMenus()
         action->setCheckable(true);
         m_themeGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, theme = &theme] { applyTheme(theme); });
+    }
+    QMenu *iconMenu = view->addMenu(QStringLiteral("&File Icons"));
+    m_iconThemeGroup = new QActionGroup(this);
+    for (const FileIconTheme &theme : m_iconThemes) {
+        QAction *action = iconMenu->addAction(theme.name);
+        action->setCheckable(true);
+        m_iconThemeGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, theme = &theme] { applyFileIconTheme(theme); });
     }
     view->addSeparator();
     view->addAction(m_actions.foldAll);
@@ -535,6 +613,7 @@ void MainWindow::buildMenus()
     }
 
     m_runMenu = m_menuBar->addMenu(QStringLiteral("&Run"));
+    m_runMenu->menuAction()->setVisible(false);
 }
 
 void MainWindow::connectActions()
@@ -557,6 +636,25 @@ void MainWindow::connectActions()
         m_explorer->setVisible(visible);
         QSettings().setValue(kExplorerVisibleSetting, visible);
     });
+    connect(m_actions.terminal, &QAction::toggled, this, [this](bool visible) {
+        if (m_syncingTerminal)
+            return;
+        QSettings().setValue(kTerminalVisibleSetting, visible);
+        m_syncingTerminal = true;
+        if (visible)
+            m_bottom->showTerminal();
+        else
+            m_bottom->hideTerminal();
+        m_syncingTerminal = false;
+    });
+    connect(m_bottom, &BottomPanel::terminalActive, this, [this](bool visible) {
+        if (m_syncingTerminal)
+            return;
+        m_syncingTerminal = true;
+        m_actions.terminal->setChecked(visible);
+        QSettings().setValue(kTerminalVisibleSetting, visible);
+        m_syncingTerminal = false;
+    });
     connect(m_explorer, &ExplorerPanel::rootPathChanged, this, [this](const QString &path) {
         QSettings().setValue(kExplorerRootSetting, path);
         if (path != m_scopedRoot) {
@@ -573,6 +671,16 @@ void MainWindow::connectActions()
     connect(m_explorer, &ExplorerPanel::pathMoved, m_tabs, &TabWorkspace::retargetPath);
     connect(m_explorer, &ExplorerPanel::closeRequested, this,
             [this] { m_actions.explorer->setChecked(false); });
+    connect(m_explorer, &ExplorerPanel::virtualFoldersEdited, this, [this](const QList<FileGroup> &groups) {
+        QString file = m_projectFile;
+        if (file.isEmpty())
+            file = QDir(m_explorer->rootPath()).filePath(QStringLiteral(".crlf"));
+        if (!saveProjectGroups(file, groups)) {
+            statusBar()->showMessage(QStringLiteral("Couldn't write .crlf"), 5000);
+            return;
+        }
+        reloadCommands();
+    });
     connect(m_tabs, &TabWorkspace::fileSaved, this, [this](const QString &directory) {
         m_saveDirectory = directory;
         QSettings().setValue(kSaveDirectorySetting, directory);
@@ -599,6 +707,10 @@ void MainWindow::connectActions()
     connect(m_actions.gotoLine, &QAction::triggered, this, &MainWindow::gotoLine);
 
     connect(m_actions.wordWrap, &QAction::toggled, m_tabs, &TabWorkspace::setWordWrap);
+    connect(m_actions.lineNumbers, &QAction::toggled, this, [this](bool visible) {
+        m_tabs->setLineNumbersVisible(visible);
+        QSettings().setValue(kLineNumbersSetting, visible);
+    });
     // triggered (not toggled): refreshStatus syncs the checked state to the
     // active tab and must not re-enter the mode switch.
     connect(m_actions.hexMode, &QAction::triggered, m_tabs, &TabWorkspace::setCurrentHexMode);
@@ -718,9 +830,20 @@ void MainWindow::gotoLine()
     editor->setFocus();
 }
 
+void MainWindow::applyFileIconTheme(const FileIconTheme *theme)
+{
+    if (theme == nullptr)
+        return;
+    m_explorer->setIconTheme(theme);
+    for (QAction *action : m_iconThemeGroup->actions())
+        action->setChecked(action->text() == theme->name);
+    QSettings().setValue(kFileIconThemeSetting, theme->name);
+}
+
 void MainWindow::applyTheme(const Theme *theme)
 {
     m_tabs->setTheme(theme);
+    m_bottom->setColors(theme->foreground, theme->background, theme->selection);
     setStyleSheet(chromeStyleSheet(*theme));
     // After the stylesheet, so polish does not clear the scroll buttons' fill.
     m_tabs->setTabColors(theme->foreground, theme->gutterForeground, chromeBorder(*theme),
@@ -776,6 +899,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // unsaved buffer, so no save prompts are needed.
     if (m_actions.persistEdits->isChecked()) {
         m_sessionStore.save(m_tabs->captureSession());
+        m_bottom->closeSessions();
         m_runner->stopAll();
         event->accept();
         return;
@@ -787,6 +911,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             return;
         }
     }
+    m_bottom->closeSessions();
     m_runner->stopAll();
     event->accept();
 }
@@ -839,7 +964,19 @@ void MainWindow::reloadCommands()
     if (start.isEmpty() && m_tabs->documentCount() > 0)
         start = m_tabs->fileFor(m_tabs->currentWidget()).path();
 
-    const Project project = projectFor(start);
+    const int generation = ++m_commandGeneration;
+    QThreadPool::globalInstance()->start([this, start, generation] {
+        const Project project = projectFor(start);
+        QMetaObject::invokeMethod(this, [this, project, generation] {
+            if (generation != m_commandGeneration)
+                return;
+            applyProject(project);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void MainWindow::applyProject(const Project &project)
+{
     if (!m_projectFile.isEmpty())
         m_commandWatcher->removePath(m_projectFile);
     m_projectFile = project.filePath;
@@ -847,27 +984,29 @@ void MainWindow::reloadCommands()
         m_commandWatcher->addPath(m_projectFile);
 
     m_runner->setProject(project.commands);
+    const QString groupDirectory =
+        project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath();
+    m_explorer->setGroups(groupDirectory, project.groups);
+    m_explorer->setHidden(project.hide);
+    m_tabs->setIndent(project.indent);
     clearProjectCommands(m_menuBar);
     if (project.commands.isEmpty()) {
-        QAction *missing = addProjectAction(m_runMenu, project.error.isEmpty()
-                                                           ? QStringLiteral("No .crlf in this folder")
-                                                           : project.error);
-        missing->setEnabled(false);
         if (!project.error.isEmpty())
             statusBar()->showMessage(project.error, 5000);
-        return;
-    }
-    for (const ProjectCommand &command : project.commands) {
-        QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
-        action->setCheckable(true);
-        action->setChecked(m_runner->isRunning(command.name));
-        if (!command.key.isEmpty()) {
-            action->setShortcut(command.key);
-            action->setShortcutContext(Qt::WindowShortcut);
+    } else {
+        for (const ProjectCommand &command : project.commands) {
+            QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
+            action->setCheckable(true);
+            action->setChecked(m_runner->isRunning(command.name));
+            if (!command.key.isEmpty()) {
+                action->setShortcut(command.key);
+                action->setShortcutContext(Qt::WindowShortcut);
+            }
+            connect(action, &QAction::triggered, this, [this, name = command.name] {
+                m_output->showCommand(name);
+                m_runner->start(name);
+            });
         }
-        connect(action, &QAction::triggered, this, [this, name = command.name] {
-            m_output->showCommand(name);
-            m_runner->start(name);
-        });
     }
+    m_runMenu->menuAction()->setVisible(!m_runMenu->actions().isEmpty());
 }

@@ -1,5 +1,8 @@
 #include "app/TabWorkspace.h"
 
+#include <QSharedPointer>
+#include <QThreadPool>
+
 #include "app/DocumentTabBar.h"
 #include "editor/CodeEditor.h"
 #include "hex/HexView.h"
@@ -9,6 +12,9 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QTextCursor>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -78,6 +84,18 @@ TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme,
     });
     connect(bar, &QTabBar::tabMoved, this, [this] { updateCloseButtons(); });
     connect(bar, &QWidget::customContextMenuRequested, this, &TabWorkspace::showTabMenu);
+    m_fileWatcher = new QFileSystemWatcher(this);
+    connect(m_fileWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString &path) {
+        // Replacing a file drops it from the watch. Add it back once it exists.
+        if (QFileInfo::exists(path))
+            m_fileWatcher->addPath(path);
+        QTimer::singleShot(100, this, [this, path] {
+            if (QFileInfo::exists(path))
+                m_fileWatcher->addPath(normalizedPath(path));
+            reloadExternal(path);
+        });
+    });
+
     connect(this, &QTabWidget::currentChanged, this, [this](int index) {
         // Wheel or keyboard navigation can still select +; step back onto
         // the last document. Clicks never select it (see DocumentTabBar).
@@ -133,9 +151,21 @@ void TabWorkspace::openFile(const QString &path)
         }
     }
 
-    DocumentFile file(path);
-    const QString text = file.load();
-    addEditor(file, text, file.fileName());
+    QThreadPool::globalInstance()->start([this, absolutePath] {
+        DocumentFile file(absolutePath);
+        const QString text = file.load();
+        const QString title = file.fileName();
+        QMetaObject::invokeMethod(this, [this, file, text, title, absolutePath] {
+            for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+                if (normalizedPath(it->file.path()).compare(absolutePath, Qt::CaseInsensitive) == 0) {
+                    setCurrentWidget(it.key());
+                    it.key()->setFocus();
+                    return;
+                }
+            }
+            addEditor(file, text, title);
+        }, Qt::QueuedConnection);
+    });
 }
 
 void TabWorkspace::retargetPath(const QString &from, const QString &to)
@@ -148,23 +178,29 @@ void TabWorkspace::retargetPath(const QString &from, const QString &to)
             continue;
         const QString newPath = normalizedPath(to) + path.mid(moved.length());
         it->file.setPath(newPath);
+        unwatchFile(path);
+        watchFile(newPath);
         it->title = it->file.fileName();
-        if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+        if (auto *editor = qobject_cast<CodeEditor *>(it.key())) {
             editor->setLanguage(m_registry->definitionForPath(newPath));
+            applyIndent(editor, newPath);
+        }
         setTabToolTip(indexOf(it.key()), newPath);
         refreshTabTitle(it.key());
     }
     emit statusChanged();
 }
 
-CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &text)
+CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &text,
+                                        const LanguageDefinition *language)
 {
     auto *editor = new CodeEditor(m_registry, this);
     editor->setTheme(m_theme);
-    editor->setLanguage(m_registry->definitionForPath(file.path()));
+    editor->setLanguage(language != nullptr ? language : m_registry->definitionForPath(file.path()));
+    applyIndent(editor, file.path());
     editor->setLineWrapMode(m_wordWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
-    editor->setPlainText(text);
-    editor->document()->setModified(false);
+    editor->setLineNumbersVisible(m_lineNumbers);
+    editor->replaceText(text);
 
     connect(editor->document(), &QTextDocument::modificationChanged, this,
             [this, editor] { refreshTabTitle(editor); });
@@ -190,6 +226,80 @@ HexView *TabWorkspace::createHexView(const QByteArray &bytes)
     return view;
 }
 
+void TabWorkspace::setIndent(const IndentSettings &indent)
+{
+    m_indent = indent;
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+            applyIndent(editor, it->file.path());
+    }
+}
+
+void TabWorkspace::applyIndent(CodeEditor *editor, const QString &path)
+{
+    const QString name = path.isEmpty() ? QString() : QFileInfo(path).fileName();
+    const IndentRule rule = indentForFileName(m_indent, name);
+    editor->setIndent(rule.spaces, rule.size);
+}
+
+void TabWorkspace::watchFile(const QString &path)
+{
+    if (!path.isEmpty())
+        m_fileWatcher->addPath(normalizedPath(path));
+}
+
+void TabWorkspace::unwatchFile(const QString &path)
+{
+    if (path.isEmpty())
+        return;
+    const QString clean = normalizedPath(path);
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (normalizedPath(it->file.path()).compare(clean, Qt::CaseInsensitive) == 0)
+            return;
+    }
+    m_fileWatcher->removePath(clean);
+}
+
+void TabWorkspace::reloadExternal(const QString &path)
+{
+    if (!QFileInfo::exists(path))
+        return;
+    m_fileWatcher->addPath(normalizedPath(path));
+
+    const QString clean = normalizedPath(path);
+    for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
+        if (normalizedPath(it->file.path()).compare(clean, Qt::CaseInsensitive) != 0)
+            continue;
+        if (isPageModified(it.key()))
+            return;
+
+        QWidget *page = it.key();
+        if (auto *editor = qobject_cast<CodeEditor *>(page)) {
+            const int position = editor->textCursor().position();
+            const QString text = it->file.load();
+            if (text == editor->toPlainText())
+                return;
+            editor->replaceText(text);
+            QTextCursor cursor = editor->textCursor();
+            const int end = qMax(0, int(editor->document()->characterCount()) - 1);
+            cursor.setPosition(qMin(position, end));
+            editor->setTextCursor(cursor);
+        } else {
+            auto *view = static_cast<HexView *>(page);
+            const qint64 position = view->cursorOffset();
+            const QByteArray bytes = it->file.loadBytes();
+            if (bytes == view->data())
+                return;
+            view->setData(bytes);
+            view->setCursorOffset(qMin(position, qint64(bytes.size())));
+        }
+        refreshTabTitle(page);
+        if (currentWidget() == page)
+            emit statusChanged();
+        return;
+    }
+}
+
 void TabWorkspace::insertPage(int index, QWidget *page, const DocumentFile &file,
                               const QString &title)
 {
@@ -199,6 +309,7 @@ void TabWorkspace::insertPage(int index, QWidget *page, const DocumentFile &file
     insertTab(index, page, title);
     installTabChrome(page);
     setTabToolTip(index, file.path());
+    watchFile(file.path());
     setCurrentIndex(index);
     page->setFocus();
     for (auto it = m_pages.keyBegin(); it != m_pages.keyEnd(); ++it)
@@ -207,9 +318,9 @@ void TabWorkspace::insertPage(int index, QWidget *page, const DocumentFile &file
 }
 
 CodeEditor *TabWorkspace::addEditor(const DocumentFile &file, const QString &text,
-                                    const QString &title)
+                                    const QString &title, const LanguageDefinition *language)
 {
-    CodeEditor *editor = createEditor(file, text);
+    CodeEditor *editor = createEditor(file, text, language);
     insertPage(documentCount(), editor, file, title);
     return editor;
 }
@@ -302,11 +413,16 @@ bool TabWorkspace::saveCurrentAs(const QString &directory)
         return false;
 
     Page &entry = m_pages[page];
+    const QString previous = entry.file.path();
     entry.file.setPath(path);
+    unwatchFile(previous);
+    watchFile(path);
     entry.title = entry.file.fileName();
     writePage(page);
-    if (auto *editor = qobject_cast<CodeEditor *>(page))
+    if (auto *editor = qobject_cast<CodeEditor *>(page)) {
         editor->setLanguage(m_registry->definitionForPath(path));
+        applyIndent(editor, path);
+    }
 
     setTabToolTip(indexOf(page), path);
     refreshTabTitle(page);
@@ -331,8 +447,12 @@ bool TabWorkspace::closeTab(int index)
         if (choice == QMessageBox::Save && !saveCurrent())
             return false;
     }
+    const QString closed = m_pages[page].file.path();
     removeTab(index);
     m_pages.remove(page);
+    if (m_pages.isEmpty())
+        m_untitledCount = 0;
+    unwatchFile(closed);
     page->deleteLater();
     orderPinnedTabs();
     return true;
@@ -398,48 +518,99 @@ Session TabWorkspace::captureSession() const
 
 void TabWorkspace::restoreSession(const Session &session)
 {
+    if (session.tabs.isEmpty()) {
+        emit sessionRestored();
+        return;
+    }
+
+    struct Batch {
+        int remaining = 0;
+        int activeIndex = 0;
+        QList<SessionTab> tabs;
+        QList<DocumentFile> files;
+        QStringList texts;
+        QList<QByteArray> bytes;
+    };
+    auto batch = QSharedPointer<Batch>::create();
+    batch->activeIndex = session.activeIndex;
+    batch->remaining = session.tabs.size();
+    batch->tabs = session.tabs;
+    for (int i = 0; i < session.tabs.size(); ++i) {
+        batch->files.append(DocumentFile());
+        batch->texts.append(QString());
+        batch->bytes.append(QByteArray());
+    }
+
+    for (int i = 0; i < session.tabs.size(); ++i) {
+        const SessionTab tab = session.tabs.at(i);
+        QThreadPool::globalInstance()->start([this, batch, i, tab] {
+            DocumentFile file(tab.path);
+            QString text;
+            QByteArray bytes;
+            if (tab.hex) {
+                bytes = tab.modified || tab.path.isEmpty() ? tab.bytes : file.loadBytes();
+            } else if (tab.path.isEmpty()) {
+                text = tab.text;
+            } else {
+                // load() records encoding and line endings. A modified tab
+                // keeps the persisted buffer instead of the disk text.
+                const QString disk = file.load();
+                text = tab.modified ? tab.text : disk;
+            }
+            QMetaObject::invokeMethod(this, [this, batch, i, file, text, bytes] {
+                batch->files[i] = file;
+                batch->texts[i] = text;
+                batch->bytes[i] = bytes;
+                if (--batch->remaining > 0)
+                    return;
+                applyRestoredSession(batch->tabs, batch->files, batch->texts, batch->bytes,
+                                     batch->activeIndex);
+            }, Qt::QueuedConnection);
+        });
+    }
+}
+
+void TabWorkspace::applyRestoredSession(const QList<SessionTab> &tabs, const QList<DocumentFile> &files,
+                                        const QStringList &texts, const QList<QByteArray> &bytes,
+                                        int activeIndex)
+{
     QWidget *activePage = nullptr;
-    int inserted = 0;
-    for (const SessionTab &tab : session.tabs) {
-        DocumentFile file(tab.path);
+    // Inserting each page would otherwise reload project commands and
+    // refresh the status bar once per tab.
+    blockSignals(true);
+    for (int i = 0; i < tabs.size(); ++i) {
+        const SessionTab &tab = tabs.at(i);
+        const DocumentFile &file = files.at(i);
         if (tab.hex) {
-            const QByteArray bytes = tab.modified || tab.path.isEmpty() ? tab.bytes
-                                                                        : file.loadBytes();
-            HexView *view = createHexView(bytes);
+            HexView *view = createHexView(bytes.at(i));
             insertPage(documentCount(), view, file, tab.title);
             m_pages[view].pinned = tab.pinned;
             view->setModified(tab.modified);
             view->setCursorOffset(tab.cursorPosition);
-            if (inserted == session.activeIndex)
+            if (i == activeIndex)
                 activePage = view;
         } else {
-            // Loading establishes encoding and line endings even when the
-            // disk text is superseded by the persisted unsaved buffer.
-            const QString diskText = tab.path.isEmpty() ? QString() : file.load();
-            CodeEditor *editor = addEditor(file, tab.modified ? tab.text : diskText, tab.title);
-            if (!tab.language.isEmpty())
-                editor->setLanguage(m_registry->definitionForName(tab.language));
+            const LanguageDefinition *language = tab.language.isEmpty()
+                                                     ? nullptr
+                                                     : m_registry->definitionForName(tab.language);
+            CodeEditor *editor = addEditor(file, texts.at(i), tab.title, language);
             editor->document()->setModified(tab.modified);
             QTextCursor cursor = editor->textCursor();
-            cursor.setPosition(qMin(tab.cursorPosition,
-                                    int(editor->document()->characterCount()) - 1));
+            cursor.setPosition(qMin(tab.cursorPosition, int(editor->document()->characterCount()) - 1));
             editor->setTextCursor(cursor);
             m_pages[editor].pinned = tab.pinned;
-            if (inserted == session.activeIndex)
+            if (i == activeIndex)
                 activePage = editor;
         }
-        ++inserted;
-        // Keep future "Untitled N" numbering ahead of restored titles.
         if (tab.path.isEmpty())
-            m_untitledCount = qMax(m_untitledCount,
-                                   tab.title.section(QLatin1Char(' '), -1).toInt());
+            m_untitledCount = qMax(m_untitledCount, tab.title.section(QLatin1Char(' '), -1).toInt());
     }
     orderPinnedTabs();
+    blockSignals(false);
     if (activePage != nullptr)
         setCurrentWidget(activePage);
-    // Languages were applied after each tab's insertion notified the status
-    // bar, so re-announce the final state.
     emit statusChanged();
+    emit sessionRestored();
 }
 
 void TabWorkspace::setTheme(const Theme *theme)
@@ -486,6 +657,15 @@ void TabWorkspace::setWordWrap(bool wrap)
     for (auto it = m_pages.keyBegin(); it != m_pages.keyEnd(); ++it) {
         if (auto *editor = qobject_cast<CodeEditor *>(*it))
             editor->setLineWrapMode(wrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
+    }
+}
+
+void TabWorkspace::setLineNumbersVisible(bool visible)
+{
+    m_lineNumbers = visible;
+    for (auto it = m_pages.keyBegin(); it != m_pages.keyEnd(); ++it) {
+        if (auto *editor = qobject_cast<CodeEditor *>(*it))
+            editor->setLineNumbersVisible(visible);
     }
 }
 

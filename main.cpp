@@ -8,6 +8,7 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QIcon>
+#include <QTimer>
 
 namespace {
 
@@ -55,7 +56,7 @@ int main(int argc, char *argv[])
     MainWindow window;
     QObject::connect(&instance, &SingleInstance::pathsReceived,
                      &window, &MainWindow::openForwardedPaths);
-    window.startSession(paths);
     window.show();
+    QTimer::singleShot(0, &window, [paths, &window] { window.startSession(paths); });
     return QApplication::exec();
 }

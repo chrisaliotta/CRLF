@@ -5,6 +5,8 @@
 #include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
 
+#include <QTimer>
+
 namespace {
 
 constexpr int kLexerNormal = 0;
@@ -33,15 +35,64 @@ int headingLevel(const QString &text)
 
 Highlighter::Highlighter(QTextDocument *document, const LanguageDefinition *definition,
                          const LanguageRegistry *registry, const Theme *theme)
-    : QSyntaxHighlighter(document)
+    : QSyntaxHighlighter(static_cast<QObject *>(nullptr))
     , m_definition(definition)
     , m_registry(registry)
     , m_theme(theme)
 {
+    // Attaching with automatic highlighting off skips the full-document pass
+    // QSyntaxHighlighter would otherwise run here.
+    setDocument(document);
+    m_timer = new QTimer(this);
+    m_timer->setSingleShot(true);
+    connect(m_timer, &QTimer::timeout, this, &Highlighter::highlightNextSlice);
+}
+
+void Highlighter::setAutomatic(bool automatic)
+{
+    m_automatic = automatic;
+    if (automatic)
+        return;
+    m_timer->stop();
+    m_limit = -1;
+    m_resume = QTextBlock();
+}
+
+void Highlighter::highlightGradually()
+{
+    m_timer->stop();
+    m_resume = QTextBlock();
+    highlightNextSlice();
+}
+
+void Highlighter::highlightNextSlice()
+{
+    if (document() == nullptr)
+        return;
+    m_automatic = true;
+    const QTextBlock start = m_resume.isValid() ? m_resume : document()->firstBlock();
+    m_resume = QTextBlock();
+    m_limit = 200;
+    if (start.isValid())
+        rehighlightBlock(start);
+    m_limit = -1;
+    if (m_resume.isValid())
+        m_timer->start(0);
 }
 
 void Highlighter::highlightBlock(const QString &text)
 {
+    if (!m_automatic)
+        return;
+    if (m_limit == 0) {
+        if (!m_resume.isValid())
+            m_resume = currentBlock();
+        setCurrentBlockState(currentBlockState());
+        return;
+    }
+    if (m_limit > 0)
+        --m_limit;
+
     const int packedIn = previousBlockState();
     const int lexerIn = packedIn < 0 ? kLexerNormal : (packedIn & 0xFF);
     const int embeddedIn = packedIn < 0 ? 0 : ((packedIn >> 8) & 0xFF);

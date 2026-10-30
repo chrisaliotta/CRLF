@@ -33,8 +33,13 @@ Actions::Actions(QObject *parent)
 
     explorer = make(QStringLiteral("&Explorer"), QKeySequence(Qt::CTRL | Qt::Key_B));
     explorer->setCheckable(true);
+    terminal = make(QStringLiteral("&Terminal"), QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft));
+    terminal->setCheckable(true);
     wordWrap = make(QStringLiteral("&Word Wrap"), QKeySequence());
     wordWrap->setCheckable(true);
+    lineNumbers = make(QStringLiteral("&Line Numbers"), QKeySequence());
+    lineNumbers->setCheckable(true);
+    lineNumbers->setChecked(true);
     hexMode = make(QStringLiteral("&Hex Editor"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
     hexMode->setCheckable(true);
     byteColumns = make(QStringLiteral("Byte &Columns..."), QKeySequence());
@@ -49,7 +54,7 @@ Actions::Actions(QObject *parent)
 
 void Actions::setTextEditingEnabled(bool enabled)
 {
-    for (QAction *action : {undo, redo, cut, copy, paste, find, gotoLine, wordWrap, zoomIn,
+    for (QAction *action : {undo, redo, cut, copy, paste, find, gotoLine, wordWrap, lineNumbers, zoomIn,
                             zoomOut, zoomReset, foldAll, unfoldAll})
         action->setEnabled(enabled);
 }

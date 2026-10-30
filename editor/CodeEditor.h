@@ -3,6 +3,8 @@
 #include <QList>
 #include <QPlainTextEdit>
 
+class QKeyEvent;
+
 class FoldController;
 class FoldingLayout;
 class Gutter;
@@ -27,6 +29,8 @@ public:
 
     void setTheme(const Theme *theme);
     void setLanguage(const LanguageDefinition *definition);
+    // Inserts text without coloring every line before the window can paint.
+    void replaceText(const QString &text);
     const LanguageDefinition *language() const { return m_definition; }
 
     FoldController *foldController() { return m_foldController; }
@@ -34,6 +38,11 @@ public:
 
     void zoom(int steps);
     void resetZoom();
+    // Fold markers stay. Hiding numbers narrows the gutter to just those markers.
+    void setLineNumbersVisible(bool visible);
+    // `spaces` inserts `size` spaces for Tab. Otherwise Tab inserts one tab
+    // character, drawn `size` columns wide.
+    void setIndent(bool spaces, int size);
 
     // Highlights every occurrence. An empty term clears the highlights.
     void setFindTerm(const QString &term);
@@ -45,6 +54,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -60,6 +70,9 @@ private:
     int foldMarkerWidth() const;
     void drawFoldMarker(QPainter &painter, const QRect &rect, bool expanded) const;
     void applyTabStop();
+    QString indentUnit() const;
+    // Adds or removes one indent from each line in the selection.
+    void indentLines(int direction);
 
     FoldingLayout *m_layout = nullptr;
     Gutter *m_gutter = nullptr;
@@ -69,6 +82,9 @@ private:
     const Theme *m_theme = nullptr;
     const LanguageDefinition *m_definition = nullptr;
     int m_basePointSize = 0;
+    bool m_lineNumbers = true;
+    bool m_indentSpaces = false;
+    int m_indentSize = 4;
     QString m_findTerm;
     QList<QTextEdit::ExtraSelection> m_findSelections;
     bool m_overlayRefreshQueued = false;

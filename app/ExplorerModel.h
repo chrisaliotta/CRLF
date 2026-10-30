@@ -1,10 +1,13 @@
 #pragma once
 
+#include "io/ProjectCommands.h"
+
 #include <QAbstractItemModel>
 #include <QFileIconProvider>
 #include <QList>
 
 class DirectoryListing;
+class FileIconTheme;
 
 // The scoped folder is the model's only top-level node, and its children are
 // the rows the tree shows. Listings are read on a worker thread: QFileSystemModel
@@ -21,6 +24,21 @@ public:
     explicit ExplorerModel(QObject *parent = nullptr);
     ~ExplorerModel() override;
 
+    void setIconTheme(const FileIconTheme *theme);
+    // Virtual folders for one directory, usually the folder that holds .crlf.
+    // An empty directory clears them. A directory that is already listed is
+    // read again so the groups show up.
+    // `directory` is the folder that contains .crlf. Groups may name a path
+    // under it, and a recursive group also applies in that path's subfolders.
+    void setGroups(const QString &directory, const QList<FileGroup> &groups);
+    QList<FileGroup> groups() const { return m_groups; }
+    QString projectDirectory() const { return m_projectDirectory; }
+    // Index into groups() for a virtual folder row, or -1.
+    int virtualGroup(const QModelIndex &index) const;
+    // The real directory a virtual folder is shown in.
+    QString virtualDirectory(const QModelIndex &index) const;
+    bool groupApplies(int groupIndex, const QString &directory) const;
+
     // Replaces the tree. Children arrive later through directoryLoaded.
     void setRootPath(const QString &path);
     QModelIndex rootIndex() const;
@@ -28,6 +46,7 @@ public:
     QString filePath(const QModelIndex &index) const;
     QString fileName(const QModelIndex &index) const;
     bool isDir(const QModelIndex &index) const;
+    bool isVirtual(const QModelIndex &index) const;
     bool isPlaceholder(const QModelIndex &index) const;
     bool isListed(const QModelIndex &index) const;
     bool containsName(const QModelIndex &directory, const QString &name) const;
@@ -42,6 +61,8 @@ public:
     // expand reads it again.
     void refresh(const QString &directory);
     void markStale(const QModelIndex &index);
+    // The tree reports this. An open directory uses the theme's folderExpanded icon.
+    void setExpanded(const QModelIndex &index, bool expanded);
 
     QModelIndex index(int row, int column, const QModelIndex &parent = {}) const override;
     QModelIndex parent(const QModelIndex &child) const override;
@@ -79,7 +100,20 @@ private:
     Node *find(const QString &path) const;
     Node *findFrom(Node *node, const QString &clean) const;
     void discardNode(Node *node);
+    void notifyDecoration(Node *node);
+    void reapplyGroups(Node *node);
+    void regroupDirectory(Node *directory);
+    void moveNode(Node *node, Node *destination);
+    bool groupAppliesTo(const FileGroup &group, const QString &directory) const;
+    bool shouldShowGroup(const FileGroup &group, bool hasFiles) const;
+    int groupFor(const QString &directory, const QString &fileName) const;
+    Node *ensureGroup(Node *directory, int groupIndex);
+    void regroupFile(const QString &path);
+    int fileRow(Node *parent, const QString &name) const;
 
     Node *m_root = nullptr;
+    const FileIconTheme *m_iconTheme = nullptr;
+    QString m_projectDirectory;
+    QList<FileGroup> m_groups;
     QFileIconProvider m_icons;
 };

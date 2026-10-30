@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CRLF VERSION 1.0.1 LANGUAGES CXX)
+project(CRLF VERSION 1.0.1 LANGUAGES C CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -9,7 +9,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network Svg)
 
 # windres mangles quoted paths containing spaces (this project lives under
 # "OneDrive - Quantalytix"), so hand it a space-free path relative to the
@@ -20,6 +20,33 @@ if(MINGW)
          "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}/resources/app_icon.rc")
     set(CMAKE_RC_COMPILE_OBJECT
         "<CMAKE_RC_COMPILER> --use-temp-file -O coff ${APP_ICON_RC_RELATIVE} <OBJECT>")
+endif()
+
+# libvterm 0.3.3 (MIT). The screen for the interactive shell.
+add_library(vterm STATIC
+    third_party/libvterm/src/encoding.c
+    third_party/libvterm/src/keyboard.c
+    third_party/libvterm/src/mouse.c
+    third_party/libvterm/src/parser.c
+    third_party/libvterm/src/pen.c
+    third_party/libvterm/src/screen.c
+    third_party/libvterm/src/state.c
+    third_party/libvterm/src/unicode.c
+    third_party/libvterm/src/vterm.c
+)
+target_include_directories(vterm
+    PUBLIC third_party/libvterm/include
+    PRIVATE third_party/libvterm/src
+)
+set_target_properties(vterm PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    AUTOMOC OFF
+    AUTOUIC OFF
+    AUTORCC OFF
+)
+if(NOT MSVC)
+    target_compile_options(vterm PRIVATE -w)
 endif()
 
 set(APP_SOURCES
@@ -41,10 +68,20 @@ set(APP_SOURCES
     app/ExplorerPanel.cpp
     app/ExplorerModel.h
     app/ExplorerModel.cpp
+    app/FileIconTheme.h
+    app/FileIconTheme.cpp
     app/CommandRunner.h
     app/CommandRunner.cpp
     app/OutputPanel.h
     app/OutputPanel.cpp
+    app/ConPtySession.h
+    app/ConPtySession.cpp
+    app/TerminalView.h
+    app/TerminalView.cpp
+    app/TerminalPanel.h
+    app/TerminalPanel.cpp
+    app/BottomPanel.h
+    app/BottomPanel.cpp
     app/OpenWith.h
     app/OpenWith.cpp
 )
@@ -106,7 +143,7 @@ qt_add_executable(${PROJECT_NAME}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg vterm)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     APP_NAME="${PROJECT_NAME}"
     APP_VERSION="${PROJECT_VERSION}"
@@ -124,9 +161,9 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 
 include(GNUInstallDirs)
-# Languages, themes, and fonts are files beside the program, not data inside
-# the executable. A dev build reads them next to the exe; an installed copy
-# reads them from the install folder, one level above bin.
+# Languages, themes, file icons, and fonts are files beside the program, not
+# data inside the executable. A dev build reads them next to the exe; an
+# installed copy reads them from the install folder, one level above bin.
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/resources/languages"
@@ -137,6 +174,9 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/resources/fonts"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resources/icons"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/icons"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -151,6 +191,9 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/themes/"
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/fonts/"
     DESTINATION fonts
     FILES_MATCHING PATTERN "*.ttf" PATTERN "*.txt")
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/icons/"
+    DESTINATION icons
+    FILES_MATCHING PATTERN "*.json" PATTERN "*.ttf" PATTERN "*.txt" PATTERN "*.svg" PATTERN "*.png")
 
 qt_generate_deploy_app_script(
     TARGET ${PROJECT_NAME}

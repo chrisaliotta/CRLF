@@ -31,7 +31,9 @@ struct Actions
     QAction *gotoLine;
 
     QAction *explorer;
+    QAction *terminal;
     QAction *wordWrap;
+    QAction *lineNumbers;
     QAction *hexMode;
     QAction *byteColumns;
     QAction *zoomIn;

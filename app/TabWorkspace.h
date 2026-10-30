@@ -2,10 +2,13 @@
 
 #include "Types.h"
 #include "io/DocumentFile.h"
+#include "io/ProjectCommands.h"
 
 #include <QColor>
 #include <QHash>
 #include <QTabWidget>
+
+class QFileSystemWatcher;
 
 class CodeEditor;
 class HexView;
@@ -50,6 +53,8 @@ public:
     void setCurrentHexMode(bool hex);
 
     Session captureSession() const;
+    // Reads tab contents off the UI thread, then builds the tabs.
+    // sessionRestored fires when the tabs exist.
     void restoreSession(const Session &session);
 
     void setTheme(const Theme *theme);
@@ -58,6 +63,7 @@ public:
     void setTabColors(const QColor &active, const QColor &inactive, const QColor &separator,
                       const QColor &scrollButton);
     void setWordWrap(bool wrap);
+    void setLineNumbersVisible(bool visible);
     void setBytesPerRow(int count);
     // Folder Save As opens in when a document has no path of its own yet,
     // and the folder close-prompts reuse.
@@ -66,6 +72,7 @@ public:
     // Manual syntax override for the active text tab, e.g. styling an
     // unsaved buffer as Markdown before it has an extension to detect from.
     void setCurrentLanguage(const LanguageDefinition *definition);
+    void setIndent(const IndentSettings &indent);
 
     // Open documents; count() also includes the trailing + tab.
     int documentCount() const;
@@ -74,6 +81,7 @@ signals:
     // Cursor moved, document swapped, or file identity changed; the status
     // bar and window title re-read everything on this signal.
     void statusChanged();
+    void sessionRestored();
     // A document was written; the argument is the folder it was written in.
     void fileSaved(const QString &directory);
 
@@ -86,10 +94,20 @@ private:
         bool pinned = false;
     };
 
-    CodeEditor *createEditor(const DocumentFile &file, const QString &text);
+    CodeEditor *createEditor(const DocumentFile &file, const QString &text,
+                             const LanguageDefinition *language = nullptr);
+    void applyRestoredSession(const QList<SessionTab> &tabs, const QList<DocumentFile> &files,
+                              const QStringList &texts, const QList<QByteArray> &bytes,
+                              int activeIndex);
     HexView *createHexView(const QByteArray &bytes);
     void insertPage(int index, QWidget *page, const DocumentFile &file, const QString &title);
-    CodeEditor *addEditor(const DocumentFile &file, const QString &text, const QString &title);
+    void applyIndent(CodeEditor *editor, const QString &path);
+    void watchFile(const QString &path);
+    void unwatchFile(const QString &path);
+    // Reloads a clean document when the file changes outside the editor.
+    void reloadExternal(const QString &path);
+    CodeEditor *addEditor(const DocumentFile &file, const QString &text, const QString &title,
+                          const LanguageDefinition *language = nullptr);
     void writePage(QWidget *page);
     // Replaces the style-drawn close button so the spacing around it can be
     // controlled; Qt ignores stylesheet margins on QTabBar::close-button.
@@ -111,10 +129,13 @@ private:
     QWidget *m_newTabPage = nullptr;
     QHash<QWidget *, Page> m_pages;
     bool m_wordWrap = false;
+    bool m_lineNumbers = true;
     QString m_saveDirectory;
     int m_bytesPerRow = 16;
     int m_untitledCount = 0;
     int m_hoveredTab = -1;
     QColor m_activeTitle;
     QColor m_inactiveTitle;
+    QFileSystemWatcher *m_fileWatcher = nullptr;
+    IndentSettings m_indent;
 };

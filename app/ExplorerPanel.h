@@ -1,11 +1,14 @@
 #pragma once
 
+#include "io/ProjectCommands.h"
+
 #include <QWidget>
 
 class DirectoryFilter;
 class ExplorerDelegate;
 class ExplorerModel;
 class ExplorerTree;
+class FileIconTheme;
 class QLabel;
 class QModelIndex;
 class QStackedWidget;
@@ -28,6 +31,10 @@ public:
     // warnIfMissing is false for the folder restored at startup: a missing
     // saved folder closes the explorer instead of interrupting launch.
     void setRootPath(const QString &path, bool warnIfMissing = true);
+    void setIconTheme(const FileIconTheme *theme);
+    void setGroups(const QString &directory, const QList<FileGroup> &groups);
+    // Name patterns from .crlf `hide`. A pattern with * or ? is a wildcard.
+    void setHidden(const QStringList &patterns);
     // Empty until the user has chosen a folder.
     QString rootPath() const { return m_rootPath; }
 
@@ -37,6 +44,8 @@ signals:
     // A file or folder was renamed or moved, so open tabs can follow it.
     void pathMoved(const QString &from, const QString &to);
     void closeRequested();
+    // The edited group list. MainWindow writes it into .crlf.
+    void virtualFoldersEdited(const QList<FileGroup> &groups);
 
 private:
     QToolButton *makeHeaderButton(const QString &glyph, const QString &toolTip);
@@ -48,6 +57,10 @@ private:
     void setClipboard(const QString &path, bool cut);
     void paste(const QString &directory);
     void confirmAndMove(const QString &source, const QString &directory);
+    void createVirtualFolder(const QString &directory);
+    void addToVirtualFolder(const QString &filePath, int groupIndex);
+    void setGroupRecursive(int groupIndex, bool recursive);
+    void commitGroups(const QList<FileGroup> &groups);
     void deletePath(const QString &path);
     void createFile(const QString &directory);
     void insertNewFile(const QString &directory);

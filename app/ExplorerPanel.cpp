@@ -8,12 +8,17 @@
 #include <QCursor>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEvent>
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QAbstractItemDelegate>
+#include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QLineEdit>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -26,6 +31,7 @@
 #include <QStackedWidget>
 #include <QPainter>
 #include <QPersistentModelIndex>
+#include <QRegularExpression>
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
@@ -117,6 +123,16 @@ public:
         setDefaultDropAction(Qt::MoveAction);
         // Hovering a collapsed folder with a dragged row opens it.
         setAutoExpandDelay(600);
+        setViewportMargins(12, 0, 0, 0);
+    }
+
+    // The file-icon style sheet polishes the view and clears viewport margins.
+    bool event(QEvent *event) override
+    {
+        const bool handled = QTreeView::event(event);
+        if (event->type() == QEvent::Polish)
+            setViewportMargins(12, 0, 0, 0);
+        return handled;
     }
 
 protected:
@@ -177,18 +193,38 @@ protected:
             event->ignore();
             return;
         }
-        const QString source = QDir::cleanPath(event->mimeData()->urls().first().toLocalFile());
+        const QString dropped = QDir::cleanPath(event->mimeData()->urls().first().toLocalFile());
         const QModelIndex index = indexAt(event->position().toPoint());
+        if (index.isValid()) {
+            const QModelIndex target = sourceIndex(index);
+            if (files()->isVirtual(target)) {
+                if (QFileInfo(dropped).isDir()) {
+                    event->ignore();
+                    return;
+                }
+                const int group = files()->virtualGroup(target);
+                const QString home = files()->virtualDirectory(target);
+                event->acceptProposedAction();
+                QTimer::singleShot(0, m_panel, [panel = m_panel, dropped, group, home] {
+                    if (!samePath(QFileInfo(dropped).absolutePath(), home)) {
+                        panel->warn(QStringLiteral("Drop a file from this folder."));
+                        return;
+                    }
+                    panel->addToVirtualFolder(dropped, group);
+                });
+                return;
+            }
+        }
         QString directory = m_panel->m_rootPath;
         if (index.isValid()) {
-            const QModelIndex source = sourceIndex(index);
-            const QString path = files()->filePath(source);
-            directory = files()->isDir(source) ? path : QFileInfo(path).absolutePath();
+            const QModelIndex target = sourceIndex(index);
+            const QString path = files()->filePath(target);
+            directory = files()->isDir(target) ? path : QFileInfo(path).absolutePath();
         }
         event->acceptProposedAction();
         // The drag pixmap stays up until this returns, so confirm afterwards.
-        QTimer::singleShot(0, m_panel, [panel = m_panel, source, directory] {
-            panel->confirmAndMove(source, directory);
+        QTimer::singleShot(0, m_panel, [panel = m_panel, dropped, directory] {
+            panel->confirmAndMove(dropped, directory);
         });
     }
 
@@ -211,6 +247,16 @@ private:
 // Drops directories whose names start with '.' while leaving dot files,
 // such as .crlf, in the tree. The scoped folder itself is the model's only
 // top-level row and stays visible even when its name starts with '.'.
+bool patternMatches(const QString &pattern, const QString &name)
+{
+    if (!pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?')))
+        return name.compare(pattern, Qt::CaseInsensitive) == 0;
+    const QRegularExpression expression(
+        QRegularExpression::wildcardToRegularExpression(pattern),
+        QRegularExpression::CaseInsensitiveOption);
+    return expression.match(name).hasMatch();
+}
+
 class DirectoryFilter : public QSortFilterProxyModel
 {
 public:
@@ -220,6 +266,7 @@ public:
     }
 
     bool hideDotFolders = true;
+    QStringList hidden;
 
     void setHideDotFolders(bool hide)
     {
@@ -228,14 +275,28 @@ public:
         endFilterChange();
     }
 
+    void setHidden(const QStringList &patterns)
+    {
+        hidden = patterns;
+        beginFilterChange();
+        endFilterChange();
+    }
+
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override
     {
-        if (!hideDotFolders || !sourceParent.isValid())
-            return true;
         auto *files = static_cast<ExplorerModel *>(sourceModel());
         const QModelIndex index = files->index(sourceRow, 0, sourceParent);
-        return !files->isDir(index) || !files->fileName(index).startsWith(QLatin1Char('.'));
+        if (files->isPlaceholder(index))
+            return true;
+        const QString name = files->fileName(index);
+        for (const QString &pattern : hidden) {
+            if (patternMatches(pattern, name))
+                return false;
+        }
+        if (!hideDotFolders || !sourceParent.isValid())
+            return true;
+        return !files->isDir(index) || !name.startsWith(QLatin1Char('.'));
     }
 };
 
@@ -301,6 +362,8 @@ ExplorerPanel::ExplorerPanel(QWidget *parent)
     connect(delegate, &QAbstractItemDelegate::closeEditor, this,
             [this](QWidget *, QAbstractItemDelegate::EndEditHint hint) { finishNewFile(int(hint)); });
     m_tree->setHeaderHidden(true);
+    // The platform default (20) steps each nested folder quite far to the right.
+    m_tree->setIndentation(12);
     // Single clicks already toggle folders; a double click would toggle twice more.
     m_tree->setExpandsOnDoubleClick(false);
     // Renaming only starts from the context menu.
@@ -318,12 +381,16 @@ ExplorerPanel::ExplorerPanel(QWidget *parent)
         else
             emit fileActivated(m_model->filePath(source));
     });
+    connect(m_tree, &QTreeView::expanded, this, [this](const QModelIndex &index) {
+        m_model->setExpanded(m_filter->mapToSource(index), true);
+    });
     connect(m_tree, &QTreeView::collapsed, this, [this](const QModelIndex &index) {
         m_expandingAll = false;
+        m_model->setExpanded(m_filter->mapToSource(index), false);
         // Dropping rows inside the collapse handler reenters the view.
         const QPersistentModelIndex source = m_filter->mapToSource(index);
         QTimer::singleShot(0, this, [this, source] {
-            if (source.isValid())
+            if (source.isValid() && !m_model->isVirtual(source))
                 m_model->markStale(source);
         });
     });
@@ -362,6 +429,21 @@ QToolButton *ExplorerPanel::makeHeaderButton(const QString &glyph, const QString
     button->setFocusPolicy(Qt::NoFocus);
     button->setFixedSize(22, 22);
     return button;
+}
+
+void ExplorerPanel::setIconTheme(const FileIconTheme *theme)
+{
+    m_model->setIconTheme(theme);
+}
+
+void ExplorerPanel::setGroups(const QString &directory, const QList<FileGroup> &groups)
+{
+    m_model->setGroups(directory, groups);
+}
+
+void ExplorerPanel::setHidden(const QStringList &patterns)
+{
+    m_filter->setHidden(patterns);
 }
 
 void ExplorerPanel::setRootPath(const QString &path, bool warnIfMissing)
@@ -442,8 +524,9 @@ void ExplorerPanel::showContextMenu(const QPoint &pos)
     const QModelIndex index = m_tree->indexAt(pos);
     const QModelIndex source = m_filter->mapToSource(index);
     const bool onItem = index.isValid() && !m_model->isPlaceholder(source);
-    const QString path = onItem ? m_model->filePath(source) : m_rootPath;
-    const bool onFolder = onItem && m_model->isDir(source);
+    const bool virtualFolder = onItem && m_model->isVirtual(source);
+    const QString path = onItem && !virtualFolder ? m_model->filePath(source) : m_rootPath;
+    const bool onFolder = onItem && m_model->isDir(source) && !virtualFolder;
     // Pasting onto a file drops into the folder that holds it.
     const QString pasteTarget = !onItem || onFolder ? path : QFileInfo(path).absolutePath();
 
@@ -462,31 +545,46 @@ void ExplorerPanel::showContextMenu(const QPoint &pos)
         m_filter->setHideDotFolders(hide);
         QSettings().setValue(QStringLiteral("hideDotFolders"), hide);
     });
-    menu.addSeparator();
-    const QString newFileDirectory = !onItem ? m_rootPath
-                                       : onFolder ? path
-                                                  : QFileInfo(path).absolutePath();
-    menu.addAction(QStringLiteral("New File"), this, [this, newFileDirectory] {
-        createFile(newFileDirectory);
-    })->setEnabled(!newFileDirectory.isEmpty());
-    menu.addSeparator();
-    menu.addAction(QStringLiteral("Reveal in File Explorer"), this, [this, path, onItem] {
-        if (onItem)
-            FileOperations::revealInFileExplorer(path);
-        else
-            QDesktopServices::openUrl(QUrl::fromLocalFile(m_rootPath));
-    });
-    menu.addSeparator();
-    if (onItem) {
-        menu.addAction(QStringLiteral("Cut"), this, [this, path] { setClipboard(path, true); });
-        menu.addAction(QStringLiteral("Copy"), this, [this, path] { setClipboard(path, false); });
+    if (virtualFolder) {
+        const int group = m_model->virtualGroup(source);
+        QAction *recursive = menu.addAction(QStringLiteral("Apply in Subfolders"));
+        recursive->setCheckable(true);
+        if (group >= 0 && group < m_model->groups().size())
+            recursive->setChecked(m_model->groups().at(group).recursive);
+        connect(recursive, &QAction::toggled, this, [this, group](bool checked) {
+            setGroupRecursive(group, checked);
+        });
     }
-    menu.addAction(QStringLiteral("Paste"), this, [this, pasteTarget] { paste(pasteTarget); })
-        ->setEnabled(!m_clipboardPath.isEmpty());
-    if (onItem) {
+    if (!virtualFolder) {
         menu.addSeparator();
-        menu.addAction(QStringLiteral("Rename"), this, [this, index] { m_tree->edit(index); });
-        menu.addAction(QStringLiteral("Delete"), this, [this, path] { deletePath(path); });
+        const QString newFileDirectory = !onItem ? m_rootPath
+                                           : onFolder ? path
+                                                      : QFileInfo(path).absolutePath();
+        menu.addAction(QStringLiteral("New File"), this, [this, newFileDirectory] {
+            createFile(newFileDirectory);
+        })->setEnabled(!newFileDirectory.isEmpty());
+        menu.addAction(QStringLiteral("New Virtual Folder"), this, [this, newFileDirectory] {
+            createVirtualFolder(newFileDirectory);
+        })->setEnabled(!newFileDirectory.isEmpty());
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("Reveal in File Explorer"), this, [this, path, onItem] {
+            if (onItem)
+                FileOperations::revealInFileExplorer(path);
+            else
+                QDesktopServices::openUrl(QUrl::fromLocalFile(m_rootPath));
+        });
+        menu.addSeparator();
+        if (onItem) {
+            menu.addAction(QStringLiteral("Cut"), this, [this, path] { setClipboard(path, true); });
+            menu.addAction(QStringLiteral("Copy"), this, [this, path] { setClipboard(path, false); });
+        }
+        menu.addAction(QStringLiteral("Paste"), this, [this, pasteTarget] { paste(pasteTarget); })
+            ->setEnabled(!m_clipboardPath.isEmpty());
+        if (onItem) {
+            menu.addSeparator();
+            menu.addAction(QStringLiteral("Rename"), this, [this, index] { m_tree->edit(index); });
+            menu.addAction(QStringLiteral("Delete"), this, [this, path] { deletePath(path); });
+        }
     }
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
 }
@@ -533,6 +631,102 @@ void ExplorerPanel::paste(const QString &directory)
     m_clipboardPath.clear();
     m_tree->viewport()->update();
     emit pathMoved(source, destination);
+}
+
+void ExplorerPanel::commitGroups(const QList<FileGroup> &groups)
+{
+    const QString directory = m_model->projectDirectory().isEmpty() ? m_rootPath : m_model->projectDirectory();
+    m_model->setGroups(directory, groups);
+    emit virtualFoldersEdited(groups);
+}
+
+void ExplorerPanel::createVirtualFolder(const QString &directory)
+{
+    const QString base = m_model->projectDirectory().isEmpty() ? m_rootPath : m_model->projectDirectory();
+    const QString cleanBase = QDir::cleanPath(base);
+    const QString cleanDirectory = QDir::cleanPath(directory);
+    const bool inside = samePath(cleanDirectory, cleanBase)
+                        || cleanDirectory.startsWith(cleanBase + QLatin1Char('/'), Qt::CaseInsensitive);
+    if (!inside) {
+        warn(QStringLiteral("Virtual folders belong to the folder that contains .crlf."));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("New Virtual Folder"));
+    auto *nameEdit = new QLineEdit(&dialog);
+    auto *recursive = new QCheckBox(QStringLiteral("Apply in subfolders"), &dialog);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto *form = new QFormLayout(&dialog);
+    form->addRow(QStringLiteral("Name"), nameEdit);
+    form->addRow(recursive);
+    form->addRow(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QString name = nameEdit->text().trimmed();
+    if (name.isEmpty() || name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\'))) {
+        warn(QStringLiteral("Enter a folder name."));
+        return;
+    }
+
+    QString relative = QDir(cleanBase).relativeFilePath(cleanDirectory);
+    if (relative == QLatin1String("."))
+        relative.clear();
+
+    QList<FileGroup> groups = m_model->groups();
+    for (const FileGroup &existing : groups) {
+        if (existing.name.compare(name, Qt::CaseInsensitive) == 0
+            && existing.path.compare(relative, Qt::CaseInsensitive) == 0) {
+            warn(QStringLiteral("A virtual folder with that name already exists here."));
+            return;
+        }
+    }
+
+    FileGroup group;
+    group.name = name;
+    group.path = relative;
+    group.recursive = recursive->isChecked();
+    groups.append(group);
+    commitGroups(groups);
+}
+
+void ExplorerPanel::addToVirtualFolder(const QString &filePath, int groupIndex)
+{
+    QList<FileGroup> groups = m_model->groups();
+    if (groupIndex < 0 || groupIndex >= groups.size())
+        return;
+    const QString name = QFileInfo(filePath).fileName();
+    FileGroup &group = groups[groupIndex];
+    for (const QString &pattern : group.files) {
+        const bool exact = !pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?'));
+        if (exact && pattern.compare(name, Qt::CaseInsensitive) == 0)
+            return;
+    }
+    for (int i = 0; i < groups.size(); ++i) {
+        if (i == groupIndex)
+            continue;
+        QStringList &patterns = groups[i].files;
+        for (int n = patterns.size() - 1; n >= 0; --n) {
+            const QString &pattern = patterns.at(n);
+            const bool exact = !pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?'));
+            if (exact && pattern.compare(name, Qt::CaseInsensitive) == 0)
+                patterns.removeAt(n);
+        }
+    }
+    group.files.append(name);
+    commitGroups(groups);
+}
+
+void ExplorerPanel::setGroupRecursive(int groupIndex, bool recursive)
+{
+    QList<FileGroup> groups = m_model->groups();
+    if (groupIndex < 0 || groupIndex >= groups.size() || groups.at(groupIndex).recursive == recursive)
+        return;
+    groups[groupIndex].recursive = recursive;
+    commitGroups(groups);
 }
 
 void ExplorerPanel::confirmAndMove(const QString &source, const QString &directory)
@@ -610,6 +804,8 @@ void ExplorerPanel::insertNewFile(const QString &directory)
     // Asking the model for the path inserts the row. A file created beside
     // the model is otherwise invisible until the folder is scoped again.
     const QModelIndex index = m_filter->mapFromSource(m_model->index(path));
+    if (index.isValid() && index.parent().isValid() && index.parent() != m_tree->rootIndex())
+        m_tree->expand(index.parent());
     if (!index.isValid()) {
         QFile::remove(path);
         warn(QStringLiteral("Could not create \"%1\".").arg(name));

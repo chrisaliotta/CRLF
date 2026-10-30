@@ -3,6 +3,7 @@
 #include "Types.h"
 
 #include <QSyntaxHighlighter>
+#include <QTextBlock>
 
 class LanguageDefinition;
 class LanguageRegistry;
@@ -30,6 +31,13 @@ public:
     Highlighter(QTextDocument *document, const LanguageDefinition *definition,
                 const LanguageRegistry *registry, const Theme *theme);
 
+    // While false, document edits do not recolor. Used around a bulk
+    // setPlainText so the insert itself does not highlight every line.
+    void setAutomatic(bool automatic);
+    // Colors the start of the document immediately and the rest in slices
+    // so a large file does not freeze the window.
+    void highlightGradually();
+
 protected:
     void highlightBlock(const QString &text) override;
 
@@ -55,8 +63,15 @@ private:
     // Adds a background behind every existing format run on the line.
     void applyBackground(int length, const QColor &color);
     int indentFoldLevel() const;
+    void highlightNextSlice();
 
     const LanguageDefinition *m_definition;
     const LanguageRegistry *m_registry;
     const Theme *m_theme;
+    class QTimer *m_timer = nullptr;
+    QTextBlock m_resume;
+    // Below zero, highlightBlock runs without a cap. Zero means this slice
+    // is full and further blocks in the same cascade keep their old state.
+    int m_limit = -1;
+    bool m_automatic = false;
 };
