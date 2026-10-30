@@ -2,7 +2,8 @@
 
 A lightweight tabbed text editor for Windows built with Qt Widgets, intended as a
 minimalist replacement for Notepad and Notepad++. It provides syntax highlighting driven by
-bundled JSON language definitions and collapsible (foldable) text regions.
+bundled JSON language definitions and collapsible (foldable) text regions. Users can also define
+custom menu commands that will run scripts or shell commands.
 
 ## Features
 
