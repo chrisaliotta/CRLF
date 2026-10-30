@@ -51,7 +51,7 @@ View > Hex Editor (Ctrl+Shift+H) swaps the current tab between text and a hex vi
 
 ### Project commands
 
-A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, adds commands to the Run menu. Each entry is a JSON object:
+A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, adds commands to the menu bar. [docs/commands.md](docs/commands.md) describes the file, the menus, and the variables. Each entry is a JSON object:
 
 ```json
 [
