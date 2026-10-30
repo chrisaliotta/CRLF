@@ -41,7 +41,7 @@ A `.crlf` command whose working directory is inside that share runs through `wsl
 
 Highlighting is driven by bundled JSON definitions:
 
-- C++, C#, Python, Bash (`.sh`), JSON, XML/HTML, SQL, SQL Run (`.sqlrun`), Markdown, `.crlf` command files, and plain text
+- C++, C#, TypeScript/JavaScript, Python, Bash (`.sh`), JSON, HTML, CSS, SCSS, Sass, Tailwind CSS, XML, SQL, SQL Run (`.sqlrun`), Markdown, `.crlf` command files, and plain text
 - Folding follows the language: brace and bracket delimiters, indentation, or Markdown headings. Fenced code blocks in Markdown use the inner language's rules
 - A line or block comment, string, or keyword match inside a string is only colored when the language says it should be
 

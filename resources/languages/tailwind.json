@@ -1,0 +1,16 @@
+{
+  "name": "Tailwind CSS",
+  "extensions": ["tailwind"],
+  "blockComment": { "start": "/*", "end": "*/" },
+  "strings": [
+    { "start": "\"", "end": "\"", "escape": "\\" },
+    { "start": "'", "end": "'", "escape": "\\" }
+  ],
+  "patterns": [
+    { "role": "preprocessor", "regex": "@(?:tailwind|apply|layer|config|plugin|theme|source|utility|variant|custom-variant|reference|import)\\b" },
+    { "role": "function", "regex": "\\b(?:theme|screen|config)\\s*(?=\\()" },
+    { "role": "type", "regex": "(?<![\\w-])(?:[a-z][a-z0-9]*(?:-|:|/))*[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:/[\\d.]+)?(?![\\w-])" },
+    { "role": "keyword", "regex": "(?<![\\w-])(?:[a-z]+:)*!(?:[a-z][a-z0-9-]*|[a-z0-9]+(?:-[a-z0-9]+)*)(?![\\w-])" }
+  ],
+  "folding": { "mode": "indent" }
+}

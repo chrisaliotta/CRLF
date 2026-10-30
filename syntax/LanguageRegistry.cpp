@@ -84,8 +84,9 @@ const LanguageDefinition *LanguageRegistry::definitionForFenceInfo(const QString
         {QStringLiteral("c#"), QStringLiteral("cs")},
         {QStringLiteral("csharp"), QStringLiteral("cs")},
         {QStringLiteral("python3"), QStringLiteral("py")},
-        {QStringLiteral("js"), QStringLiteral("json")},
+        {QStringLiteral("javascript"), QStringLiteral("ts")},
         {QStringLiteral("jsonc"), QStringLiteral("json")},
+        {QStringLiteral("tailwindcss"), QStringLiteral("tailwind")},
         {QStringLiteral("text"), QStringLiteral("txt")},
         {QStringLiteral("plaintext"), QStringLiteral("txt")},
     };

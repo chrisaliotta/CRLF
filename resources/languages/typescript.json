@@ -1,0 +1,40 @@
+{
+  "name": "TypeScript",
+  "extensions": ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"],
+  "lineComment": "//",
+  "blockComment": { "start": "/*", "end": "*/" },
+  "strings": [
+    { "start": "`", "end": "`", "escape": "\\", "multiline": true },
+    { "start": "\"", "end": "\"", "escape": "\\" },
+    { "start": "'", "end": "'", "escape": "\\" }
+  ],
+  "keywords": [
+    "abstract", "as", "async", "await", "break", "case", "catch", "class",
+    "const", "continue", "debugger", "declare", "default", "delete", "do",
+    "else", "enum", "export", "extends", "false", "finally", "for", "from",
+    "function", "if", "implements", "import", "in", "infer", "instanceof",
+    "interface", "is", "keyof", "let", "module", "namespace", "new", "null",
+    "of", "override", "package", "private", "protected", "public", "readonly",
+    "return", "satisfies", "static", "super", "switch", "this", "throw",
+    "true", "try", "type", "typeof", "undefined", "unique", "using", "var",
+    "while", "with", "yield"
+  ],
+  "types": [
+    "any", "bigint", "boolean", "never", "number", "object", "string",
+    "symbol", "unknown", "void"
+  ],
+  "patterns": [
+    { "role": "number", "regex": "\\b(0[xXoObB][0-9a-fA-F_]+|\\d[\\d_]*(\\.\\d+)?([eE][+-]?\\d+)?)n?\\b" },
+    { "role": "preprocessor", "regex": "\\$\\{[^}]*\\}", "insideStrings": true },
+    { "role": "preprocessor", "regex": "@[A-Za-z_]\\w*" },
+    { "role": "keyword", "regex": "</?[A-Za-z][\\w.-]*" },
+    { "role": "function", "regex": "\\b[A-Za-z_$][\\w$]*(?=\\s*\\()" }
+  ],
+  "folding": {
+    "mode": "delimiter",
+    "pairs": [
+      { "open": "{", "close": "}" },
+      { "open": "[", "close": "]" }
+    ]
+  }
+}

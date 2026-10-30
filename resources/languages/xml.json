@@ -1,6 +1,6 @@
 {
   "name": "XML",
-  "extensions": ["xml", "html", "htm", "svg", "ui", "qrc", "xaml", "csproj", "config"],
+  "extensions": ["xml", "svg", "ui", "qrc", "xaml", "csproj", "config"],
   "blockComment": { "start": "<!--", "end": "-->" },
   "strings": [
     { "start": "\"", "end": "\"" },

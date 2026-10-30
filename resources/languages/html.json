@@ -1,0 +1,16 @@
+{
+  "name": "HTML",
+  "extensions": ["html", "htm", "xhtml"],
+  "blockComment": { "start": "<!--", "end": "-->" },
+  "strings": [
+    { "start": "\"", "end": "\"" },
+    { "start": "'", "end": "'" }
+  ],
+  "patterns": [
+    { "role": "keyword", "regex": "(?i)<!doctype\\b|</?[A-Za-z][\\w:-]*|/?>" },
+    { "role": "type", "regex": "\\b[A-Za-z_:][\\w:.-]*(?=\\s*=)" },
+    { "role": "number", "regex": "&#?\\w+;" },
+    { "role": "function", "regex": "(?<=\\bclass(?:Name)?\\s*=\\s*[\"'])[^\"']+", "insideStrings": true }
+  ],
+  "folding": { "mode": "indent" }
+}

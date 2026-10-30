@@ -1,6 +1,12 @@
 <RCC>
     <qresource prefix="/">
         <file>languages/cpp.json</file>
+        <file>languages/typescript.json</file>
+        <file>languages/css.json</file>
+        <file>languages/scss.json</file>
+        <file>languages/sass.json</file>
+        <file>languages/html.json</file>
+        <file>languages/tailwind.json</file>
         <file>languages/csharp.json</file>
         <file>languages/python.json</file>
         <file>languages/bash.json</file>
