@@ -28,6 +28,10 @@ public:
 
     void setTheme(const Theme *theme);
 
+    // Bytes shown on each row. The default is 16.
+    void setBytesPerRow(int count);
+    int bytesPerRow() const { return m_bytesPerRow; }
+
 signals:
     void modificationChanged(bool modified);
     void cursorChanged();
@@ -64,6 +68,7 @@ private:
     void markModified();
 
     QByteArray m_data;
+    int m_bytesPerRow = 16;
     qint64 m_cursor = 0;
     bool m_highNibble = true;
     Pane m_pane = Pane::Hex;

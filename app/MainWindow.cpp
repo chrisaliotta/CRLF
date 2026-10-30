@@ -8,6 +8,7 @@
 #include "app/TabWorkspace.h"
 #include "app/TitleBar.h"
 #include "io/ProjectCommands.h"
+#include "io/WslPath.h"
 #include "editor/CodeEditor.h"
 #include "editor/FoldController.h"
 #include "hex/HexView.h"
@@ -23,10 +24,14 @@
 #include <QFileSystemWatcher>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
+#include <QMenu>
 #include <QMenuBar>
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTextCursor>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -39,6 +44,8 @@ constexpr auto kPersistSetting = "persistUnsavedEdits";
 constexpr auto kExplorerRootSetting = "explorerRoot";
 constexpr auto kExplorerVisibleSetting = "explorerVisible";
 constexpr auto kThemeSetting = "theme";
+constexpr auto kHexColumnsSetting = "hexBytesPerRow";
+constexpr auto kSaveDirectorySetting = "saveDirectory";
 constexpr int kSessionSnapshotIntervalMs = 30000;
 constexpr int kResizeMargin = 6;
 
@@ -51,13 +58,25 @@ QString rgbaString(const QColor &color)
         .arg(color.alpha());
 }
 
+QColor chromeBorder(const Theme &theme)
+{
+    const bool dark = theme.background.lightness() < 128;
+    return dark ? theme.background.lighter(190) : theme.background.darker(122);
+}
+
+QColor chromeColor(const Theme &theme)
+{
+    const bool dark = theme.background.lightness() < 128;
+    return dark ? theme.background.lighter(135) : theme.background.darker(106);
+}
+
 // The whole window chrome (title bar, tabs, menus, find bar, status bar)
 // is styled from the active editor theme so it follows dark/light switches.
 QString chromeStyleSheet(const Theme &theme)
 {
     const bool dark = theme.background.lightness() < 128;
-    const QColor chrome = dark ? theme.background.lighter(135) : theme.background.darker(106);
-    const QColor border = dark ? theme.background.lighter(190) : theme.background.darker(122);
+    const QColor chrome = chromeColor(theme);
+    const QColor border = chromeBorder(theme);
     const QColor hover = dark ? QColor(255, 255, 255, 24) : QColor(0, 0, 0, 18);
     const QColor pressed = dark ? QColor(255, 255, 255, 38) : QColor(0, 0, 0, 32);
     const QColor scrollHandle = dark ? QColor(255, 255, 255, 50) : QColor(0, 0, 0, 60);
@@ -82,12 +101,13 @@ QMenu::separator { height: 1px; background: %3; margin: 4px 8px; }
 QTabWidget::pane { border: none; }
 QTabBar { background: transparent; qproperty-drawBase: 0; }
 QPlainTextEdit { border: none; }
-QTabBar::tab { background: transparent; color: %2; padding: 5px 18px;
+QTabBar::tab { background: transparent; color: %2; padding: 5px 0;
                margin: 3px 2px 0 2px;
                border-top-left-radius: 7px; border-top-right-radius: 7px; }
 QTabBar::tab:selected { background: %7; }
 QTabBar::tab:hover:!selected { background: %4; }
-#tabCloseButton { border: none; border-radius: 4px; background: transparent; color: %2; }
+#newTabLabel { color: %2; background: transparent; }
+#tabCloseButton { border: none; border-radius: 4px; background: transparent; color: %2; padding: 0; }
 #tabCloseButton:hover { background: %4; }
 #tabCloseButton:pressed { background: %5; }
 QStatusBar { background: %1; color: %2; }
@@ -109,6 +129,7 @@ OutputPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-
 OutputPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 ExplorerPanel { background: %1; }
 #explorerTitle { color: %2; font-weight: bold; padding: 6px 12px; }
+#explorerLoading { color: %2; }
 ExplorerPanel QToolButton { border: none; border-radius: 4px; background: transparent; color: %2; }
 ExplorerPanel QToolButton:hover { background: %4; }
 ExplorerPanel QToolButton:pressed { background: %5; }
@@ -132,6 +153,14 @@ QScrollBar::handle:vertical { min-height: 24px; }
 QScrollBar::handle:horizontal { min-width: 24px; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+CodeEditor QScrollBar:vertical { background: %7; width: 14px; border: none; margin: 0; }
+CodeEditor QScrollBar:horizontal { background: %7; height: 14px; border: none; margin: 0; }
+CodeEditor QScrollBar::groove { background: %7; border: none; }
+CodeEditor QScrollBar::add-page, CodeEditor QScrollBar::sub-page { background: %7; border: none; }
+CodeEditor QScrollBar::handle:vertical { background: %8; min-height: 24px; border-radius: 2px; margin: 2px 5px; }
+CodeEditor QScrollBar::handle:horizontal { background: %8; min-width: 24px; border-radius: 2px; margin: 5px 2px; }
+CodeEditor QScrollBar[expanded="true"]::handle:vertical { margin: 1px; border-radius: 5px; }
+CodeEditor QScrollBar[expanded="true"]::handle:horizontal { margin: 1px; border-radius: 5px; }
 )")
         .arg(chrome.name(), theme.foreground.name(), border.name(), rgbaString(hover),
              rgbaString(pressed), theme.selection.name(), theme.background.name(),
@@ -169,6 +198,94 @@ const Theme *themeNamed(const QList<Theme> &themes, const QString &name)
     return &themes.first();
 }
 
+constexpr auto kProjectItem = "projectItem";
+
+QString menuTitle(const QAction *action)
+{
+    QString title = action->text();
+    title.remove(QLatin1Char('&'));
+    return title;
+}
+
+QMenu *existingMenu(const QList<QAction *> &actions, const QString &title)
+{
+    for (QAction *action : actions) {
+        if (action->menu() && menuTitle(action).compare(title, Qt::CaseInsensitive) == 0)
+            return action->menu();
+    }
+    return nullptr;
+}
+
+// The first path entry is a menu-bar menu. Later entries nest under it.
+// Menus this creates are marked so the next reload can remove them without
+// touching File, Edit, View, Language, or Run.
+QMenu *menuAt(QMenuBar *bar, QMenu *run, const QStringList &path)
+{
+    if (path.isEmpty())
+        return run;
+    QMenu *menu = existingMenu(bar->actions(), path.first());
+    if (!menu) {
+        menu = bar->addMenu(path.first());
+        menu->menuAction()->setProperty(kProjectItem, true);
+    }
+    for (int i = 1; i < path.size(); ++i) {
+        QMenu *child = existingMenu(menu->actions(), path.at(i));
+        if (!child) {
+            child = menu->addMenu(path.at(i));
+            child->menuAction()->setProperty(kProjectItem, true);
+        }
+        menu = child;
+    }
+    return menu;
+}
+
+QAction *addProjectAction(QMenu *menu, const QString &text)
+{
+    QAction *action = menu->addAction(text);
+    action->setProperty(kProjectItem, true);
+    return action;
+}
+
+void removeProjectItems(QMenu *menu)
+{
+    const QList<QAction *> actions = menu->actions();
+    for (QAction *action : actions) {
+        if (!action->property(kProjectItem).toBool()) {
+            if (QMenu *child = action->menu())
+                removeProjectItems(child);
+            continue;
+        }
+        if (QMenu *child = action->menu())
+            delete child;
+        else
+            delete action;
+    }
+}
+
+void clearProjectCommands(QMenuBar *bar)
+{
+    const QList<QAction *> roots = bar->actions();
+    for (QAction *action : roots) {
+        QMenu *menu = action->menu();
+        if (!menu)
+            continue;
+        if (action->property(kProjectItem).toBool())
+            delete menu;
+        else
+            removeProjectItems(menu);
+    }
+}
+
+void markRunningCommands(QMenu *menu, const CommandRunner *runner)
+{
+    for (QAction *action : menu->actions()) {
+        if (QMenu *child = action->menu())
+            markRunningCommands(child, runner);
+        else if (action->isEnabled())
+            action->setChecked(runner->isRunning(action->text()));
+    }
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -189,6 +306,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_explorer = new ExplorerPanel(this);
     m_output = new OutputPanel(this);
     m_runner = new CommandRunner(this);
+    m_runner->setContextProvider([this] { return commandVariables(); });
     m_commandWatcher = new QFileSystemWatcher(this);
     m_explorer->hide();
 
@@ -226,11 +344,18 @@ MainWindow::MainWindow(QWidget *parent)
 
     const QSettings settings;
     m_actions.persistEdits->setChecked(settings.value(kPersistSetting, true).toBool());
+    m_tabs->setBytesPerRow(settings.value(kHexColumnsSetting, 16).toInt());
+    m_scopedRoot = settings.value(kExplorerRootSetting).toString();
+    m_saveDirectory = settings.value(kSaveDirectorySetting).toString();
+    if (m_saveDirectory.isEmpty())
+        m_saveDirectory = m_scopedRoot;
+    m_tabs->setSaveDirectory(m_saveDirectory);
 
     // The saved folder may have been deleted or its drive unplugged since.
-    const QString explorerRoot = settings.value(kExplorerRootSetting).toString();
-    if (QFileInfo(explorerRoot).isDir()) {
-        m_explorer->setRootPath(explorerRoot);
+    // The listing itself reports that; checking it here would stat a WSL
+    // share on the UI thread before the window is shown.
+    if (!m_scopedRoot.isEmpty()) {
+        m_explorer->setRootPath(m_scopedRoot, false);
         m_actions.explorer->setChecked(settings.value(kExplorerVisibleSetting).toBool());
     }
 
@@ -355,6 +480,7 @@ void MainWindow::buildMenus()
     file->addAction(m_actions.newFile);
     file->addAction(m_actions.open);
     file->addAction(m_actions.openFolder);
+    file->addAction(m_actions.openWslFolder);
     file->addSeparator();
     file->addAction(m_actions.save);
     file->addAction(m_actions.saveAs);
@@ -380,6 +506,7 @@ void MainWindow::buildMenus()
     view->addSeparator();
     view->addAction(m_actions.wordWrap);
     view->addAction(m_actions.hexMode);
+    view->addAction(m_actions.byteColumns);
     view->addSeparator();
     view->addAction(m_actions.zoomIn);
     view->addAction(m_actions.zoomOut);
@@ -421,6 +548,10 @@ void MainWindow::connectActions()
         if (chooseExplorerFolder())
             m_actions.explorer->setChecked(true);
     });
+    connect(m_actions.openWslFolder, &QAction::triggered, this, [this] {
+        if (chooseWslFolder())
+            m_actions.explorer->setChecked(true);
+    });
     connect(m_actions.explorer, &QAction::toggled, this, [this](bool visible) {
         if (visible && m_explorer->rootPath().isEmpty() && !chooseExplorerFolder()) {
             m_actions.explorer->setChecked(false);
@@ -431,20 +562,27 @@ void MainWindow::connectActions()
     });
     connect(m_explorer, &ExplorerPanel::rootPathChanged, this, [this](const QString &path) {
         QSettings().setValue(kExplorerRootSetting, path);
+        if (path != m_scopedRoot) {
+            m_scopedRoot = path;
+            if (!path.isEmpty()) {
+                m_saveDirectory = path;
+                QSettings().setValue(kSaveDirectorySetting, path);
+                m_tabs->setSaveDirectory(path);
+            }
+        }
         reloadCommands();
     });
     connect(m_explorer, &ExplorerPanel::fileActivated, m_tabs, &TabWorkspace::openFile);
     connect(m_explorer, &ExplorerPanel::pathMoved, m_tabs, &TabWorkspace::retargetPath);
     connect(m_explorer, &ExplorerPanel::closeRequested, this,
             [this] { m_actions.explorer->setChecked(false); });
-    connect(m_actions.save, &QAction::triggered, this, [this] {
-        if (m_tabs->saveCurrent())
-            reloadCommands();
+    connect(m_tabs, &TabWorkspace::fileSaved, this, [this](const QString &directory) {
+        m_saveDirectory = directory;
+        QSettings().setValue(kSaveDirectorySetting, directory);
+        reloadCommands();
     });
-    connect(m_actions.saveAs, &QAction::triggered, this, [this] {
-        if (m_tabs->saveCurrentAs())
-            reloadCommands();
-    });
+    connect(m_actions.save, &QAction::triggered, m_tabs, &TabWorkspace::saveCurrent);
+    connect(m_actions.saveAs, &QAction::triggered, this, [this] { m_tabs->saveCurrentAs(m_saveDirectory); });
     connect(m_actions.persistEdits, &QAction::toggled, this, [this](bool enabled) {
         QSettings().setValue(kPersistSetting, enabled);
         if (enabled)
@@ -467,6 +605,16 @@ void MainWindow::connectActions()
     // triggered (not toggled): refreshStatus syncs the checked state to the
     // active tab and must not re-enter the mode switch.
     connect(m_actions.hexMode, &QAction::triggered, m_tabs, &TabWorkspace::setCurrentHexMode);
+    connect(m_actions.byteColumns, &QAction::triggered, this, [this] {
+        bool accepted = false;
+        const int columns = QInputDialog::getInt(this, QStringLiteral("Byte Columns"),
+                                                 QStringLiteral("Columns:"), m_tabs->bytesPerRow(),
+                                                 1, 64, 1, &accepted);
+        if (!accepted)
+            return;
+        QSettings().setValue(kHexColumnsSetting, columns);
+        m_tabs->setBytesPerRow(columns);
+    });
     connect(m_actions.zoomIn, &QAction::triggered, this, [this] { m_tabs->currentEditor()->zoom(1); });
     connect(m_actions.zoomOut, &QAction::triggered, this, [this] { m_tabs->currentEditor()->zoom(-1); });
     connect(m_actions.zoomReset, &QAction::triggered, this, [this] { m_tabs->currentEditor()->resetZoom(); });
@@ -489,8 +637,10 @@ void MainWindow::connectActions()
     connect(m_runner, &CommandRunner::stateChanged, this,
             [this](const QString &name, bool running, int exitCode) {
                 m_output->setState(name, running, exitCode);
-                for (QAction *action : m_runMenu->actions())
-                    action->setChecked(action->isEnabled() && m_runner->isRunning(action->text()));
+                for (QAction *action : m_menuBar->actions()) {
+                    if (QMenu *menu = action->menu())
+                        markRunningCommands(menu, m_runner);
+                }
             });
     connect(m_output, &OutputPanel::stopRequested, m_runner, &CommandRunner::stop);
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
@@ -513,6 +663,39 @@ bool MainWindow::chooseExplorerFolder()
     if (path.isEmpty())
         return false;
     m_explorer->setRootPath(path);
+    return true;
+}
+
+bool MainWindow::chooseWslFolder()
+{
+    const QStringList names = WslPath::distros();
+    if (names.isEmpty()) {
+        QMessageBox::warning(this, QCoreApplication::applicationName(),
+                             QStringLiteral("WSL is not available."));
+        return false;
+    }
+
+    QString distro = names.first();
+    if (names.size() > 1) {
+        bool accepted = false;
+        distro = QInputDialog::getItem(this, QCoreApplication::applicationName(),
+                                       QStringLiteral("Distro:"), names, 0, false, &accepted);
+        if (!accepted || distro.isEmpty())
+            return false;
+    }
+
+    const QString home = WslPath::home(distro);
+    bool accepted = false;
+    QString linuxPath = QInputDialog::getText(this, QCoreApplication::applicationName(),
+                                              QStringLiteral("Linux path:"), QLineEdit::Normal,
+                                              home.isEmpty() ? QStringLiteral("/") : home, &accepted)
+                            .trimmed();
+    if (!accepted)
+        return false;
+    if (linuxPath.isEmpty())
+        linuxPath = home.isEmpty() ? QStringLiteral("/") : home;
+
+    m_explorer->setRootPath(WslPath::toWindows(distro, linuxPath));
     return true;
 }
 
@@ -542,6 +725,9 @@ void MainWindow::applyTheme(const Theme *theme)
 {
     m_tabs->setTheme(theme);
     setStyleSheet(chromeStyleSheet(*theme));
+    // After the stylesheet, so polish does not clear the scroll buttons' fill.
+    m_tabs->setTabColors(theme->foreground, theme->gutterForeground, chromeBorder(*theme),
+                         chromeColor(*theme));
     for (QAction *action : m_themeGroup->actions())
         action->setChecked(action->text() == theme->name);
     QSettings().setValue(kThemeSetting, theme->name);
@@ -561,6 +747,7 @@ void MainWindow::refreshStatus()
 
     HexView *hex = m_tabs->currentHexView();
     m_actions.hexMode->setChecked(hex != nullptr);
+    m_actions.byteColumns->setEnabled(hex != nullptr);
     m_actions.setTextEditingEnabled(hex == nullptr);
     m_languageGroup->setEnabled(hex == nullptr);
 
@@ -607,6 +794,48 @@ void MainWindow::closeEvent(QCloseEvent *event)
     event->accept();
 }
 
+CommandVariables MainWindow::commandVariables() const
+{
+    CommandVariables vars;
+    if (!m_projectFile.isEmpty())
+        vars.project = QFileInfo(m_projectFile).absolutePath();
+    vars.folder = m_explorer->rootPath();
+
+    QWidget *page = m_tabs->currentWidget();
+    CodeEditor *editor = m_tabs->currentEditor();
+    HexView *hex = m_tabs->currentHexView();
+    if (!editor && !hex)
+        return vars;
+
+    const DocumentFile &file = m_tabs->fileFor(page);
+    vars.file = file.path();
+    if (vars.file.isEmpty()) {
+        vars.fileName = m_tabs->titleFor(page);
+    } else {
+        const QFileInfo info(vars.file);
+        vars.fileName = info.fileName();
+        vars.fileBase = info.completeBaseName();
+        vars.fileExt = info.suffix();
+        vars.fileDir = info.absolutePath();
+        if (!vars.project.isEmpty())
+            vars.relativeFile = QDir(vars.project).relativeFilePath(vars.file);
+    }
+
+    if (hex) {
+        vars.language = QStringLiteral("Hex");
+        return vars;
+    }
+
+    const QTextCursor cursor = editor->textCursor();
+    vars.line = QString::number(cursor.blockNumber() + 1);
+    vars.column = QString::number(cursor.positionInBlock() + 1);
+    vars.selection = cursor.selectedText();
+    vars.selection.replace(QChar(0x2029), QLatin1Char('\n'));
+    vars.selection.replace(QChar(0x2028), QLatin1Char('\n'));
+    vars.language = editor->language()->name;
+    return vars;
+}
+
 void MainWindow::reloadCommands()
 {
     QString start = m_explorer->rootPath();
@@ -621,20 +850,24 @@ void MainWindow::reloadCommands()
         m_commandWatcher->addPath(m_projectFile);
 
     m_runner->setProject(project.commands);
-    m_runMenu->clear();
+    clearProjectCommands(m_menuBar);
     if (project.commands.isEmpty()) {
-        QAction *missing = m_runMenu->addAction(project.error.isEmpty()
-                                                    ? QStringLiteral("No .crlf in this folder")
-                                                    : project.error);
+        QAction *missing = addProjectAction(m_runMenu, project.error.isEmpty()
+                                                           ? QStringLiteral("No .crlf in this folder")
+                                                           : project.error);
         missing->setEnabled(false);
         if (!project.error.isEmpty())
             statusBar()->showMessage(project.error, 5000);
         return;
     }
     for (const ProjectCommand &command : project.commands) {
-        QAction *action = m_runMenu->addAction(command.name);
+        QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
         action->setCheckable(true);
         action->setChecked(m_runner->isRunning(command.name));
+        if (!command.key.isEmpty()) {
+            action->setShortcut(command.key);
+            action->setShortcutContext(Qt::WindowShortcut);
+        }
         connect(action, &QAction::triggered, this, [this, name = command.name] {
             m_output->showCommand(name);
             m_runner->start(name);

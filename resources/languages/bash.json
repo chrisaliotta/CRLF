@@ -1,0 +1,23 @@
+{
+  "name": "Bash",
+  "extensions": ["sh", "bash"],
+  "lineComment": "#",
+  "strings": [
+    { "start": "\"", "end": "\"", "escape": "\\" },
+    { "start": "'", "end": "'", "escape": "\\" }
+  ],
+  "keywords": [
+    "if", "then", "else", "elif", "fi", "case", "esac", "for", "select",
+    "while", "until", "do", "done", "in", "function", "time", "coproc",
+    "return", "exit", "break", "continue", "export", "local", "readonly",
+    "declare", "typeset", "unset", "source", "alias", "unalias", "set",
+    "shift", "trap", "eval", "exec"
+  ],
+  "patterns": [
+    { "role": "preprocessor", "regex": "^\\s*#![^\n]*" },
+    { "role": "number", "regex": "\\b\\d+\\b" },
+    { "role": "keyword", "regex": "\\$\\{[^}]+\\}|\\$[A-Za-z_][A-Za-z0-9_]*|\\$[#@*!?$0-9-]" },
+    { "role": "function", "regex": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\()" }
+  ],
+  "folding": { "mode": "indent" }
+}

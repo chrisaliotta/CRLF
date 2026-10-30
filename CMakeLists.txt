@@ -39,6 +39,8 @@ set(APP_SOURCES
     app/DocumentTabBar.cpp
     app/ExplorerPanel.h
     app/ExplorerPanel.cpp
+    app/ExplorerModel.h
+    app/ExplorerModel.cpp
     app/CommandRunner.h
     app/CommandRunner.cpp
     app/OutputPanel.h
@@ -84,6 +86,10 @@ set(IO_SOURCES
     io/SessionStore.cpp
     io/ProjectCommands.h
     io/ProjectCommands.cpp
+    io/CommandVariables.h
+    io/CommandVariables.cpp
+    io/WslPath.h
+    io/WslPath.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}

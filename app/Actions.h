@@ -15,6 +15,7 @@ struct Actions
     QAction *newFile;
     QAction *open;
     QAction *openFolder;
+    QAction *openWslFolder;
     QAction *save;
     QAction *saveAs;
     QAction *persistEdits;
@@ -32,6 +33,7 @@ struct Actions
     QAction *explorer;
     QAction *wordWrap;
     QAction *hexMode;
+    QAction *byteColumns;
     QAction *zoomIn;
     QAction *zoomOut;
     QAction *zoomReset;

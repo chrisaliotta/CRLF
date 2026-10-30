@@ -1,9 +1,12 @@
 #pragma once
 
+#include "io/CommandVariables.h"
 #include "io/ProjectCommands.h"
 
 #include <QHash>
 #include <QObject>
+
+#include <functional>
 
 class QProcess;
 
@@ -19,6 +22,9 @@ public:
     ~CommandRunner() override;
 
     void setProject(const QList<ProjectCommand> &commands);
+    // Asked again every time a command starts, including a restart, so
+    // ${file} and the rest follow the document focused at that moment.
+    void setContextProvider(std::function<CommandVariables()> provider);
     void start(const QString &name);
     void stop(const QString &name);
     void stopAll();
@@ -37,5 +43,6 @@ private:
     void stopTree(Running &running);
 
     QList<ProjectCommand> m_commands;
+    std::function<CommandVariables()> m_contextProvider;
     QHash<QString, Running *> m_running;
 };

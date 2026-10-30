@@ -3,7 +3,9 @@
         <file>languages/cpp.json</file>
         <file>languages/csharp.json</file>
         <file>languages/python.json</file>
+        <file>languages/bash.json</file>
         <file>languages/json.json</file>
+        <file>languages/crlf.json</file>
         <file>languages/xml.json</file>
         <file>languages/markdown.json</file>
         <file>languages/plaintext.json</file>

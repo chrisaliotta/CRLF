@@ -1,6 +1,20 @@
 #include "app/CommandRunner.h"
 
+#include "io/WslPath.h"
+
 #include <QProcess>
+
+namespace {
+
+QString linuxPath(const QString &windowsPath)
+{
+    if (windowsPath.isEmpty())
+        return windowsPath;
+    const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
+    return converted.valid() ? converted.path : windowsPath;
+}
+
+} // namespace
 
 #ifdef Q_OS_WIN
 #ifndef WIN32_LEAN_AND_MEAN
@@ -18,6 +32,12 @@ struct CommandRunner::Running
     // Set while start() is inside a job launch that may be retried, so the
     // failure signal from that attempt is not shown.
     bool suppressFailure = false;
+    // Set when the command runs inside a distro. linuxGroup is filled from
+    // the CRLF_PGID line bash prints before the command.
+    QString distro;
+    qint64 linuxGroup = 0;
+    bool groupResolved = false;
+    QByteArray pendingOutput;
 };
 
 namespace {
@@ -79,6 +99,11 @@ CommandRunner::~CommandRunner()
     qDeleteAll(m_running);
 }
 
+void CommandRunner::setContextProvider(std::function<CommandVariables()> provider)
+{
+    m_contextProvider = std::move(provider);
+}
+
 void CommandRunner::setProject(const QList<ProjectCommand> &commands)
 {
     m_commands = commands;
@@ -130,8 +155,32 @@ void CommandRunner::launch(const QString &name, bool withJob)
         m_running.insert(name, running);
 
         connect(running->process, &QProcess::readyReadStandardOutput, this, [this, name] {
-            const QByteArray bytes = m_running.value(name)->process->readAllStandardOutput();
-            emit outputReceived(name, QString::fromLocal8Bit(bytes));
+            Running *running = m_running.value(name);
+            const QByteArray bytes = running->process->readAllStandardOutput();
+            if (running->distro.isEmpty()) {
+                emit outputReceived(name, QString::fromLocal8Bit(bytes));
+                return;
+            }
+            if (running->groupResolved) {
+                emit outputReceived(name, QString::fromUtf8(bytes));
+                return;
+            }
+            running->pendingOutput += bytes;
+            const int newline = running->pendingOutput.indexOf('\n');
+            if (newline < 0)
+                return;
+            const QByteArray first = running->pendingOutput.left(newline);
+            QByteArray rest = running->pendingOutput.mid(newline + 1);
+            running->pendingOutput.clear();
+            running->groupResolved = true;
+            const QString line = QString::fromUtf8(first).trimmed();
+            const QString marker = QStringLiteral("CRLF_PGID:");
+            if (line.startsWith(marker))
+                running->linuxGroup = line.mid(marker.size()).toLongLong();
+            else
+                rest.prepend(first + '\n');
+            if (!rest.isEmpty())
+                emit outputReceived(name, QString::fromUtf8(rest));
         });
         connect(running->process, &QProcess::finished, this,
                 [this, name](int exitCode, QProcess::ExitStatus) {
@@ -159,6 +208,25 @@ void CommandRunner::launch(const QString &name, bool withJob)
 
     running->stopRequested = false;
     running->restart = false;
+    running->distro.clear();
+    running->linuxGroup = 0;
+    running->groupResolved = false;
+    running->pendingOutput.clear();
+
+    CommandVariables vars = m_contextProvider ? m_contextProvider() : CommandVariables{};
+    vars.cwd = spec->workingDirectory;
+#ifdef Q_OS_WIN
+    const WslPath::LinuxPath linux = WslPath::toLinux(spec->workingDirectory);
+    if (linux.valid()) {
+        vars.file = linuxPath(vars.file);
+        vars.fileDir = linuxPath(vars.fileDir);
+        vars.project = linuxPath(vars.project);
+        vars.folder = linuxPath(vars.folder);
+        vars.cwd = linux.path;
+    }
+#endif
+    const QString commandText = expandCommand(spec->command, vars);
+
 #ifdef Q_OS_WIN
     if (running->job) {
         CloseHandle(static_cast<HANDLE>(running->job));
@@ -180,14 +248,28 @@ void CommandRunner::launch(const QString &name, bool withJob)
     } else {
         running->process->setCreateProcessArgumentsModifier({});
     }
-    running->process->setProgram(qEnvironmentVariable("ComSpec", QStringLiteral("C:\\Windows\\System32\\cmd.exe")));
-    running->process->setArguments({});
-    running->process->setNativeArguments(QStringLiteral("/d /s /c ") + spec->command);
+    if (linux.valid()) {
+        running->distro = linux.distro;
+        const QString script = QStringLiteral("printf 'CRLF_PGID:%s\\n' \"$$\"; ") + commandText;
+        running->process->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
+        running->process->setNativeArguments({});
+        running->process->setArguments({QStringLiteral("-d"), linux.distro, QStringLiteral("--cd"),
+                                        linux.path, QStringLiteral("--"), QStringLiteral("bash"),
+                                        QStringLiteral("-lc"), script});
+        // cmd.exe cannot use a UNC path as its current directory, and wsl.exe
+        // takes the Linux path through --cd instead.
+        running->process->setWorkingDirectory(QString());
+    } else {
+        running->process->setProgram(qEnvironmentVariable("ComSpec", QStringLiteral("C:\\Windows\\System32\\cmd.exe")));
+        running->process->setArguments({});
+        running->process->setNativeArguments(QStringLiteral("/d /s /c ") + commandText);
+        running->process->setWorkingDirectory(spec->workingDirectory);
+    }
 #else
     running->process->setProgram(QStringLiteral("/bin/sh"));
-    running->process->setArguments({QStringLiteral("-c"), spec->command});
-#endif
+    running->process->setArguments({QStringLiteral("-c"), commandText});
     running->process->setWorkingDirectory(spec->workingDirectory);
+#endif
     running->process->setProcessChannelMode(QProcess::MergedChannels);
     running->suppressFailure = withJob;
     running->process->start();
@@ -209,6 +291,15 @@ void CommandRunner::stopTree(Running &running)
 {
     running.stopRequested = true;
 #ifdef Q_OS_WIN
+    if (!running.distro.isEmpty() && running.linuxGroup > 0) {
+        QProcess killer;
+        killer.setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
+        killer.setArguments({QStringLiteral("-d"), running.distro, QStringLiteral("--"),
+                             QStringLiteral("kill"), QStringLiteral("--"),
+                             QString::number(-running.linuxGroup)});
+        killer.start();
+        killer.waitForFinished(3000);
+    }
     const qint64 pid = running.process->processId();
     if (pid > 0) {
         QProcess killer;

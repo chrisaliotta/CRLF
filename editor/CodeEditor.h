@@ -7,6 +7,7 @@ class FoldController;
 class FoldingLayout;
 class Gutter;
 class Highlighter;
+class QEvent;
 class LanguageDefinition;
 class LanguageRegistry;
 class Theme;
@@ -44,6 +45,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void rebuildHighlighter();
@@ -51,6 +53,10 @@ private:
     void updateGutterArea(const QRect &rect, int dy);
     void highlightCurrentLine();
     void refreshFindSelections();
+    // contentsChange and cursor moves are delivered from inside the edit that
+    // caused them. Updating extra selections there reenters the document and
+    // frees formats the edit is still using, so the refresh is deferred.
+    void scheduleOverlayRefresh();
     int foldMarkerWidth() const;
     void drawFoldMarker(QPainter &painter, const QRect &rect, bool expanded) const;
     void applyTabStop();
@@ -65,4 +71,5 @@ private:
     int m_basePointSize = 0;
     QString m_findTerm;
     QList<QTextEdit::ExtraSelection> m_findSelections;
+    bool m_overlayRefreshQueued = false;
 };

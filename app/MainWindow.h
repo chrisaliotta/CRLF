@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/Actions.h"
+#include "io/CommandVariables.h"
 #include "io/SessionStore.h"
 #include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
@@ -47,14 +48,17 @@ private:
     void openFileDialog();
     // Returns false when the user cancels the folder picker.
     bool chooseExplorerFolder();
+    bool chooseWslFolder();
     void closeCurrentTab();
     void gotoLine();
     void applyTheme(const Theme *theme);
     void refreshStatus();
     void persistSession();
     // Reloads the .crlf discovered from the explorer root, or from the active
-    // file when no folder is scoped, and rebuilds the Run menu from it.
+    // file when no folder is scoped, and places each command on the menu
+    // path it names.
     void reloadCommands();
+    CommandVariables commandVariables() const;
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
@@ -71,6 +75,8 @@ private:
     CommandRunner *m_runner = nullptr;
     QFileSystemWatcher *m_commandWatcher = nullptr;
     QString m_projectFile;
+    QString m_scopedRoot;
+    QString m_saveDirectory;
     QMenuBar *m_menuBar = nullptr;
     QMenu *m_runMenu = nullptr;
     TitleBar *m_titleBar = nullptr;

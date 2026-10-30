@@ -14,6 +14,7 @@ Actions::Actions(QObject *parent)
     newFile = make(QStringLiteral("&New"), QKeySequence::New);
     open = make(QStringLiteral("&Open..."), QKeySequence::Open);
     openFolder = make(QStringLiteral("Open &Folder..."), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    openWslFolder = make(QStringLiteral("Open &WSL Folder..."), QKeySequence());
     save = make(QStringLiteral("&Save"), QKeySequence::Save);
     saveAs = make(QStringLiteral("Save &As..."), QKeySequence::SaveAs);
     persistEdits = make(QStringLiteral("&Remember Unsaved Edits"), QKeySequence());
@@ -36,6 +37,8 @@ Actions::Actions(QObject *parent)
     wordWrap->setCheckable(true);
     hexMode = make(QStringLiteral("&Hex Editor"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
     hexMode->setCheckable(true);
+    byteColumns = make(QStringLiteral("Byte &Columns..."), QKeySequence());
+    byteColumns->setEnabled(false);
     zoomIn = make(QStringLiteral("Zoom &In"), QKeySequence::ZoomIn);
     zoomOut = make(QStringLiteral("Zoom &Out"), QKeySequence::ZoomOut);
     zoomReset = make(QStringLiteral("&Reset Zoom"), QKeySequence(Qt::CTRL | Qt::Key_0));

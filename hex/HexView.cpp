@@ -9,7 +9,6 @@
 
 namespace {
 
-constexpr int kBytesPerRow = 16;
 constexpr int kOffsetDigits = 8;
 // Blank columns between the offset, hex, and ASCII panes.
 constexpr int kPaneGap = 2;
@@ -82,6 +81,13 @@ void HexView::setTheme(const Theme *theme)
     viewport()->update();
 }
 
+void HexView::setBytesPerRow(int count)
+{
+    m_bytesPerRow = qBound(1, count, 64);
+    updateScrollBars();
+    viewport()->update();
+}
+
 HexView::Metrics HexView::metrics() const
 {
     const QFontMetrics fm(font());
@@ -90,15 +96,15 @@ HexView::Metrics HexView::metrics() const
     m.rowHeight = fm.lineSpacing();
     m.hexX = (1 + kOffsetDigits + kPaneGap) * m.charWidth;
     // "XX " per byte plus one extra column splitting the row in halves.
-    const int hexWidth = (kBytesPerRow * 3 + 1) * m.charWidth;
+    const int hexWidth = (m_bytesPerRow * 3 + 1) * m.charWidth;
     m.asciiX = m.hexX + hexWidth + kPaneGap * m.charWidth;
-    m.totalWidth = m.asciiX + (kBytesPerRow + 1) * m.charWidth;
+    m.totalWidth = m.asciiX + (m_bytesPerRow + 1) * m.charWidth;
     return m;
 }
 
 int HexView::hexByteX(const Metrics &m, int column) const
 {
-    const int halfGap = column >= kBytesPerRow / 2 ? m.charWidth : 0;
+    const int halfGap = column >= m_bytesPerRow / 2 ? m.charWidth : 0;
     return m.hexX + column * 3 * m.charWidth + halfGap;
 }
 
@@ -106,7 +112,7 @@ int HexView::rowCount() const
 {
     // One extra row hosts the append position when the size is a multiple
     // of the row length.
-    return int(m_data.size() / kBytesPerRow) + 1;
+    return int(m_data.size() / m_bytesPerRow) + 1;
 }
 
 int HexView::visibleRows() const
@@ -125,7 +131,7 @@ void HexView::updateScrollBars()
 
 void HexView::ensureCursorVisible()
 {
-    const int row = int(m_cursor / kBytesPerRow);
+    const int row = int(m_cursor / m_bytesPerRow);
     const int first = verticalScrollBar()->value();
     if (row < first)
         verticalScrollBar()->setValue(row);
@@ -151,8 +157,8 @@ void HexView::paintEvent(QPaintEvent *)
     const Metrics m = metrics();
     const int x0 = -horizontalScrollBar()->value();
     const int firstRow = verticalScrollBar()->value();
-    const int cursorRow = int(m_cursor / kBytesPerRow);
-    const int cursorColumn = int(m_cursor % kBytesPerRow);
+    const int cursorRow = int(m_cursor / m_bytesPerRow);
+    const int cursorColumn = int(m_cursor % m_bytesPerRow);
 
     painter.fillRect(viewport()->rect(), m_theme->background);
     painter.fillRect(QRect(x0, 0, (1 + kOffsetDigits + 1) * m.charWidth, viewport()->height()),
@@ -170,12 +176,12 @@ void HexView::paintEvent(QPaintEvent *)
         painter.setPen(m_theme->gutterForeground);
         painter.drawText(QRect(x0 + m.charWidth, y, kOffsetDigits * m.charWidth, m.rowHeight),
                          Qt::AlignLeft | Qt::AlignVCenter,
-                         QString::number(qint64(row) * kBytesPerRow, 16)
+                         QString::number(qint64(row) * m_bytesPerRow, 16)
                              .rightJustified(kOffsetDigits, QLatin1Char('0'))
                              .toUpper());
 
-        for (int column = 0; column < kBytesPerRow; ++column) {
-            const qint64 offset = qint64(row) * kBytesPerRow + column;
+        for (int column = 0; column < m_bytesPerRow; ++column) {
+            const qint64 offset = qint64(row) * m_bytesPerRow + column;
             const QRect hexRect(x0 + hexByteX(m, column), y, 2 * m.charWidth, m.rowHeight);
             const QRect asciiRect(x0 + m.asciiX + column * m.charWidth, y, m.charWidth, m.rowHeight);
 
@@ -212,17 +218,17 @@ void HexView::keyPressEvent(QKeyEvent *event)
 {
     const qint64 size = m_data.size();
     const bool control = event->modifiers() & Qt::ControlModifier;
-    const qint64 rowStart = m_cursor - m_cursor % kBytesPerRow;
+    const qint64 rowStart = m_cursor - m_cursor % m_bytesPerRow;
 
     switch (event->key()) {
     case Qt::Key_Left: setCursorOffset(m_cursor - 1); return;
     case Qt::Key_Right: setCursorOffset(m_cursor + 1); return;
-    case Qt::Key_Up: setCursorOffset(m_cursor - kBytesPerRow); return;
-    case Qt::Key_Down: setCursorOffset(m_cursor + kBytesPerRow); return;
-    case Qt::Key_PageUp: setCursorOffset(m_cursor - qint64(kBytesPerRow) * visibleRows()); return;
-    case Qt::Key_PageDown: setCursorOffset(m_cursor + qint64(kBytesPerRow) * visibleRows()); return;
+    case Qt::Key_Up: setCursorOffset(m_cursor - m_bytesPerRow); return;
+    case Qt::Key_Down: setCursorOffset(m_cursor + m_bytesPerRow); return;
+    case Qt::Key_PageUp: setCursorOffset(m_cursor - qint64(m_bytesPerRow) * visibleRows()); return;
+    case Qt::Key_PageDown: setCursorOffset(m_cursor + qint64(m_bytesPerRow) * visibleRows()); return;
     case Qt::Key_Home: setCursorOffset(control ? 0 : rowStart); return;
-    case Qt::Key_End: setCursorOffset(control ? size : rowStart + kBytesPerRow - 1); return;
+    case Qt::Key_End: setCursorOffset(control ? size : rowStart + m_bytesPerRow - 1); return;
     case Qt::Key_Tab:
         m_pane = m_pane == Pane::Hex ? Pane::Ascii : Pane::Hex;
         m_highNibble = true;
@@ -305,13 +311,13 @@ void HexView::mousePressEvent(QMouseEvent *event)
     const int row = verticalScrollBar()->value() + int(event->position().y()) / m.rowHeight;
 
     int column = -1;
-    if (x >= m.asciiX && x < m.asciiX + kBytesPerRow * m.charWidth) {
+    if (x >= m.asciiX && x < m.asciiX + m_bytesPerRow * m.charWidth) {
         m_pane = Pane::Ascii;
         column = (x - m.asciiX) / m.charWidth;
     } else if (x >= m.hexX && x < m.asciiX) {
         m_pane = Pane::Hex;
-        column = kBytesPerRow - 1;
-        for (int c = 0; c < kBytesPerRow; ++c) {
+        column = m_bytesPerRow - 1;
+        for (int c = 0; c < m_bytesPerRow; ++c) {
             if (x < hexByteX(m, c) + 3 * m.charWidth) {
                 column = c;
                 break;
@@ -319,5 +325,5 @@ void HexView::mousePressEvent(QMouseEvent *event)
         }
     }
     if (column >= 0)
-        setCursorOffset(qint64(row) * kBytesPerRow + column);
+        setCursorOffset(qint64(row) * m_bytesPerRow + column);
 }

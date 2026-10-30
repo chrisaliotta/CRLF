@@ -19,6 +19,11 @@ OutputPanel::OutputPanel(QWidget *parent)
     m_commands = new QComboBox(this);
     m_status = new QLabel(this);
     m_stop = new QPushButton(QStringLiteral("Stop"), this);
+    m_stop->hide();
+    auto *clearButton = new QToolButton(this);
+    clearButton->setText(QStringLiteral("Clear"));
+    clearButton->setToolTip(QStringLiteral("Clear output"));
+    clearButton->setAutoRaise(true);
     auto *closeButton = new QToolButton(this);
     closeButton->setText(QStringLiteral("\u2715"));
     closeButton->setToolTip(QStringLiteral("Close"));
@@ -38,6 +43,7 @@ OutputPanel::OutputPanel(QWidget *parent)
     header->addWidget(m_commands, 1);
     header->addWidget(m_status);
     header->addWidget(m_stop);
+    header->addWidget(clearButton);
     header->addWidget(closeButton);
 
     auto *layout = new QVBoxLayout(this);
@@ -48,6 +54,11 @@ OutputPanel::OutputPanel(QWidget *parent)
 
     connect(m_commands, &QComboBox::currentIndexChanged, this, [this] { showSelected(); });
     connect(m_stop, &QPushButton::clicked, this, [this] { emit stopRequested(currentName()); });
+    connect(clearButton, &QToolButton::clicked, this, [this] {
+        const QString name = currentName();
+        m_logs[name].text.clear();
+        m_output->clear();
+    });
     connect(closeButton, &QToolButton::clicked, this, [this] {
         m_closed = true;
         hide();
@@ -109,7 +120,7 @@ void OutputPanel::showSelected()
     const Log &log = m_logs[currentName()];
     m_output->setPlainText(log.text);
     m_output->moveCursor(QTextCursor::End);
-    m_stop->setEnabled(log.running);
+    m_stop->setVisible(log.running);
     if (log.running)
         m_status->setText(QStringLiteral("Running"));
     else if (!log.finished)

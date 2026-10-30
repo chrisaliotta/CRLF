@@ -44,6 +44,9 @@ struct SessionTab {
     QString language;
     // True when the tab shows the hex editor instead of the text editor.
     bool hex = false;
+    // Pinned tabs stay at the left and are skipped by Close All, Close
+    // Others, and Close to the Right.
+    bool pinned = false;
     QString text;
     QByteArray bytes;
     bool modified = false;
