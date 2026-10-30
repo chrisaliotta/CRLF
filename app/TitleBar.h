@@ -31,6 +31,7 @@ private:
     QToolButton *makeCaptionButton(QChar glyph, const QString &objectName,
                                    const QString &toolTip);
 
+    QLabel *m_iconLabel = nullptr;
     QLabel *m_titleLabel = nullptr;
     QToolButton *m_maximizeButton = nullptr;
 };

@@ -1,15 +1,22 @@
 #pragma once
 
 #include "app/Actions.h"
+#include "io/CommandVariables.h"
 #include "io/SessionStore.h"
 #include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
 
+#include <QList>
 #include <QMainWindow>
 
+class CommandRunner;
+class ExplorerPanel;
 class FindBar;
+class OutputPanel;
 class QActionGroup;
+class QFileSystemWatcher;
 class QLabel;
+class QMenu;
 class QMenuBar;
 class TabWorkspace;
 class TitleBar;
@@ -39,23 +46,42 @@ private:
     void applyCustomFrame();
     void connectActions();
     void openFileDialog();
+    // Returns false when the user cancels the folder picker.
+    bool chooseExplorerFolder();
+    bool chooseWslFolder();
     void closeCurrentTab();
     void gotoLine();
     void applyTheme(const Theme *theme);
     void refreshStatus();
     void persistSession();
+    // Reloads the .crlf discovered from the explorer root, or from the active
+    // file when no folder is scoped, and places each command on the menu
+    // path it names.
+    void reloadCommands();
+    CommandVariables commandVariables() const;
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
-    Theme m_darkTheme;
-    Theme m_lightTheme;
+    // Built-in themes, then any JSON in the program folder's themes
+    // directory. A later file with the same name replaces the earlier one.
+    // Pointers into this list stay valid: nothing is added after startup.
+    QList<Theme> m_themes;
     Actions m_actions;
 
     TabWorkspace *m_tabs = nullptr;
+    ExplorerPanel *m_explorer = nullptr;
     FindBar *m_findBar = nullptr;
+    OutputPanel *m_output = nullptr;
+    CommandRunner *m_runner = nullptr;
+    QFileSystemWatcher *m_commandWatcher = nullptr;
+    QString m_projectFile;
+    QString m_scopedRoot;
+    QString m_saveDirectory;
     QMenuBar *m_menuBar = nullptr;
+    QMenu *m_runMenu = nullptr;
     TitleBar *m_titleBar = nullptr;
     QActionGroup *m_languageGroup = nullptr;
+    QActionGroup *m_themeGroup = nullptr;
     QLabel *m_cursorLabel = nullptr;
     QLabel *m_languageLabel = nullptr;
     QLabel *m_encodingLabel = nullptr;

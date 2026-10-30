@@ -3,14 +3,19 @@
         <file>languages/cpp.json</file>
         <file>languages/csharp.json</file>
         <file>languages/python.json</file>
+        <file>languages/bash.json</file>
         <file>languages/json.json</file>
+        <file>languages/crlf.json</file>
         <file>languages/xml.json</file>
         <file>languages/markdown.json</file>
         <file>languages/plaintext.json</file>
         <file>languages/sql.json</file>
+        <file>languages/sqlrun.json</file>
         <file>themes/dark.json</file>
+        <file>themes/cool-dark.json</file>
         <file>themes/light.json</file>
         <file>images/CRLF_basic.png</file>
+        <file>images/CRLF_basic_light.png</file>
         <file>fonts/Ubuntu-R.ttf</file>
         <file>fonts/Ubuntu-B.ttf</file>
         <file>fonts/Ubuntu-RI.ttf</file>

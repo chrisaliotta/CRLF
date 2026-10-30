@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QAction>
-#include <QActionGroup>
 
 // Every user-facing action with its shortcut, created once and shared by the
 // menu bar and any other invokers.
@@ -15,6 +14,8 @@ struct Actions
 
     QAction *newFile;
     QAction *open;
+    QAction *openFolder;
+    QAction *openWslFolder;
     QAction *save;
     QAction *saveAs;
     QAction *persistEdits;
@@ -29,15 +30,13 @@ struct Actions
     QAction *find;
     QAction *gotoLine;
 
+    QAction *explorer;
     QAction *wordWrap;
     QAction *hexMode;
+    QAction *byteColumns;
     QAction *zoomIn;
     QAction *zoomOut;
     QAction *zoomReset;
-    QAction *themeDark;
-    QAction *themeLight;
     QAction *foldAll;
     QAction *unfoldAll;
-
-    QActionGroup *themeGroup;
 };

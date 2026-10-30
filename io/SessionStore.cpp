@@ -24,6 +24,7 @@ void SessionStore::save(const Session &session) const
         obj.insert(QLatin1String("title"), tab.title);
         obj.insert(QLatin1String("language"), tab.language);
         obj.insert(QLatin1String("hex"), tab.hex);
+        obj.insert(QLatin1String("pinned"), tab.pinned);
         obj.insert(QLatin1String("modified"), tab.modified);
         obj.insert(QLatin1String("cursor"), tab.cursorPosition);
         if (tab.modified && tab.hex)
@@ -59,6 +60,7 @@ Session SessionStore::load() const
         tab.title = obj.value(QLatin1String("title")).toString();
         tab.language = obj.value(QLatin1String("language")).toString();
         tab.hex = obj.value(QLatin1String("hex")).toBool();
+        tab.pinned = obj.value(QLatin1String("pinned")).toBool();
         tab.modified = obj.value(QLatin1String("modified")).toBool();
         tab.cursorPosition = obj.value(QLatin1String("cursor")).toInt();
         tab.text = obj.value(QLatin1String("text")).toString();

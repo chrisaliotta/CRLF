@@ -35,6 +35,18 @@ set(APP_SOURCES
     app/Actions.cpp
     app/FindBar.h
     app/FindBar.cpp
+    app/DocumentTabBar.h
+    app/DocumentTabBar.cpp
+    app/ExplorerPanel.h
+    app/ExplorerPanel.cpp
+    app/ExplorerModel.h
+    app/ExplorerModel.cpp
+    app/CommandRunner.h
+    app/CommandRunner.cpp
+    app/OutputPanel.h
+    app/OutputPanel.cpp
+    app/OpenWith.h
+    app/OpenWith.cpp
 )
 
 set(EDITOR_SOURCES
@@ -68,8 +80,16 @@ set(SYNTAX_SOURCES
 set(IO_SOURCES
     io/DocumentFile.h
     io/DocumentFile.cpp
+    io/FileOperations.h
+    io/FileOperations.cpp
     io/SessionStore.h
     io/SessionStore.cpp
+    io/ProjectCommands.h
+    io/ProjectCommands.cpp
+    io/CommandVariables.h
+    io/CommandVariables.cpp
+    io/WslPath.h
+    io/WslPath.cpp
 )
 
 qt_add_executable(${PROJECT_NAME}

@@ -7,8 +7,10 @@
 #include "syntax/Highlighter.h"
 #include "syntax/Theme.h"
 
+#include <QEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QStyleFactory>
 #include <QStyleOptionViewItem>
 #include <QTextBlock>
@@ -45,14 +47,29 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
 
     setLineWrapMode(QPlainTextEdit::NoWrap);
 
+    // Hover grows the handle. The track itself stays unpainted.
+    const auto watchScrollBar = [this](QScrollBar *bar) {
+        bar->setAttribute(Qt::WA_Hover, true);
+        bar->installEventFilter(this);
+    };
+    watchScrollBar(verticalScrollBar());
+    watchScrollBar(horizontalScrollBar());
+
     m_gutter = new Gutter(this);
     m_foldController = new FoldController(this, m_layout);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
-    connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::highlightCurrentLine);
+    connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::scheduleOverlayRefresh);
+    connect(document(), &QTextDocument::contentsChange, this,
+            [this](int, int, int) { scheduleOverlayRefresh(); });
 
     updateGutterWidth();
+}
+
+CodeEditor::~CodeEditor()
+{
+    delete m_foldController;
 }
 
 void CodeEditor::setTheme(const Theme *theme)
@@ -147,6 +164,19 @@ void CodeEditor::updateGutterArea(const QRect &rect, int dy)
         updateGutterWidth();
 }
 
+bool CodeEditor::eventFilter(QObject *watched, QEvent *event)
+{
+    if ((watched == verticalScrollBar() || watched == horizontalScrollBar())
+        && (event->type() == QEvent::Enter || event->type() == QEvent::Leave)) {
+        auto *bar = static_cast<QWidget *>(watched);
+        bar->setProperty("expanded", event->type() == QEvent::Enter);
+        bar->style()->unpolish(bar);
+        bar->style()->polish(bar);
+        bar->update();
+    }
+    return QPlainTextEdit::eventFilter(watched, event);
+}
+
 void CodeEditor::resizeEvent(QResizeEvent *event)
 {
     QPlainTextEdit::resizeEvent(event);
@@ -154,14 +184,55 @@ void CodeEditor::resizeEvent(QResizeEvent *event)
     m_gutter->setGeometry(QRect(cr.left(), cr.top(), gutterWidth(), cr.height()));
 }
 
+void CodeEditor::setFindTerm(const QString &term)
+{
+    m_findTerm = term;
+    refreshFindSelections();
+    highlightCurrentLine();
+}
+
+void CodeEditor::refreshFindSelections()
+{
+    m_findSelections.clear();
+    if (m_findTerm.isEmpty() || m_theme == nullptr)
+        return;
+    QTextCharFormat format;
+    const bool dark = m_theme->background.lightness() < 128;
+    format.setBackground(dark ? QColor(255, 220, 0, 90) : QColor(255, 200, 0, 140));
+    QTextCursor match = document()->find(m_findTerm, 0);
+    while (!match.isNull()) {
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = match;
+        selection.format = format;
+        m_findSelections.append(selection);
+        match = document()->find(m_findTerm, match);
+    }
+}
+
+void CodeEditor::scheduleOverlayRefresh()
+{
+    if (m_overlayRefreshQueued)
+        return;
+    m_overlayRefreshQueued = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_overlayRefreshQueued = false;
+        refreshFindSelections();
+        highlightCurrentLine();
+    }, Qt::QueuedConnection);
+}
+
 void CodeEditor::highlightCurrentLine()
 {
+    if (m_theme == nullptr)
+        return;
     QTextEdit::ExtraSelection selection;
     selection.format.setBackground(m_theme->currentLine);
     selection.format.setProperty(QTextFormat::FullWidthSelection, true);
     selection.cursor = textCursor();
     selection.cursor.clearSelection();
-    setExtraSelections({selection});
+    QList<QTextEdit::ExtraSelection> selections{selection};
+    selections.append(m_findSelections);
+    setExtraSelections(selections);
 }
 
 void CodeEditor::paintGutter(QPaintEvent *event)

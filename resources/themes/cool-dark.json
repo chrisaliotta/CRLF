@@ -1,0 +1,23 @@
+{
+  "name": "Cool Dark",
+  "editor": {
+    "background": "#20272e",
+    "foreground": "#d6dde6",
+    "currentLine": "#28313a",
+    "selection": "#2a5a68",
+    "gutterBackground": "#20272e",
+    "gutterForeground": "#8b98a5",
+    "codeBlockBackground": "#28313a"
+  },
+  "tokens": {
+    "text": { "color": "#d6dde6" },
+    "keyword": { "color": "#3ecfe6", "bold": true },
+    "type": { "color": "#4ec9b0" },
+    "string": { "color": "#ce9178" },
+    "number": { "color": "#b5cea8" },
+    "comment": { "color": "#7d8b99", "italic": true },
+    "preprocessor": { "color": "#c586c0" },
+    "function": { "color": "#dcdcaa" },
+    "operator": { "color": "#d6dde6" }
+  }
+}
