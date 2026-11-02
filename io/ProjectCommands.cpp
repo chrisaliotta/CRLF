@@ -129,6 +129,29 @@ void readIndent(IndentSettings &indent, const QJsonValue &value)
     }
 }
 
+void readIcons(ProjectIcons &icons, const QJsonValue &value)
+{
+    if (!value.isObject())
+        return;
+    const QJsonObject obj = value.toObject();
+    icons.theme = obj.value(QLatin1String("theme")).toString().trimmed();
+    for (const QJsonValue &entry : obj.value(QLatin1String("rules")).toArray()) {
+        const QJsonObject rule = entry.toObject();
+        IconRule item;
+        item.kind = rule.value(QLatin1String("kind")).toString().trimmed();
+        if (item.kind == QLatin1String("directory"))
+            item.kind = QStringLiteral("folder");
+        const QString pattern = rule.value(QLatin1String("pattern")).toString().trimmed();
+        item.pattern = pattern.isEmpty() ? rule.value(QLatin1String("key")).toString().trimmed() : pattern;
+        item.from = rule.value(QLatin1String("from")).toString().trimmed();
+        item.icon = rule.value(QLatin1String("icon")).toString().trimmed();
+        item.iconOpen = rule.value(QLatin1String("iconOpen")).toString().trimmed();
+        if (item.kind.isEmpty() || item.pattern.isEmpty() || item.from.isEmpty() || item.icon.isEmpty())
+            continue;
+        icons.rules.append(item);
+    }
+}
+
 void readHide(QStringList &hide, const QJsonArray &entries)
 {
     for (const QJsonValue &entry : entries) {
@@ -150,6 +173,34 @@ QString findProjectFile(const QString &start)
         if (WslPath::isDistroRoot(dir.absolutePath()) || !dir.cdUp())
             return {};
     }
+}
+
+// Loads an existing project object. An array of commands becomes an object.
+// A missing file yields an empty object. Invalid JSON returns false.
+bool loadProjectObject(const QString &filePath, QJsonObject *root)
+{
+    if (!QFileInfo::exists(filePath))
+        return true;
+    QFile existing(filePath);
+    (void)existing.open(QIODevice::ReadOnly);
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(existing.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || (!document.isArray() && !document.isObject()))
+        return false;
+    if (document.isArray())
+        root->insert(QLatin1String("commands"), document.array());
+    else
+        *root = document.object();
+    return true;
+}
+
+bool writeProjectObject(const QString &filePath, const QJsonObject &root)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return true;
 }
 
 } // namespace
@@ -186,6 +237,7 @@ Project projectFor(const QString &start)
     readCommands(project, root.value(QLatin1String("commands")).toArray(), directory);
     readGroups(project, root.value(QLatin1String("groups")).toArray());
     readHide(project.hide, root.value(QLatin1String("hide")).toArray());
+    readIcons(project.icons, root.value(QLatin1String("icons")));
     readIndent(project.indent, root.value(QLatin1String("indent")));
     project.navigation = root.value(QLatin1String("navigation")).toBool(true);
     return project;
@@ -208,18 +260,8 @@ IndentRule indentForFileName(const IndentSettings &settings, const QString &file
 bool saveProjectGroups(const QString &filePath, const QList<FileGroup> &groups)
 {
     QJsonObject root;
-    if (QFileInfo::exists(filePath)) {
-        QFile existing(filePath);
-        (void)existing.open(QIODevice::ReadOnly);
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(existing.readAll(), &parseError);
-        if (parseError.error != QJsonParseError::NoError || (!document.isArray() && !document.isObject()))
-            return false;
-        if (document.isArray())
-            root.insert(QLatin1String("commands"), document.array());
-        else
-            root = document.object();
-    }
+    if (!loadProjectObject(filePath, &root))
+        return false;
 
     QJsonArray stored;
     for (const FileGroup &group : groups) {
@@ -240,10 +282,34 @@ bool saveProjectGroups(const QString &filePath, const QList<FileGroup> &groups)
         stored.append(obj);
     }
     root.insert(QLatin1String("groups"), stored);
+    return writeProjectObject(filePath, root);
+}
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+bool saveProjectIcons(const QString &filePath, const ProjectIcons &icons)
+{
+    QJsonObject root;
+    if (!loadProjectObject(filePath, &root))
         return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return true;
+    if (icons.theme.isEmpty() && icons.rules.isEmpty()) {
+        root.remove(QLatin1String("icons"));
+        return writeProjectObject(filePath, root);
+    }
+
+    QJsonObject stored;
+    if (!icons.theme.isEmpty())
+        stored.insert(QLatin1String("theme"), icons.theme);
+    QJsonArray rules;
+    for (const IconRule &rule : icons.rules) {
+        QJsonObject obj;
+        obj.insert(QLatin1String("kind"), rule.kind);
+        obj.insert(QLatin1String("pattern"), rule.pattern);
+        obj.insert(QLatin1String("from"), rule.from);
+        obj.insert(QLatin1String("icon"), rule.icon);
+        if (!rule.iconOpen.isEmpty())
+            obj.insert(QLatin1String("iconOpen"), rule.iconOpen);
+        rules.append(obj);
+    }
+    stored.insert(QLatin1String("rules"), rules);
+    root.insert(QLatin1String("icons"), stored);
+    return writeProjectObject(filePath, root);
 }

@@ -56,6 +56,8 @@ private:
     void gotoLine();
     void applyTheme(const Theme *theme);
     void applyFileIconTheme(const FileIconTheme *theme);
+    void applyComposedIcons();
+    void editIconTemplates();
     void refreshStatus();
     void persistSession();
     // Reloads the .crlf discovered from the explorer root, or from the active
@@ -74,6 +76,10 @@ private:
     QList<Theme> m_themes;
     // Pointers into this list stay valid: nothing is added after startup.
     QList<FileIconTheme> m_iconThemes;
+    // Holds the project composition so the explorer's pointer stays valid.
+    FileIconTheme m_composedIcons;
+    ProjectIcons m_projectIcons;
+    bool m_projectOwnsIcons = false;
     Actions m_actions;
 
     TabWorkspace *m_tabs = nullptr;

@@ -38,6 +38,27 @@ struct IndentSettings
     QList<IndentRule> types;
 };
 
+// One glyph reused from an installed icon theme. `kind` is extension, file,
+// or folder. `pattern` is an exact name, or a wildcard when it contains
+// * or ?. `from` is the source theme and `icon` is a key in that theme.
+// `iconOpen` is the expanded folder glyph; empty keeps `icon`.
+struct IconRule
+{
+    QString kind;
+    QString pattern;
+    QString from;
+    QString icon;
+    QString iconOpen;
+};
+
+// `theme` names the installed file-icon theme for this project. Empty leaves
+// the View > File Icons choice. `rules` replace that theme's associations.
+struct ProjectIcons
+{
+    QString theme;
+    QList<IconRule> rules;
+};
+
 // One entry from a project's .crlf file. workingDirectory is absolute:
 // the .crlf directory, or its `cwd` resolved against that directory.
 // command may contain ${...} names from CommandVariables, filled in when
@@ -68,6 +89,7 @@ struct Project
     QList<FileGroup> groups;
     QStringList hide;
     IndentSettings indent;
+    ProjectIcons icons;
     // Ctrl+click definition navigation. Missing from the file means enabled.
     bool navigation = true;
     QString error;
@@ -83,3 +105,6 @@ Project projectFor(const QString &start);
 // Rewrites `groups` in the project file, keeping commands. Creates the file
 // when it does not exist. An existing file that is not JSON is left unchanged.
 bool saveProjectGroups(const QString &filePath, const QList<FileGroup> &groups);
+
+// Rewrites `icons` the same way. An empty theme and no rules removes the object.
+bool saveProjectIcons(const QString &filePath, const ProjectIcons &icons);

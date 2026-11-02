@@ -21,6 +21,7 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QCoreApplication>
+#include <QDialog>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -611,16 +612,9 @@ void MainWindow::buildMenus()
         m_themeGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, theme = &theme] { applyTheme(theme); });
     }
-    view->addAction(QStringLiteral("Templates…"), this, [this] {
-        QString iconTheme;
-        for (QAction *action : m_iconThemeGroup->actions()) {
-            if (action->isChecked())
-                iconTheme = action->text();
-        }
-        TemplateDialog dialog(iconThemeNamed(m_iconThemes, iconTheme), this);
-        dialog.exec();
-    });
     QMenu *iconMenu = view->addMenu(QStringLiteral("&File Icons"));
+    iconMenu->addAction(QStringLiteral("Templates…"), this, [this] { editIconTemplates(); });
+    iconMenu->addSeparator();
     m_iconThemeGroup = new QActionGroup(this);
     for (const FileIconTheme &theme : m_iconThemes) {
         QAction *action = iconMenu->addAction(theme.name);
@@ -896,10 +890,53 @@ void MainWindow::applyFileIconTheme(const FileIconTheme *theme)
 {
     if (theme == nullptr)
         return;
-    m_explorer->setIconTheme(theme);
     for (QAction *action : m_iconThemeGroup->actions())
         action->setChecked(action->text() == theme->name);
     QSettings().setValue(kFileIconThemeSetting, theme->name);
+    if (m_projectOwnsIcons && !m_projectIcons.theme.isEmpty())
+        return;
+    if (m_projectOwnsIcons)
+        applyComposedIcons();
+    else
+        m_explorer->setIconTheme(theme);
+}
+
+void MainWindow::applyComposedIcons()
+{
+    const QString global = QSettings().value(kFileIconThemeSetting, QStringLiteral("Seti")).toString();
+    if (m_projectIcons.theme.isEmpty() && m_projectIcons.rules.isEmpty()) {
+        m_projectOwnsIcons = false;
+        m_explorer->setIconTheme(iconThemeNamed(m_iconThemes, global));
+        return;
+    }
+    const QString baseName = m_projectIcons.theme.isEmpty() ? global : m_projectIcons.theme;
+    const FileIconTheme *base = iconThemeNamed(m_iconThemes, baseName);
+    if (base == nullptr)
+        return;
+    m_composedIcons = FileIconTheme::compose(*base, m_projectIcons.rules, m_iconThemes);
+    m_projectOwnsIcons = true;
+    m_explorer->setIconTheme(&m_composedIcons);
+}
+
+void MainWindow::editIconTemplates()
+{
+    const QString fallback = QSettings().value(kFileIconThemeSetting, QStringLiteral("Seti")).toString();
+    TemplateDialog dialog(m_iconThemes, m_projectIcons, fallback, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    QString file = m_projectFile;
+    if (file.isEmpty()) {
+        if (m_explorer->rootPath().isEmpty()) {
+            statusBar()->showMessage(QStringLiteral("Open a folder before saving icon rules"), 5000);
+            return;
+        }
+        file = QDir(m_explorer->rootPath()).filePath(QStringLiteral(".crlf"));
+    }
+    if (!saveProjectIcons(file, dialog.icons())) {
+        statusBar()->showMessage(QStringLiteral("Couldn't write .crlf"), 5000);
+        return;
+    }
+    reloadCommands();
 }
 
 void MainWindow::applyTheme(const Theme *theme)
@@ -1050,6 +1087,8 @@ void MainWindow::applyProject(const Project &project)
         project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath();
     m_explorer->setGroups(groupDirectory, project.groups);
     m_explorer->setHidden(project.hide);
+    m_projectIcons = project.icons;
+    applyComposedIcons();
     m_tabs->setSymbolNavigation(project.navigation);
     m_tabs->setSymbolProject(m_explorer->rootPath(), project.hide);
     m_tabs->setIndent(project.indent);

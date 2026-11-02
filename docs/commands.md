@@ -68,12 +68,27 @@ With no `path`, the group applies in the directory that contains `.crlf`. `path`
 |---|---|---|
 | `name` | yes | The folder's label in the explorer |
 | `files` | no | File names to fold into the folder. A pattern that contains `*` or `?` is a wildcard; any other pattern is an exact name |
-| `icon` | no | Folder name passed to the file-icon theme. The default is `name`. View > Templates lists every icon key in the current theme |
+| `icon` | no | Folder name passed to the file-icon theme. The default is `name`. View > File Icons > Templates lists every icon key |
 | `path` | no | Folder under the `.crlf` directory. The default is the `.crlf` directory itself |
 | `recursive` | no | Also apply the group in subfolders of `path` |
 | `showIfEmpty` | no | When `false` (the default), hide the folder wherever it has no matching files |
 
 Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `recursive` field, and it can be toggled on the virtual folder's menu. Drag a file from that same folder onto the virtual folder to add its name to `files`. The file stays where it is on disk. Saving `.crlf`, or either of those actions, reloads the groups.
+
+## Icon theme
+
+`icons` chooses the file-icon theme for this project and adds mappings on top of it. `theme` is the name of an installed theme, such as `Seti`. Leaving `theme` out keeps the choice in View > File Icons. Each rule maps an expression to a glyph from an installed theme. `kind` is `extension`, `file`, or `folder`. `pattern` is an exact name, or a wildcard when it contains `*` or `?`. `from` is the source theme and `icon` is a key in that theme. A folder may also set `iconOpen` for the expanded glyph; leaving it out keeps `icon` when the folder is open. View > File Icons > Templates lists every icon key and edits these mappings.
+
+```json
+"icons": {
+  "theme": "Seti",
+  "rules": [
+    { "kind": "extension", "pattern": "*.test.js", "from": "Seti", "icon": "javascript" },
+    { "kind": "file", "pattern": "readme.md", "from": "Seti", "icon": "readme.md" },
+    { "kind": "folder", "pattern": "src*", "from": "Seti", "icon": "config", "iconOpen": "folderExpanded" }
+  ]
+}
+```
 
 ## Hidden names
 

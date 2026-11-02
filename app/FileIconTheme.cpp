@@ -9,10 +9,12 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QIconEngine>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QSvgRenderer>
 
@@ -104,6 +106,78 @@ QString loadFont(const QString &path)
     const QStringList families = QFontDatabase::applicationFontFamilies(id);
     return families.isEmpty() ? QString() : families.first();
 }
+
+bool wildcard(const QString &pattern)
+{
+    return pattern.contains(QLatin1Char('*')) || pattern.contains(QLatin1Char('?'));
+}
+
+bool patternMatches(const QString &pattern, const QString &name)
+{
+    if (!wildcard(pattern))
+        return name.compare(pattern, Qt::CaseInsensitive) == 0;
+    const QRegularExpression expression(
+        QRegularExpression::wildcardToRegularExpression(pattern),
+        QRegularExpression::CaseInsensitiveOption);
+    return expression.match(name).hasMatch();
+}
+
+bool extensionMatches(const QString &pattern, const QString &fileName)
+{
+    if (patternMatches(pattern, fileName))
+        return true;
+    int dot = fileName.indexOf(QLatin1Char('.'));
+    while (dot >= 0 && dot + 1 < fileName.size()) {
+        if (patternMatches(pattern, fileName.mid(dot + 1)))
+            return true;
+        dot = fileName.indexOf(QLatin1Char('.'), dot + 1);
+    }
+    return false;
+}
+
+// The item view asks for whatever rectangle it has reserved. QIcon's default
+// engine then scales the pixmap to that rectangle and ignores the aspect
+// ratio. Material artwork fills its view box, so that scale reads as a stretch.
+class AspectIconEngine : public QIconEngine
+{
+public:
+    explicit AspectIconEngine(const QPixmap &pixmap)
+        : m_pixmap(pixmap)
+    {
+    }
+
+    QIconEngine *clone() const override { return new AspectIconEngine(*this); }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode, QIcon::State, qreal scale) override
+    {
+        const QSize logical = logicalSize();
+        const QSize fitted = size.isEmpty() ? logical : logical.scaled(size, Qt::KeepAspectRatio);
+        if (fitted == logical && qFuzzyCompare(scale, m_pixmap.devicePixelRatio()))
+            return m_pixmap;
+        return m_pixmap.scaled((QSizeF(fitted) * scale).toSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode, QIcon::State state) override
+    {
+        const QPixmap pixmap = scaledPixmap(rect.size(), mode, state, painter->device()->devicePixelRatio());
+        const QSize drawn = logicalSizeOf(pixmap);
+        const QRect dest(rect.x() + (rect.width() - drawn.width()) / 2,
+                         rect.y() + (rect.height() - drawn.height()) / 2,
+                         drawn.width(), drawn.height());
+        painter->drawPixmap(dest, pixmap);
+    }
+
+private:
+    QSize logicalSize() const { return logicalSizeOf(m_pixmap); }
+
+    static QSize logicalSizeOf(const QPixmap &pixmap)
+    {
+        const qreal ratio = pixmap.devicePixelRatio();
+        return QSize(qRound(pixmap.width() / ratio), qRound(pixmap.height() / ratio));
+    }
+
+    QPixmap m_pixmap;
+};
 
 } // namespace
 
@@ -209,6 +283,13 @@ QString FileIconTheme::definitionId(const QString &fileName, bool isDir, bool ex
 {
     const QString lower = fileName.toLower();
     if (isDir) {
+        for (const PatternRule &rule : m_patterns) {
+            if (rule.kind != QLatin1String("folder") || !patternMatches(rule.pattern, lower))
+                continue;
+            if (expanded && !rule.openId.isEmpty())
+                return rule.openId;
+            return rule.closedId;
+        }
         if (expanded) {
             const QString namedOpen = m_folderNamesExpanded.value(lower);
             if (!namedOpen.isEmpty())
@@ -219,9 +300,17 @@ QString FileIconTheme::definitionId(const QString &fileName, bool isDir, bool ex
         const QString named = m_folderNames.value(lower);
         return named.isEmpty() ? m_folder : named;
     }
+    for (const PatternRule &rule : m_patterns) {
+        if (rule.kind == QLatin1String("file") && patternMatches(rule.pattern, lower))
+            return rule.closedId;
+    }
     const QString named = m_fileNames.value(lower);
     if (!named.isEmpty())
         return named;
+    for (const PatternRule &rule : m_patterns) {
+        if (rule.kind == QLatin1String("extension") && extensionMatches(rule.pattern, lower))
+            return rule.closedId;
+    }
     int dot = lower.indexOf(QLatin1Char('.'));
     while (dot >= 0 && dot + 1 < lower.size()) {
         const QString extension = m_fileExtensions.value(lower.mid(dot + 1));
@@ -257,6 +346,125 @@ QList<IconOption> FileIconTheme::icons() const
     if (!m_file.isEmpty())
         rows.append({QStringLiteral("file"), QStringLiteral("default"), iconForId(m_file)});
     return rows;
+}
+
+QList<IconOption> FileIconTheme::glyphs() const
+{
+    QHash<QString, QString> keyForId;
+    QHash<QString, QString> kindForId;
+    const auto consider = [&](const QHash<QString, QString> &map, const QString &kind) {
+        for (auto it = map.cbegin(); it != map.cend(); ++it) {
+            const QString existing = keyForId.value(it.value());
+            if (existing.isEmpty() || it.key().size() < existing.size()) {
+                keyForId.insert(it.value(), it.key());
+                kindForId.insert(it.value(), kind);
+            }
+        }
+    };
+    consider(m_fileExtensions, QStringLiteral("extension"));
+    consider(m_languageIds, QStringLiteral("language"));
+    consider(m_fileNames, QStringLiteral("file name"));
+    consider(m_folderNames, QStringLiteral("folder"));
+    consider(m_folderNamesExpanded, QStringLiteral("folder open"));
+    if (!m_file.isEmpty() && !keyForId.contains(m_file)) {
+        keyForId.insert(m_file, QStringLiteral("file"));
+        kindForId.insert(m_file, QStringLiteral("default"));
+    }
+    if (!m_folder.isEmpty() && !keyForId.contains(m_folder)) {
+        keyForId.insert(m_folder, QStringLiteral("folder"));
+        kindForId.insert(m_folder, QStringLiteral("default"));
+    }
+    if (!m_folderExpanded.isEmpty() && !keyForId.contains(m_folderExpanded)) {
+        keyForId.insert(m_folderExpanded, QStringLiteral("folderExpanded"));
+        kindForId.insert(m_folderExpanded, QStringLiteral("default"));
+    }
+
+    QStringList ids = keyForId.keys();
+    ids.sort(Qt::CaseInsensitive);
+    QList<IconOption> rows;
+    for (const QString &id : ids)
+        rows.append({keyForId.value(id), kindForId.value(id), iconForId(id)});
+    return rows;
+}
+
+QString FileIconTheme::catalogId(const QString &key) const
+{
+    const QString lower = key.toLower();
+    const QHash<QString, QString> *maps[] = {
+        &m_fileNames, &m_fileExtensions, &m_languageIds, &m_folderNames, &m_folderNamesExpanded,
+    };
+    for (const QHash<QString, QString> *map : maps) {
+        const auto it = map->constFind(lower);
+        if (it != map->constEnd())
+            return it.value();
+    }
+    if (lower == QLatin1String("folder"))
+        return m_folder;
+    if (lower == QLatin1String("folderexpanded"))
+        return m_folderExpanded;
+    if (lower == QLatin1String("file"))
+        return m_file;
+    return {};
+}
+
+QString FileIconTheme::copyGlyph(FileIconTheme *theme, const FileIconTheme &source, const QString &key, int *index) const
+{
+    const QString sourceId = source.catalogId(key);
+    const auto definition = source.m_definitions.constFind(sourceId);
+    if (sourceId.isEmpty() || definition == source.m_definitions.constEnd())
+        return {};
+    const QString id = QStringLiteral("_project_%1").arg((*index)++);
+    theme->m_definitions.insert(id, definition.value());
+    return id;
+}
+
+FileIconTheme FileIconTheme::compose(const FileIconTheme &base, const QList<IconRule> &rules,
+                                     const QList<FileIconTheme> &installed)
+{
+    FileIconTheme theme = base;
+    theme.m_cache.clear();
+    theme.m_patterns.clear();
+    int index = 0;
+    for (const IconRule &rule : rules) {
+        const FileIconTheme *source = nullptr;
+        for (const FileIconTheme &candidate : installed) {
+            if (candidate.name == rule.from) {
+                source = &candidate;
+                break;
+            }
+        }
+        if (source == nullptr)
+            continue;
+        const QString closedId = theme.copyGlyph(&theme, *source, rule.icon, &index);
+        if (closedId.isEmpty())
+            continue;
+        QString openId;
+        if (!rule.iconOpen.isEmpty())
+            openId = theme.copyGlyph(&theme, *source, rule.iconOpen, &index);
+
+        const QString key = rule.pattern.toLower();
+        if (wildcard(rule.pattern)) {
+            theme.m_patterns.append({rule.kind, rule.pattern, closedId, openId});
+            continue;
+        }
+        if (rule.kind == QLatin1String("extension"))
+            theme.m_fileExtensions.insert(key, closedId);
+        else if (rule.kind == QLatin1String("file"))
+            theme.m_fileNames.insert(key, closedId);
+        else if (rule.kind == QLatin1String("folder")) {
+            theme.m_folderNames.insert(key, closedId);
+            if (!openId.isEmpty())
+                theme.m_folderNamesExpanded.insert(key, openId);
+        } else if (rule.kind == QLatin1String("language"))
+            theme.m_languageIds.insert(key, closedId);
+        else if (rule.kind == QLatin1String("default") && key == QLatin1String("file"))
+            theme.m_file = closedId;
+        else if (rule.kind == QLatin1String("default") && key == QLatin1String("folder"))
+            theme.m_folder = closedId;
+        else if (rule.kind == QLatin1String("default") && key == QLatin1String("folderexpanded"))
+            theme.m_folderExpanded = closedId;
+    }
+    return theme;
 }
 
 QIcon FileIconTheme::iconFor(const QString &fileName, bool isDir, bool expanded) const
@@ -306,5 +514,5 @@ QIcon FileIconTheme::render(const Definition &definition) const
         painter.setClipRect(QRectF(0, 0, side, side));
         painter.drawText(QRectF(0, 0, side, side), Qt::AlignCenter, definition.character);
     }
-    return QIcon(pixmap);
+    return QIcon(new AspectIconEngine(pixmap));
 }

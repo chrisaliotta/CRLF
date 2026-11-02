@@ -1,5 +1,7 @@
 #pragma once
 
+#include "io/ProjectCommands.h"
+
 #include <QColor>
 #include <QHash>
 #include <QIcon>
@@ -30,6 +32,12 @@ public:
     // Every key this theme draws: folders, file names, extensions, languages,
     // and the default file and folder icons.
     QList<IconOption> icons() const;
+    // One entry per glyph. `key` is a catalog name that resolves to that glyph.
+    QList<IconOption> glyphs() const;
+    // Copies `base` and overlays rules. Each rule's glyph is taken from the
+    // installed theme named by `from`.
+    static FileIconTheme compose(const FileIconTheme &base, const QList<IconRule> &rules,
+                                 const QList<FileIconTheme> &installed);
 
 private:
     struct Definition {
@@ -42,9 +50,18 @@ private:
 
     static FileIconTheme fromJsonFile(const QString &path);
     QString definitionId(const QString &fileName, bool isDir, bool expanded) const;
+    QString catalogId(const QString &key) const;
     QIcon iconForId(const QString &id) const;
     QIcon render(const Definition &definition) const;
     void appendIcons(QList<IconOption> &rows, const QString &kind, const QHash<QString, QString> &map) const;
+    QString copyGlyph(FileIconTheme *theme, const FileIconTheme &source, const QString &key, int *index) const;
+
+    struct PatternRule {
+        QString kind;
+        QString pattern;
+        QString closedId;
+        QString openId;
+    };
 
     QHash<QString, Definition> m_definitions;
     QHash<QString, QString> m_fileNames;
@@ -55,6 +72,7 @@ private:
     QString m_file;
     QString m_folder;
     QString m_folderExpanded;
+    QList<PatternRule> m_patterns;
     int m_fontPercent = 100;
     mutable QHash<QString, QIcon> m_cache;
 };

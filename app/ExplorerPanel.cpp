@@ -124,6 +124,7 @@ public:
         // Hovering a collapsed folder with a dragged row opens it.
         setAutoExpandDelay(600);
         setViewportMargins(12, 0, 0, 0);
+        setIconSize(QSize(16, 16));
     }
 
     // The file-icon style sheet polishes the view and clears viewport margins.
