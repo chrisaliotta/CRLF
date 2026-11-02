@@ -70,6 +70,8 @@ set(APP_SOURCES
     app/ExplorerModel.cpp
     app/FileIconTheme.h
     app/FileIconTheme.cpp
+    app/TemplateDialog.h
+    app/TemplateDialog.cpp
     app/CommandRunner.h
     app/CommandRunner.cpp
     app/OutputPanel.h

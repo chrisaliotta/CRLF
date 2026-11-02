@@ -22,7 +22,8 @@ public:
     explicit TerminalPanel(QWidget *parent = nullptr);
 
     void setDirectoryProvider(std::function<QString()> provider);
-    void setColors(const QColor &foreground, const QColor &background, const QColor &selection);
+    void setColors(const QColor &foreground, const QColor &background, const QColor &selection,
+                   const QList<QColor> &palette);
     void ensureSession();
     void focusCurrent();
     void closeSessions();
@@ -55,6 +56,7 @@ private:
     QColor m_foreground = Qt::white;
     QColor m_background = QColor(0x1e, 0x1e, 0x1e);
     QColor m_selection = QColor(0x26, 0x4f, 0x78);
+    QList<QColor> m_palette;
     QList<Session> m_sessions;
     QComboBox *m_sessionsCombo = nullptr;
     QStackedWidget *m_stack = nullptr;

@@ -4,6 +4,49 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace {
+
+QList<QColor> paletteFrom(const char *const (&hex)[16])
+{
+    QList<QColor> colors;
+    for (const char *entry : hex)
+        colors.append(QColor(QLatin1String(entry)));
+    return colors;
+}
+
+// Readable on the Dark editor background. Bright colors follow that theme's
+// token colors so command output sits next to the editor.
+QList<QColor> darkTerminalPalette()
+{
+    static const char *const hex[16] = {
+        "#000000", "#f14c4c", "#6a9955", "#dcdcaa",
+        "#569cd6", "#c586c0", "#4ec9b0", "#d4d4d4",
+        "#808080", "#f44747", "#b5cea8", "#d7ba7d",
+        "#9cdcfe", "#d670d6", "#29b8db", "#ffffff",
+    };
+    return paletteFrom(hex);
+}
+
+// Dark enough to stay visible on the Light editor background.
+QList<QColor> lightTerminalPalette()
+{
+    static const char *const hex[16] = {
+        "#1f1f1f", "#a31515", "#098658", "#795e26",
+        "#0000ff", "#af00db", "#267f99", "#5a5a5a",
+        "#767676", "#cd3131", "#107c10", "#949800",
+        "#0451a5", "#bc05bc", "#0598bc", "#1f1f1f",
+    };
+    return paletteFrom(hex);
+}
+
+const char *const kTerminalKeys[16] = {
+    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    "brightBlack", "brightRed", "brightGreen", "brightYellow",
+    "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+};
+
+} // namespace
+
 Theme Theme::fromJsonFile(const QString &path)
 {
     QFile file(path);
@@ -21,6 +64,15 @@ Theme Theme::fromJsonFile(const QString &path)
     theme.gutterBackground = QColor(editor.value(QLatin1String("gutterBackground")).toString());
     theme.gutterForeground = QColor(editor.value(QLatin1String("gutterForeground")).toString());
     theme.codeBlockBackground = QColor(editor.value(QLatin1String("codeBlockBackground")).toString());
+
+    const QList<QColor> defaults = theme.background.lightness() >= 128
+                                       ? lightTerminalPalette()
+                                       : darkTerminalPalette();
+    const QJsonObject terminal = root.value(QLatin1String("terminal")).toObject();
+    for (int i = 0; i < 16; ++i) {
+        const QColor named(terminal.value(QLatin1String(kTerminalKeys[i])).toString());
+        theme.terminal.append(named.isValid() ? named : defaults.at(i));
+    }
 
     const QJsonObject tokens = root.value(QLatin1String("tokens")).toObject();
     for (auto it = tokens.begin(); it != tokens.end(); ++it) {

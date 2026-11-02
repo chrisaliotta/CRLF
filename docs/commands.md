@@ -65,7 +65,7 @@ With no `path`, the group applies in the directory that contains `.crlf`. `path`
 |---|---|---|
 | `name` | yes | The folder's label in the explorer |
 | `files` | no | File names to fold into the folder. A pattern that contains `*` or `?` is a wildcard; any other pattern is an exact name |
-| `icon` | no | Folder name passed to the file-icon theme. The default is `name` |
+| `icon` | no | Folder name passed to the file-icon theme. The default is `name`. View > Templates lists every icon key in the current theme |
 | `path` | no | Folder under the `.crlf` directory. The default is the `.crlf` directory itself |
 | `recursive` | no | Also apply the group in subfolders of `path` |
 | `showIfEmpty` | no | When `false` (the default), hide the folder wherever it has no matching files |
@@ -116,7 +116,7 @@ A command that is running shows a check mark. The check follows the command into
 
 ## Variables
 
-Write a variable as `${name}` inside `command`. The value is taken when the command starts, including when you start it again while it is already running. Quote a value that may contain spaces: `"${file}"`. A `${name}` that is not in the list below is left as written, so the shell can expand its own variables.
+Write a variable as `${name}` inside `command`. The value is taken when the command starts, including when you start it again while it is already running. Quote a value that may contain spaces: `"${file}"`. A `${name}` that is not in the list below is left as written, so the shell can expand its own variables. View > Templates lists the same names.
 
 | Variable | Value |
 |---|---|

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QList>
 #include <QWidget>
 
 #include <functional>
@@ -22,7 +23,8 @@ public:
     TerminalPanel *terminal() const { return m_terminal; }
 
     void setDirectoryProvider(std::function<QString()> provider);
-    void setColors(const QColor &foreground, const QColor &background, const QColor &selection);
+    void setColors(const QColor &foreground, const QColor &background, const QColor &selection,
+                   const QList<QColor> &palette);
     QSize sizeHint() const override;
 
     void showTerminal();

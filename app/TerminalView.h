@@ -3,6 +3,7 @@
 #include <vterm.h>
 
 #include <QColor>
+#include <QList>
 #include <QVector>
 #include <QWidget>
 
@@ -19,7 +20,9 @@ public:
     ~TerminalView() override;
 
     void pushBytes(const QByteArray &data);
-    void setColors(const QColor &foreground, const QColor &background, const QColor &selection);
+    // `palette` is ANSI colors 0–15. An empty list leaves the current palette.
+    void setColors(const QColor &foreground, const QColor &background, const QColor &selection,
+                   const QList<QColor> &palette = {});
     void reset();
     // Tells the pseudoconsole the cell size once the widget has one.
     void syncSize();
@@ -91,6 +94,7 @@ private:
     QColor m_foreground = Qt::white;
     QColor m_background = QColor(0x1e, 0x1e, 0x1e);
     QColor m_selection = QColor(0x26, 0x4f, 0x78);
+    QList<QColor> m_palette;
     QVector<QVector<VTermScreenCell>> m_scrollback;
     int m_scrollOffset = 0;
     int m_rows = 24;

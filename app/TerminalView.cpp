@@ -201,11 +201,14 @@ void TerminalView::pushBytes(const QByteArray &data)
     update();
 }
 
-void TerminalView::setColors(const QColor &foreground, const QColor &background, const QColor &selection)
+void TerminalView::setColors(const QColor &foreground, const QColor &background, const QColor &selection,
+                             const QList<QColor> &palette)
 {
     m_foreground = foreground;
     m_background = background;
     m_selection = selection;
+    if (!palette.isEmpty())
+        m_palette = palette;
     if (!m_screen)
         return;
     VTermColor fg;
@@ -213,6 +216,13 @@ void TerminalView::setColors(const QColor &foreground, const QColor &background,
     vterm_color_rgb(&fg, uint8_t(foreground.red()), uint8_t(foreground.green()), uint8_t(foreground.blue()));
     vterm_color_rgb(&bg, uint8_t(background.red()), uint8_t(background.green()), uint8_t(background.blue()));
     vterm_screen_set_default_colors(m_screen, &fg, &bg);
+    VTermState *state = vterm_obtain_state(m_vt);
+    for (int i = 0; i < m_palette.size() && i < 16; ++i) {
+        const QColor &named = m_palette.at(i);
+        VTermColor color;
+        vterm_color_rgb(&color, uint8_t(named.red()), uint8_t(named.green()), uint8_t(named.blue()));
+        vterm_state_set_palette_color(state, i, &color);
+    }
     update();
 }
 

@@ -68,9 +68,10 @@ void BottomPanel::setDirectoryProvider(std::function<QString()> provider)
     m_terminal->setDirectoryProvider(std::move(provider));
 }
 
-void BottomPanel::setColors(const QColor &foreground, const QColor &background, const QColor &selection)
+void BottomPanel::setColors(const QColor &foreground, const QColor &background, const QColor &selection,
+                            const QList<QColor> &palette)
 {
-    m_terminal->setColors(foreground, background, selection);
+    m_terminal->setColors(foreground, background, selection, palette);
 }
 
 void BottomPanel::showTerminal()

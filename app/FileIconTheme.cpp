@@ -233,9 +233,39 @@ QString FileIconTheme::definitionId(const QString &fileName, bool isDir, bool ex
     return language.isEmpty() ? m_file : language;
 }
 
+void FileIconTheme::appendIcons(QList<IconOption> &rows, const QString &kind,
+                                const QHash<QString, QString> &map) const
+{
+    QStringList keys = map.keys();
+    keys.sort(Qt::CaseInsensitive);
+    for (const QString &key : keys)
+        rows.append({key, kind, iconForId(map.value(key))});
+}
+
+QList<IconOption> FileIconTheme::icons() const
+{
+    QList<IconOption> rows;
+    appendIcons(rows, QStringLiteral("folder"), m_folderNames);
+    appendIcons(rows, QStringLiteral("folder open"), m_folderNamesExpanded);
+    appendIcons(rows, QStringLiteral("file name"), m_fileNames);
+    appendIcons(rows, QStringLiteral("extension"), m_fileExtensions);
+    appendIcons(rows, QStringLiteral("language"), m_languageIds);
+    if (!m_folder.isEmpty())
+        rows.append({QStringLiteral("folder"), QStringLiteral("default"), iconForId(m_folder)});
+    if (!m_folderExpanded.isEmpty())
+        rows.append({QStringLiteral("folderExpanded"), QStringLiteral("default"), iconForId(m_folderExpanded)});
+    if (!m_file.isEmpty())
+        rows.append({QStringLiteral("file"), QStringLiteral("default"), iconForId(m_file)});
+    return rows;
+}
+
 QIcon FileIconTheme::iconFor(const QString &fileName, bool isDir, bool expanded) const
 {
-    const QString id = definitionId(fileName, isDir, expanded);
+    return iconForId(definitionId(fileName, isDir, expanded));
+}
+
+QIcon FileIconTheme::iconForId(const QString &id) const
+{
     if (m_cache.contains(id))
         return m_cache.value(id);
     const auto definition = m_definitions.constFind(id);

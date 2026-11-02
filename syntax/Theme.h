@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QHash>
+#include <QList>
 #include <QTextCharFormat>
 
 // A color theme parsed from a JSON file in resources/themes/: editor chrome
@@ -24,6 +25,10 @@ public:
     QColor gutterForeground;
     // Behind text inside embedded regions such as Markdown fenced code.
     QColor codeBlockBackground;
+    // ANSI colors 0–15 for terminal output. A theme file's `terminal` object
+    // replaces these; a missing entry keeps the default for that theme's
+    // background.
+    QList<QColor> terminal;
 
 private:
     QHash<int, QTextCharFormat> m_formats;

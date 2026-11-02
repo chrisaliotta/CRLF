@@ -31,6 +31,7 @@ File > Open Folder (Ctrl+Shift+O), or View > Explorer (Ctrl+B). The tree is scop
 - Cut rows are faded. Dragging a file or folder onto another folder asks before the move, and holding the drag over a collapsed folder expands it
 - Hide Dot Folders hides directories whose names start with `.` (`.git`, `.cursor`, and so on). Dot files such as `.crlf` stay visible. A `.crlf` `hide` list drops other names from the tree, such as `node_modules` or `*.log`
 - File icons come from a theme in the `icons` folder (View > File Icons). The shipped theme is Seti. A file uses the theme's file name, then its file extension, then the VS Code language id from `icons/languages.json` (`jsx` is `javascriptreact`, `md` is `markdown`). Another theme is a subdirectory with a VS Code icon-theme JSON file; image paths and font files are resolved next to that JSON. A folder with no `name` uses the directory name
+- View > Templates lists every icon in the selected file-icon theme, and the `${...}` names a command can use. Double-click a row to copy the key
 - A `.crlf` file can define virtual folders that group files without creating a directory. A group can be limited to one path or applied in its subfolders. A group with no matching files is hidden unless `showIfEmpty` is true. New Virtual Folder on the explorer menu creates one, and dragging a file onto it records the file in `.crlf`. Changing those rules leaves the explorer expanded where it was. See [docs/commands.md](docs/commands.md)
 - The chosen folder is restored on the next launch
 
@@ -75,7 +76,7 @@ A `.crlf` file in the explorer folder, or in a parent folder up to the drive or 
 
 ### Appearance
 
-Dark, Cool Dark, and light themes (View > Theme). Cool Dark uses the blue-black of the application icon. The editor font is the bundled Ubuntu Mono, so the window looks the same on machines that do not have those fonts installed. Editor scrollbar handles grow under the pointer, and the tracks stay unpainted.
+Dark, Cool Dark, and light themes (View > Theme). Each theme's `terminal` colors are the ANSI palette in the terminal. Cool Dark uses the blue-black of the application icon. The editor font is the bundled Ubuntu Mono, so the window looks the same on machines that do not have those fonts installed. Editor scrollbar handles grow under the pointer, and the tracks stay unpainted.
 
 ## Building
 

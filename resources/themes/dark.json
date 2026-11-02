@@ -19,5 +19,23 @@
     "preprocessor": { "color": "#c586c0" },
     "function": { "color": "#dcdcaa" },
     "operator": { "color": "#d4d4d4" }
+  },
+  "terminal": {
+    "black": "#000000",
+    "red": "#f14c4c",
+    "green": "#6a9955",
+    "yellow": "#dcdcaa",
+    "blue": "#569cd6",
+    "magenta": "#c586c0",
+    "cyan": "#4ec9b0",
+    "white": "#d4d4d4",
+    "brightBlack": "#808080",
+    "brightRed": "#f44747",
+    "brightGreen": "#b5cea8",
+    "brightYellow": "#d7ba7d",
+    "brightBlue": "#9cdcfe",
+    "brightMagenta": "#d670d6",
+    "brightCyan": "#29b8db",
+    "brightWhite": "#ffffff"
   }
 }

@@ -7,6 +7,7 @@
 #include "app/OpenWith.h"
 #include "app/OutputPanel.h"
 #include "app/TabWorkspace.h"
+#include "app/TemplateDialog.h"
 #include "app/TitleBar.h"
 #include "io/ProjectCommands.h"
 #include "io/WslPath.h"
@@ -587,6 +588,15 @@ void MainWindow::buildMenus()
         m_themeGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, theme = &theme] { applyTheme(theme); });
     }
+    view->addAction(QStringLiteral("Templates…"), this, [this] {
+        QString iconTheme;
+        for (QAction *action : m_iconThemeGroup->actions()) {
+            if (action->isChecked())
+                iconTheme = action->text();
+        }
+        TemplateDialog dialog(iconThemeNamed(m_iconThemes, iconTheme), this);
+        dialog.exec();
+    });
     QMenu *iconMenu = view->addMenu(QStringLiteral("&File Icons"));
     m_iconThemeGroup = new QActionGroup(this);
     for (const FileIconTheme &theme : m_iconThemes) {
@@ -843,7 +853,7 @@ void MainWindow::applyFileIconTheme(const FileIconTheme *theme)
 void MainWindow::applyTheme(const Theme *theme)
 {
     m_tabs->setTheme(theme);
-    m_bottom->setColors(theme->foreground, theme->background, theme->selection);
+    m_bottom->setColors(theme->foreground, theme->background, theme->selection, theme->terminal);
     setStyleSheet(chromeStyleSheet(*theme));
     // After the stylesheet, so polish does not clear the scroll buttons' fill.
     m_tabs->setTabColors(theme->foreground, theme->gutterForeground, chromeBorder(*theme),

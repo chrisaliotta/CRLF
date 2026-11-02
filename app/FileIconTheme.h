@@ -10,6 +10,15 @@
 // or at a glyph in a font shipped next to the JSON, which is how Seti is
 // published. A file matches a file name, then a file extension, then the
 // language id from icons/languages.json. Icons are cached per definition.
+// One icon a theme associates with a key. `kind` is folder, file name,
+// extension, language, or default.
+struct IconOption
+{
+    QString key;
+    QString kind;
+    QIcon icon;
+};
+
 class FileIconTheme
 {
 public:
@@ -18,6 +27,9 @@ public:
     QString name;
     // expanded selects folderExpanded when the row is a directory that is open.
     QIcon iconFor(const QString &fileName, bool isDir, bool expanded = false) const;
+    // Every key this theme draws: folders, file names, extensions, languages,
+    // and the default file and folder icons.
+    QList<IconOption> icons() const;
 
 private:
     struct Definition {
@@ -30,7 +42,9 @@ private:
 
     static FileIconTheme fromJsonFile(const QString &path);
     QString definitionId(const QString &fileName, bool isDir, bool expanded) const;
+    QIcon iconForId(const QString &id) const;
     QIcon render(const Definition &definition) const;
+    void appendIcons(QList<IconOption> &rows, const QString &kind, const QHash<QString, QString> &map) const;
 
     QHash<QString, Definition> m_definitions;
     QHash<QString, QString> m_fileNames;

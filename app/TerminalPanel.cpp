@@ -65,13 +65,15 @@ void TerminalPanel::setDirectoryProvider(std::function<QString()> provider)
     m_directory = std::move(provider);
 }
 
-void TerminalPanel::setColors(const QColor &foreground, const QColor &background, const QColor &selection)
+void TerminalPanel::setColors(const QColor &foreground, const QColor &background, const QColor &selection,
+                              const QList<QColor> &palette)
 {
     m_foreground = foreground;
     m_background = background;
     m_selection = selection;
+    m_palette = palette;
     for (const Session &session : m_sessions)
-        session.view->setColors(foreground, background, selection);
+        session.view->setColors(foreground, background, selection, palette);
 }
 
 void TerminalPanel::ensureSession()
@@ -130,7 +132,7 @@ void TerminalPanel::openSession()
 {
     const Launch launch = launchFor(m_directory ? m_directory() : QString());
     auto *view = new TerminalView;
-    view->setColors(m_foreground, m_background, m_selection);
+    view->setColors(m_foreground, m_background, m_selection, m_palette);
     auto *pty = new ConPtySession(this);
     connect(pty, &ConPtySession::readyRead, view, &TerminalView::pushBytes);
     connect(view, &TerminalView::inputGenerated, pty, &ConPtySession::writeInput);
