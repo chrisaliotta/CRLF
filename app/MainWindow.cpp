@@ -303,6 +303,16 @@ void markRunningCommands(QMenu *menu, const CommandRunner *runner)
     }
 }
 
+void addJsonFileMenu(QMenu *menu, const QString &directory, TabWorkspace *tabs)
+{
+    const QDir dir(directory);
+    const QStringList files = dir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+    for (const QString &file : files) {
+        const QString path = dir.absoluteFilePath(file);
+        menu->addAction(file, tabs, [tabs, path] { tabs->openFile(path); });
+    }
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -618,6 +628,15 @@ void MainWindow::buildMenus()
         m_iconThemeGroup->addAction(action);
         connect(action, &QAction::triggered, this, [this, theme = &theme] { applyFileIconTheme(theme); });
     }
+    QMenu *defaults = view->addMenu(QStringLiteral("Edit Defaults"));
+    const QString commandsFile = QDir(programDirectory()).filePath(QStringLiteral(".crlf"));
+    defaults->addAction(QStringLiteral("Commands"), m_tabs, [this, commandsFile] {
+        m_tabs->openFile(commandsFile);
+    });
+    addJsonFileMenu(defaults->addMenu(QStringLiteral("Themes")),
+                    QDir(programDirectory()).filePath(QStringLiteral("themes")), m_tabs);
+    addJsonFileMenu(defaults->addMenu(QStringLiteral("Syntax")),
+                    QDir(programDirectory()).filePath(QStringLiteral("styles")), m_tabs);
     view->addSeparator();
     view->addAction(m_actions.foldAll);
     view->addAction(m_actions.unfoldAll);

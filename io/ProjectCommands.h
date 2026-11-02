@@ -75,6 +75,7 @@ struct Project
 IndentRule indentForFileName(const IndentSettings &settings, const QString &fileName);
 
 // `start` is a file or directory. Parents are searched up to the drive root.
+// When that search finds nothing, the application directory's .crlf is used.
 Project projectFor(const QString &start);
 
 // Rewrites `groups` in the project file, keeping commands. Creates the file

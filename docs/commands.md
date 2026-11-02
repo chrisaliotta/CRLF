@@ -6,7 +6,9 @@ A `.crlf` file defines commands for one project. CRLF finds that file, adds each
 
 CRLF looks for a file named `.crlf`. The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the directory of the focused document. It walks parent folders and stops at the drive root, or at the distro root of a `\\wsl.localhost` path.
 
-The first `.crlf` found is the project file. Saving that file, or switching to a document that resolves to a different one, reloads the menus. A command that disappeared from the file is stopped.
+The first `.crlf` found is the project file. When the walk finds none, CRLF uses the `.crlf` in the application directory, next to `styles` and `themes`. A workspace file replaces that default for as long as it is the one the walk finds. Saving the file in use, or switching to a document that resolves to a different one, reloads the menus. A command that disappeared from the file is stopped.
+
+View, Edit Defaults opens the application `.crlf`, and the theme and syntax files beside it, as text. Saving the application `.crlf` reloads commands only while that file is the one in use.
 
 The file is a JSON array of commands, or an object with a `commands` array and an optional `groups` array. An entry needs `name` and `command`. A second entry with the same `name` is ignored, because the name identifies the running process and its output log. A file that is neither an array nor an object leaves Run hidden and shows "Couldn't read .crlf" in the status bar.
 
@@ -38,7 +40,7 @@ The file is a JSON array of commands, or an object with a `commands` array and a
 
 A `key` that is not a bare function key is ignored. When two commands ask for the same key, the first one in the file keeps it.
 
-Run is shown only when at least one command is placed in it. A missing file leaves Run hidden.
+Run is shown only when at least one command in the file in use is placed in it. When neither a workspace file nor the application `.crlf` exists, Run stays hidden.
 
 ## Virtual folders
 

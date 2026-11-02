@@ -179,6 +179,10 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/resources/icons"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/icons"
+    COMMAND ${CMAKE_COMMAND}
+        "-DSRC=${CMAKE_SOURCE_DIR}/resources/default.crlf"
+        "-DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/.crlf"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -196,6 +200,14 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/fonts/"
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/icons/"
     DESTINATION icons
     FILES_MATCHING PATTERN "*.json" PATTERN "*.ttf" PATTERN "*.txt" PATTERN "*.svg" PATTERN "*.png")
+# Beside styles and themes, one level above bin. Left in place once it
+# exists, so an edited default is not replaced on the next install.
+install(CODE "
+    execute_process(COMMAND \"${CMAKE_COMMAND}\"
+        \"-DSRC=${CMAKE_SOURCE_DIR}/resources/default.crlf\"
+        \"-DDST=\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.crlf\"
+        -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake\")
+")
 
 qt_generate_deploy_app_script(
     TARGET ${PROJECT_NAME}

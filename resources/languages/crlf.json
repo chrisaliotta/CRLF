@@ -4,7 +4,7 @@
   "keywords": ["true", "false", "null"],
   "patterns": [
     { "role": "string", "regex": "\"(?:\\\\.|[^\"\\\\])*\"" },
-    { "role": "keyword", "regex": "\"(?:name|command|cwd|menu|key)\"" },
+    { "role": "keyword", "regex": "\"(?:name|command|cwd|menu|key|output)\"" },
     { "role": "number", "regex": "-?\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?\\b" },
     { "role": "preprocessor", "regex": "\\$\\{[A-Za-z]+\\}", "insideStrings": true }
   ],

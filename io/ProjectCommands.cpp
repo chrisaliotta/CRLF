@@ -1,6 +1,7 @@
 #include "io/ProjectCommands.h"
 
 #include "io/WslPath.h"
+#include "syntax/LanguageRegistry.h"
 
 #include <QDir>
 #include <QFile>
@@ -156,9 +157,14 @@ QString findProjectFile(const QString &start)
 Project projectFor(const QString &start)
 {
     Project project;
-    if (start.isEmpty())
-        return project;
-    project.filePath = findProjectFile(start);
+    if (!start.isEmpty())
+        project.filePath = findProjectFile(start);
+    // A workspace file wins. The application copy is only the fallback.
+    if (project.filePath.isEmpty()) {
+        const QString fallback = QDir(programDirectory()).filePath(QStringLiteral(".crlf"));
+        if (QFileInfo::exists(fallback))
+            project.filePath = QFileInfo(fallback).absoluteFilePath();
+    }
     if (project.filePath.isEmpty())
         return project;
 
