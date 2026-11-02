@@ -656,6 +656,15 @@ void MainWindow::buildMenus()
 
     m_runMenu = m_menuBar->addMenu(QStringLiteral("&Run"));
     m_runMenu->menuAction()->setVisible(false);
+
+    QMenu *help = m_menuBar->addMenu(QStringLiteral("&Help"));
+    help->addAction(QStringLiteral("&About"), this, [this] {
+        const QString name = QCoreApplication::applicationName();
+        QMessageBox::about(this, QStringLiteral("About %1").arg(name),
+                           QStringLiteral("<p style='text-align:center'><b>%1</b><br>Version %2</p>"
+                                          "<p style='text-align:center'>Dedicated to my wife and children.</p>")
+                               .arg(name, QCoreApplication::applicationVersion()));
+    });
 }
 
 void MainWindow::connectActions()
