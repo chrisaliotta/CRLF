@@ -15,6 +15,7 @@ custom menu commands that will run scripts or shell commands.
 - Find and replace along the top of the window, with wrap-around, match highlighting, and Find All results that jump to each match. Go to Line is Ctrl+G
 - Tab indents the highlighted lines instead of replacing them. Shift+Tab removes one indent. `.crlf` can set spaces or a tab character, the width, and a different rule per file extension
 - Word wrap, and zoom in, out, or reset (Ctrl+0)
+- Ctrl+click a type, function, method, component, or variable to jump to its definition. Ctrl+hover underlines a name that can be opened. `"navigation": false` in `.crlf` turns the links off. Opening a definition in another file selects that file in the explorer
 - Line-number gutter with clickable fold markers. View > Line Numbers hides the numbers and leaves the fold markers. Fold All and Unfold All are on the View menu
 - Status bar with cursor position, language, encoding, and line endings
 - Encoding (UTF-8 and UTF-16, with BOM detection) and CRLF/LF preservation on save
@@ -148,4 +149,17 @@ keywords, types, string/comment delimiters, regex patterns per token role, and
 a folding mode (`delimiter` with pairs, `indent`, or `heading`). Set `"ignoreCase": true`
 for languages whose keywords and types are case-insensitive (see `sql.json`), and
 `"insideStrings": true` on a pattern to also color its matches inside quoted strings
-(see the `@@variable` rule in `sqlrun.json`).
+(see the `@@variable` rule in `sqlrun.json`). An optional `symbols` array,
+`{ "regex", "capture" }`, names local type definitions for Ctrl+hover and
+Ctrl+click. `capture` defaults to 1, the patterns are matched outside strings
+and comments, and `ignoreCase` applies to them too. `"modules": true` also
+follows import and export declarations, so a JSX component or an imported type
+jumps to the file it comes from. A directory alias in that import is resolved
+too: `tsconfig` or `jsconfig` `paths`, a Vite `resolve.alias`, and a `/@utils`
+or `@utils` path that names a folder in the project. An imported function,
+method, component, constant, or type jumps to that export, and the same kinds
+of names defined in the open file jump to their declaration there.
+`"navigation": false` in `.crlf` turns the links off; leaving the key out leaves them on.
+`"local": true` on a symbol keeps that name out of the project-wide index,
+which is how a variable such as `i` stays in the open document. `"params": true`
+means the capture is a parameter list.

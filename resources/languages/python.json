@@ -25,5 +25,13 @@
     { "role": "preprocessor", "regex": "^\\s*@[\\w.]+" },
     { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\()" }
   ],
+  "symbols": [
+    { "regex": "(?m)^[ \\t]*class[ \\t]+([A-Za-z_]\\w*)" },
+    { "regex": "(?m)^[ \\t]*([A-Za-z_]\\w*)\\s*=[^=]", "local": true },
+    { "regex": "(?m)^[ \\t]*for[ \\t]+([A-Za-z_]\\w*)[ \\t]+in\\b", "local": true },
+    { "regex": "(?m)^[ \\t]*(?:async[ \\t]+)?def[ \\t]+([A-Za-z_]\\w*)", "local": true },
+    { "regex": "(?m)^[ \\t]*(?:async[ \\t]+)?def[ \\t]+[A-Za-z_]\\w*\\s*\\(([^)]*)\\)", "local": true, "params": true },
+    { "regex": "\\bas[ \\t]+([A-Za-z_]\\w*)", "local": true }
+  ],
   "folding": { "mode": "indent" }
 }

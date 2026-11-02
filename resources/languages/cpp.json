@@ -30,6 +30,15 @@
     { "role": "preprocessor", "regex": "^\\s*#\\s*\\w+" },
     { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\s*\\()" }
   ],
+  "symbols": [
+    { "regex": "(?<![<,]\\s{0,40})\\b(?:class|struct|union|enum(?:\\s+class)?)\\s+([A-Za-z_]\\w*)" },
+    { "regex": "\\busing\\s+([A-Za-z_]\\w*)\\s*=" },
+    { "regex": "\\btypedef\\s+(?:(?:struct|class|enum|union)\\s+)?(?:[A-Za-z_][\\w:<>]*\\s+)+([A-Za-z_]\\w*)\\s*;" },
+    { "regex": "(?m)^[ \\t]*(?!(?:return|if|for|while|switch|else|case|goto|delete|throw|try|catch|do|new)\\b)(?:(?:static|const|constexpr|volatile|mutable|extern|unsigned|signed|long|short)\\s+)*(?:[A-Za-z_][\\w:<>,\\*&]*\\s+)+([A-Za-z_]\\w*)\\s*(?:=|;)", "local": true },
+    { "regex": "(?:[(,]\\s*(?:const\\s+)?)(?:[A-Za-z_][\\w:<>,\\*&]*\\s+)+([A-Za-z_]\\w*)\\s*(?:,|\\)|=)", "local": true },
+    { "regex": "\\bfor\\s*\\(\\s*(?:const\\s+)?(?:auto|[A-Za-z_][\\w:<>,\\*&]*)\\s*&{0,2}\\s*([A-Za-z_]\\w*)\\s*:", "local": true },
+    { "regex": "(?m)^[ \\t]*(?:(?:virtual|static|inline|explicit|constexpr|friend|unsigned|const)\\s+)*(?:[A-Za-z_][\\w:<>,\\*&]*\\s+)*([A-Za-z_]\\w*)\\s*\\([^;]*\\)\\s*(?:const\\s*)?(?:override\\s*)?(?:noexcept(?:\\([^)]*\\))?\\s*)?(?:final\\s*)?(?::[^{]+)?\\{", "local": true }
+  ],
   "folding": {
     "mode": "delimiter",
     "pairs": [{ "open": "{", "close": "}" }]

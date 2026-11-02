@@ -19,5 +19,9 @@
     { "role": "keyword", "regex": "\\$\\{[^}]+\\}|\\$[A-Za-z_][A-Za-z0-9_]*|\\$[#@*!?$0-9-]" },
     { "role": "function", "regex": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\()" }
   ],
+  "symbols": [
+    { "regex": "(?m)^[ \\t]*(?:(?:local|export|readonly)[ \\t]+)?([A-Za-z_]\\w*)=", "local": true },
+    { "regex": "(?m)^[ \\t]*function[ \\t]+([A-Za-z_]\\w*)", "local": true }
+  ],
   "folding": { "mode": "indent" }
 }

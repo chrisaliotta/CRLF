@@ -97,6 +97,10 @@ set(EDITOR_SOURCES
     editor/Gutter.cpp
     editor/FoldController.h
     editor/FoldController.cpp
+    editor/SymbolIndex.h
+    editor/SymbolIndex.cpp
+    editor/ImportAliases.h
+    editor/ImportAliases.cpp
 )
 
 set(HEX_SOURCES
@@ -114,6 +118,8 @@ set(SYNTAX_SOURCES
     syntax/Theme.cpp
     syntax/Highlighter.h
     syntax/Highlighter.cpp
+    syntax/SymbolScanner.h
+    syntax/SymbolScanner.cpp
 )
 
 set(IO_SOURCES

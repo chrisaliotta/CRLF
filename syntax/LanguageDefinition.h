@@ -26,6 +26,14 @@ public:
     QRegularExpression typeRegex;
     QList<PatternRule> patterns;
     QList<EmbedRule> embedded;
+    // Declaration patterns for Ctrl+click. Empty when the language has no
+    // named types. `ignoreCase` folds both these patterns and name lookup.
+    QList<SymbolRule> symbols;
+    bool ignoreCase = false;
+    // Import and export declarations are part of navigation. A name brought
+    // in from another file jumps to that file instead of a same-named symbol
+    // elsewhere in the project.
+    bool modules = false;
 
     FoldMode foldMode = FoldMode::Indent;
     QList<FoldPair> foldPairs;

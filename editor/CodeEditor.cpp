@@ -4,12 +4,18 @@
 #include "editor/FoldController.h"
 #include "editor/FoldingLayout.h"
 #include "editor/Gutter.h"
+#include "editor/SymbolIndex.h"
 #include "syntax/Highlighter.h"
+#include "syntax/LanguageDefinition.h"
 #include "syntax/Theme.h"
 
+#include <QCursor>
 #include <QEvent>
+#include <QFocusEvent>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QTimer>
 #include <QPainter>
 #include <QScrollBar>
 #include <QStyleFactory>
@@ -58,19 +64,41 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
 
     m_gutter = new Gutter(this);
     m_foldController = new FoldController(this, m_layout);
+    viewport()->setMouseTracking(true);
+
+    m_symbolTimer = new QTimer(this);
+    m_symbolTimer->setSingleShot(true);
+    m_symbolTimer->setInterval(200);
+    connect(m_symbolTimer, &QTimer::timeout, this, &CodeEditor::submitSymbols);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::scheduleOverlayRefresh);
-    connect(document(), &QTextDocument::contentsChange, this,
-            [this](int, int, int) { scheduleOverlayRefresh(); });
+    connect(document(), &QTextDocument::contentsChange, this, [this](int, int, int) {
+        // The link cursor would be applied from inside the edit. Drop the
+        // flag here and let the deferred overlay refresh paint without it.
+        m_linkActive = false;
+        m_linkWord.clear();
+        viewport()->setCursor(Qt::IBeamCursor);
+        scheduleOverlayRefresh();
+        scheduleSymbolScan();
+    });
 
     updateGutterWidth();
 }
 
 CodeEditor::~CodeEditor()
 {
+    m_symbolTimer->stop();
+    // Drop queued overlay and symbol callbacks before the document goes away.
+    disconnect(this, nullptr, this, nullptr);
+    if (m_symbolIndex != nullptr) {
+        disconnect(m_symbolIndex, nullptr, this, nullptr);
+        m_symbolIndex->removeBuffer(quintptr(this));
+        m_symbolIndex = nullptr;
+    }
     delete m_foldController;
+    m_foldController = nullptr;
 }
 
 void CodeEditor::setTheme(const Theme *theme)
@@ -92,6 +120,55 @@ void CodeEditor::setLanguage(const LanguageDefinition *definition)
 {
     m_definition = definition;
     rebuildHighlighter();
+    scheduleSymbolScan();
+}
+
+void CodeEditor::setSymbolIndex(SymbolIndex *index)
+{
+    if (m_symbolIndex != nullptr)
+        disconnect(m_symbolIndex, nullptr, this, nullptr);
+    m_symbolIndex = index;
+    if (m_symbolIndex != nullptr) {
+        connect(m_symbolIndex, &SymbolIndex::updated, this, [this] {
+            m_linkWord.clear();
+            if (hasFocus() && QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier))
+                updateSymbolLink(viewport()->mapFromGlobal(QCursor::pos()));
+        });
+    }
+    scheduleSymbolScan();
+}
+
+void CodeEditor::setFilePath(const QString &path)
+{
+    m_filePath = path;
+    scheduleSymbolScan();
+}
+
+void CodeEditor::refreshSymbols()
+{
+    scheduleSymbolScan();
+}
+
+void CodeEditor::goTo(int line, int column)
+{
+    QTextBlock block = document()->findBlockByNumber(line - 1);
+    if (!block.isValid())
+        block = document()->lastBlock();
+    while (block.isValid() && !block.isVisible()) {
+        QTextBlock header = block.previous();
+        while (header.isValid() && !(header.isVisible() && FoldController::isFoldHeader(header)))
+            header = header.previous();
+        if (!header.isValid())
+            break;
+        m_foldController->setFolded(header, false);
+        if (!block.isVisible())
+            break;
+    }
+    const int index = qBound(0, column - 1, qMax(0, block.length() - 1));
+    QTextCursor cursor(block);
+    cursor.setPosition(block.position() + index);
+    setTextCursor(cursor);
+    centerCursor();
 }
 
 void CodeEditor::rebuildHighlighter()
@@ -259,6 +336,45 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
         return;
     }
     QPlainTextEdit::keyPressEvent(event);
+    if (event->key() == Qt::Key_Control && !event->isAutoRepeat())
+        updateSymbolLink(viewport()->mapFromGlobal(QCursor::pos()));
+}
+
+void CodeEditor::keyReleaseEvent(QKeyEvent *event)
+{
+    QPlainTextEdit::keyReleaseEvent(event);
+    if (event->key() == Qt::Key_Control && !event->isAutoRepeat())
+        clearSymbolLink();
+}
+
+void CodeEditor::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::ControlModifier)) {
+        updateSymbolLink(event->position().toPoint());
+        if (m_linkActive) {
+            emit definitionActivated(m_linkPath, m_linkEditor, m_linkLine, m_linkColumn);
+            return;
+        }
+    }
+    QPlainTextEdit::mousePressEvent(event);
+}
+
+void CodeEditor::mouseMoveEvent(QMouseEvent *event)
+{
+    QPlainTextEdit::mouseMoveEvent(event);
+    updateSymbolLink(event->position().toPoint());
+}
+
+void CodeEditor::leaveEvent(QEvent *event)
+{
+    QPlainTextEdit::leaveEvent(event);
+    clearSymbolLink();
+}
+
+void CodeEditor::focusOutEvent(QFocusEvent *event)
+{
+    QPlainTextEdit::focusOutEvent(event);
+    clearSymbolLink();
 }
 
 int CodeEditor::foldMarkerWidth() const
@@ -369,7 +485,103 @@ void CodeEditor::highlightCurrentLine()
     selection.cursor.clearSelection();
     QList<QTextEdit::ExtraSelection> selections{selection};
     selections.append(m_findSelections);
+    if (m_linkActive)
+        selections.append(m_linkSelection);
     setExtraSelections(selections);
+}
+
+void CodeEditor::scheduleSymbolScan()
+{
+    if (m_symbolIndex != nullptr && m_symbolIndex->isEnabled() && m_definition != nullptr)
+        m_symbolTimer->start();
+}
+
+void CodeEditor::submitSymbols()
+{
+    if (m_symbolIndex != nullptr && m_definition != nullptr)
+        m_symbolIndex->updateBuffer(quintptr(this), m_filePath, toPlainText(), m_definition);
+}
+
+void CodeEditor::updateSymbolLink(const QPoint &pos)
+{
+    if (m_symbolIndex == nullptr || m_definition == nullptr
+        || !QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier)
+        || !viewport()->rect().contains(pos)) {
+        clearSymbolLink();
+        return;
+    }
+
+    const QTextCursor at = cursorForPosition(pos);
+    const QString text = at.block().text();
+    int column = at.positionInBlock();
+    const auto isIdent = [](QChar c) {
+        return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('$');
+    };
+    if ((column >= text.size() || !isIdent(text.at(column))) && column > 0 && isIdent(text.at(column - 1)))
+        --column;
+    if (column >= text.size() || !isIdent(text.at(column))) {
+        clearSymbolLink();
+        return;
+    }
+    int start = column;
+    while (start > 0 && isIdent(text.at(start - 1)))
+        --start;
+    int end = column + 1;
+    while (end < text.size() && isIdent(text.at(end)))
+        ++end;
+    const QString word = text.mid(start, end - start);
+    if (word.at(0).isDigit()) {
+        clearSymbolLink();
+        return;
+    }
+    const int line = at.blockNumber() + 1;
+    const int wordColumn = start + 1;
+    if (word == m_linkWord && line == m_linkWordLine && wordColumn == m_linkWordColumn)
+        return;
+
+    m_linkWord = word;
+    m_linkWordLine = line;
+    m_linkWordColumn = wordColumn;
+    const SymbolLocation loc = m_symbolIndex->find(word, m_definition->ignoreCase, m_filePath,
+                                                   quintptr(this), line, wordColumn);
+    if (loc.line == 0) {
+        if (m_linkActive) {
+            m_linkActive = false;
+            viewport()->setCursor(Qt::IBeamCursor);
+            highlightCurrentLine();
+        }
+        return;
+    }
+
+    QTextCursor mark(at.block());
+    const int from = at.block().position() + start;
+    mark.setPosition(from);
+    mark.setPosition(from + word.size(), QTextCursor::KeepAnchor);
+    QTextCharFormat format;
+    format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+    if (m_theme != nullptr)
+        format.setUnderlineColor(m_theme->foreground);
+    m_linkSelection.cursor = mark;
+    m_linkSelection.format = format;
+    m_linkActive = true;
+    m_linkPath = loc.path;
+    m_linkEditor = loc.editorId;
+    m_linkLine = loc.line;
+    m_linkColumn = loc.column;
+    viewport()->setCursor(Qt::PointingHandCursor);
+    highlightCurrentLine();
+}
+
+void CodeEditor::clearSymbolLink()
+{
+    if (!m_linkActive && m_linkWord.isEmpty())
+        return;
+    m_linkActive = false;
+    m_linkWord.clear();
+    m_linkPath.clear();
+    m_linkEditor = 0;
+    viewport()->setCursor(Qt::IBeamCursor);
+    highlightCurrentLine();
 }
 
 void CodeEditor::paintGutter(QPaintEvent *event)

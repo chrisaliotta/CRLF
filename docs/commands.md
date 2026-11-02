@@ -83,6 +83,14 @@ Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `
 "hide": ["node_modules", "dist", "*.log"]
 ```
 
+## Definition navigation
+
+`navigation` turns Ctrl+hover and Ctrl+click definition links on or off. Leaving it out, or setting it to `true`, keeps the links. `false` stops the scan of open files and of the scoped folder.
+
+```json
+"navigation": false
+```
+
 ## Indent
 
 `indent` sets what Tab inserts. `style` is `spaces` or `tab`. `size` is how many spaces a spaces-style Tab inserts, and how many columns a tab character is wide. With no `indent` key, Tab inserts one tab character four columns wide.

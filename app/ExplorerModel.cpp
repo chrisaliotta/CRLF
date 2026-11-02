@@ -337,6 +337,11 @@ bool ExplorerModel::containsName(const QModelIndex &directory, const QString &na
     return false;
 }
 
+QModelIndex ExplorerModel::existingIndex(const QString &path) const
+{
+    return indexOf(find(path));
+}
+
 QModelIndex ExplorerModel::index(const QString &path)
 {
     if (Node *existing = find(path))

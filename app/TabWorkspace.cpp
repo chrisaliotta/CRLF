@@ -5,6 +5,7 @@
 
 #include "app/DocumentTabBar.h"
 #include "editor/CodeEditor.h"
+#include "editor/SymbolIndex.h"
 #include "hex/HexView.h"
 #include "syntax/LanguageRegistry.h"
 
@@ -51,6 +52,7 @@ void setPageModified(QWidget *page, bool modified)
 TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme, QWidget *parent)
     : QTabWidget(parent)
     , m_registry(registry)
+    , m_symbols(new SymbolIndex(registry, this))
     , m_theme(theme)
 {
     auto *bar = new DocumentTabBar(this);
@@ -183,6 +185,7 @@ void TabWorkspace::retargetPath(const QString &from, const QString &to)
         it->title = it->file.fileName();
         if (auto *editor = qobject_cast<CodeEditor *>(it.key())) {
             editor->setLanguage(m_registry->definitionForPath(newPath));
+            editor->setFilePath(newPath);
             applyIndent(editor, newPath);
         }
         setTabToolTip(indexOf(it.key()), newPath);
@@ -197,7 +200,10 @@ CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &
     auto *editor = new CodeEditor(m_registry, this);
     editor->setTheme(m_theme);
     editor->setLanguage(language != nullptr ? language : m_registry->definitionForPath(file.path()));
+    editor->setSymbolIndex(m_symbols);
+    editor->setFilePath(file.path());
     applyIndent(editor, file.path());
+    connect(editor, &CodeEditor::definitionActivated, this, &TabWorkspace::revealDefinition);
     editor->setLineWrapMode(m_wordWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
     editor->setLineNumbersVisible(m_lineNumbers);
     editor->replaceText(text);
@@ -224,6 +230,82 @@ HexView *TabWorkspace::createHexView(const QByteArray &bytes)
             emit statusChanged();
     });
     return view;
+}
+
+void TabWorkspace::setSymbolProject(const QString &root, const QStringList &hide)
+{
+    m_symbols->setProject(root, hide);
+}
+
+void TabWorkspace::setSymbolNavigation(bool enabled)
+{
+    const bool was = m_symbols->isEnabled();
+    m_symbols->setEnabled(enabled);
+    if (!enabled || was)
+        return;
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+            editor->refreshSymbols();
+    }
+}
+
+void TabWorkspace::revealDefinition(const QString &path, quintptr editorId, int line, int column)
+{
+    const QString here = normalizedPath(fileFor(currentWidget()).path());
+    const auto shown = [this, here](const QString &target) {
+        const QString absolute = normalizedPath(target);
+        if (absolute.isEmpty() || absolute.compare(here, Qt::CaseInsensitive) == 0)
+            return;
+        emit fileRevealed(absolute);
+    };
+    const auto place = [line, column](QWidget *page) {
+        if (auto *editor = qobject_cast<CodeEditor *>(page))
+            editor->goTo(line, column);
+        page->setFocus();
+    };
+    if (editorId != 0) {
+        for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+            if (quintptr(it.key()) == editorId) {
+                setCurrentWidget(it.key());
+                place(it.key());
+                shown(it->file.path());
+                return;
+            }
+        }
+    }
+
+    const QString absolute = normalizedPath(path);
+    if (absolute.isEmpty())
+        return;
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (normalizedPath(it->file.path()).compare(absolute, Qt::CaseInsensitive) == 0) {
+            setCurrentWidget(it.key());
+            place(it.key());
+            shown(absolute);
+            return;
+        }
+    }
+
+    QThreadPool::globalInstance()->start([this, absolute, line, column, shown] {
+        DocumentFile file(absolute);
+        const QString text = file.load();
+        const QString title = file.fileName();
+        QMetaObject::invokeMethod(this, [this, file, text, title, absolute, line, column, shown] {
+            for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+                if (normalizedPath(it->file.path()).compare(absolute, Qt::CaseInsensitive) != 0)
+                    continue;
+                setCurrentWidget(it.key());
+                if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+                    editor->goTo(line, column);
+                it.key()->setFocus();
+                shown(absolute);
+                return;
+            }
+            CodeEditor *editor = addEditor(file, text, title);
+            editor->goTo(line, column);
+            shown(absolute);
+        }, Qt::QueuedConnection);
+    });
 }
 
 void TabWorkspace::setIndent(const IndentSettings &indent)
@@ -481,6 +563,7 @@ bool TabWorkspace::saveCurrentAs(const QString &directory)
     writePage(page);
     if (auto *editor = qobject_cast<CodeEditor *>(page)) {
         editor->setLanguage(m_registry->definitionForPath(path));
+        editor->setFilePath(path);
         applyIndent(editor, path);
     }
 

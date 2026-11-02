@@ -10,8 +10,11 @@ class FoldingLayout;
 class Gutter;
 class Highlighter;
 class QEvent;
+class QFocusEvent;
+class QMouseEvent;
 class LanguageDefinition;
 class LanguageRegistry;
+class SymbolIndex;
 class Theme;
 
 // The editing surface for one document: a QPlainTextEdit with a FoldingLayout
@@ -29,6 +32,12 @@ public:
 
     void setTheme(const Theme *theme);
     void setLanguage(const LanguageDefinition *definition);
+    void setSymbolIndex(SymbolIndex *index);
+    // Reads the open document into the symbol index.
+    void refreshSymbols();
+    void setFilePath(const QString &path);
+    // 1-based. Unfolds a region that hides the line, then centers it.
+    void goTo(int line, int column);
     // Inserts text without coloring every line before the window can paint.
     void replaceText(const QString &text);
     // One undo step. Leaves the document modified. Does not write the file.
@@ -54,9 +63,18 @@ public:
     void paintGutter(QPaintEvent *event);
     void gutterMousePress(QMouseEvent *event);
 
+signals:
+    // Ctrl+click on a name whose definition is in the index.
+    void definitionActivated(const QString &path, quintptr editorId, int line, int column);
+
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -69,6 +87,10 @@ private:
     // caused them. Updating extra selections there reenters the document and
     // frees formats the edit is still using, so the refresh is deferred.
     void scheduleOverlayRefresh();
+    void scheduleSymbolScan();
+    void submitSymbols();
+    void updateSymbolLink(const QPoint &pos);
+    void clearSymbolLink();
     int foldMarkerWidth() const;
     void drawFoldMarker(QPainter &painter, const QRect &rect, bool expanded) const;
     void applyTabStop();
@@ -83,6 +105,19 @@ private:
     const LanguageRegistry *m_registry;
     const Theme *m_theme = nullptr;
     const LanguageDefinition *m_definition = nullptr;
+    SymbolIndex *m_symbolIndex = nullptr;
+    class QTimer *m_symbolTimer = nullptr;
+    QString m_filePath;
+    // The identifier currently under Ctrl, and the definition it points at.
+    QString m_linkWord;
+    int m_linkWordLine = 0;
+    int m_linkWordColumn = 0;
+    bool m_linkActive = false;
+    QString m_linkPath;
+    quintptr m_linkEditor = 0;
+    int m_linkLine = 0;
+    int m_linkColumn = 0;
+    QTextEdit::ExtraSelection m_linkSelection;
     int m_basePointSize = 0;
     bool m_lineNumbers = true;
     bool m_indentSpaces = false;

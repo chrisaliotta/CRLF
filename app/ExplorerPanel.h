@@ -35,6 +35,8 @@ public:
     void setGroups(const QString &directory, const QList<FileGroup> &groups);
     // Name patterns from .crlf `hide`. A pattern with * or ? is a wildcard.
     void setHidden(const QStringList &patterns);
+    // Expands the folders above `path` and selects that file.
+    void reveal(const QString &path);
     // Empty until the user has chosen a folder.
     QString rootPath() const { return m_rootPath; }
 
@@ -66,6 +68,7 @@ private:
     void insertNewFile(const QString &directory);
     void finishNewFile(int hint);
     void showRootReady();
+    void continueReveal();
     void showRootFailed();
     void warn(const QString &message);
 
@@ -96,4 +99,6 @@ private:
     QString m_newFileOriginal;
     QString m_newFilePath;
     QString m_typedName;
+    // File to select once each parent directory has been listed.
+    QString m_revealPath;
 };

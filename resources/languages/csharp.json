@@ -43,6 +43,16 @@
     { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\s*\\()" },
     { "role": "text", "regex": "@[A-Za-z_]\\w*" }
   ],
+  "symbols": [
+    { "regex": "\\b(?:class|struct|interface|enum)\\s+([A-Za-z_]\\w*)" },
+    { "regex": "\\bdelegate\\s+.*?([A-Za-z_]\\w*)\\s*(?:<[^>]*>)?\\s*\\(" },
+    { "regex": "\\brecord\\s+(?:(?:class|struct)\\s+)?([A-Za-z_]\\w*)" },
+    { "regex": "\\busing\\s+([A-Za-z_]\\w*)\\s*=" },
+    { "regex": "(?m)^[ \\t]*(?!(?:return|if|for|foreach|while|switch|else|case|goto|throw|try|catch|do|new|using|lock|yield)\\b)(?:(?:public|private|protected|internal|static|readonly|const|volatile)\\s+)*(?:var|[A-Za-z_][\\w<>,\\[\\]\\.\\?]*)\\s+([A-Za-z_]\\w*)\\s*(?:=|;)", "local": true },
+    { "regex": "(?:[(,]\\s*)(?:(?:ref|out|in|params)\\s+)*(?:[A-Za-z_][\\w<>,\\[\\]\\.\\?]*\\s+)+([A-Za-z_]\\w*)\\s*(?:,|\\)|=)", "local": true },
+    { "regex": "\\bforeach\\s*\\(\\s*(?:var|[A-Za-z_][\\w<>,\\[\\]\\.\\?]*)\\s+([A-Za-z_]\\w*)\\s+in\\b", "local": true },
+    { "regex": "(?m)^[ \\t]*(?:(?:public|private|protected|internal|static|virtual|override|abstract|async|sealed|extern|unsafe|partial|readonly)\\s+)*(?:[\\w<>,\\[\\]?.]+\\s+)*([A-Za-z_]\\w*)\\s*(?:<[^>]*>)?\\s*\\([^;]*\\)\\s*(?:where\\b[^{]*)?\\{", "local": true }
+  ],
   "folding": {
     "mode": "delimiter",
     "pairs": [

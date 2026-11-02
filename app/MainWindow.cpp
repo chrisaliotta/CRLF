@@ -721,6 +721,7 @@ void MainWindow::connectActions()
         reloadCommands();
     });
     connect(m_explorer, &ExplorerPanel::fileActivated, m_tabs, &TabWorkspace::openFile);
+    connect(m_tabs, &TabWorkspace::fileRevealed, m_explorer, &ExplorerPanel::reveal);
     connect(m_explorer, &ExplorerPanel::pathMoved, m_tabs, &TabWorkspace::retargetPath);
     connect(m_explorer, &ExplorerPanel::closeRequested, this,
             [this] { m_actions.explorer->setChecked(false); });
@@ -1049,6 +1050,8 @@ void MainWindow::applyProject(const Project &project)
         project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath();
     m_explorer->setGroups(groupDirectory, project.groups);
     m_explorer->setHidden(project.hide);
+    m_tabs->setSymbolNavigation(project.navigation);
+    m_tabs->setSymbolProject(m_explorer->rootPath(), project.hide);
     m_tabs->setIndent(project.indent);
     clearProjectCommands(m_menuBar);
     if (project.commands.isEmpty()) {

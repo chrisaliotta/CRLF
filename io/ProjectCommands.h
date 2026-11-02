@@ -68,6 +68,8 @@ struct Project
     QList<FileGroup> groups;
     QStringList hide;
     IndentSettings indent;
+    // Ctrl+click definition navigation. Missing from the file means enabled.
+    bool navigation = true;
     QString error;
 };
 

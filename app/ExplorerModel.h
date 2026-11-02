@@ -53,6 +53,8 @@ public:
 
     // Inserts a file row when its parent directory is already listed.
     QModelIndex index(const QString &path);
+    // The row already in the tree, including a file inside a virtual folder.
+    QModelIndex existingIndex(const QString &path) const;
     // Deletes the file on disk and drops the row.
     bool remove(const QModelIndex &index);
     // Drops a row whose file is already gone.

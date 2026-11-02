@@ -30,6 +30,22 @@
     { "role": "keyword", "regex": "</?[A-Za-z][\\w.-]*" },
     { "role": "function", "regex": "\\b[A-Za-z_$][\\w$]*(?=\\s*\\()" }
   ],
+  "modules": true,
+  "symbols": [
+    { "regex": "\\b(?:class|interface|enum)\\s+([A-Za-z_$][\\w$]*)" },
+    { "regex": "\\btype\\s+([A-Za-z_$][\\w$]*)\\s*(?:<[^;{]*>)?\\s*=" },
+    { "regex": "\\bfunction\\s+([A-Z][A-Za-z0-9_$]*)" },
+    { "regex": "\\b(?:const|let|var)\\s+([A-Z][A-Za-z0-9_$]*)\\s*=" },
+    { "regex": "\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)", "local": true },
+    { "regex": "\\bfunction\\s*\\*?\\s*([A-Za-z_$][\\w$]*)", "local": true },
+    { "regex": "(?m)^[ \\t]*(?:(?:public|private|protected|readonly|static|abstract|override|declare|async)\\s+)*(?:(?:get|set|async)\\s+)?\\*?#?([A-Za-z_$][\\w$]*)\\s*(?:<[^(){;]*>)?\\s*\\([^;]*\\)\\s*(?::[^{;=]+)?\\{", "local": true },
+    { "regex": "(?m)^[ \\t]*(?:(?:public|private|protected|readonly|static|abstract|override|declare)\\s+)*#?([A-Za-z_$][\\w$]*)\\s*=\\s*(?:async\\s+)?(?:function\\b|<[^>]*>\\s*\\(|\\()", "local": true },
+    { "regex": "\\bcatch\\s*\\(\\s*([A-Za-z_$][\\w$]*)", "local": true },
+    { "regex": "\\bfor\\s*\\(\\s*(?:const|let|var)?\\s*([A-Za-z_$][\\w$]*)", "local": true },
+    { "regex": "\\bfunction\\s*\\*?\\s*[A-Za-z_$][\\w$]*\\s*\\(([^)]*)\\)", "local": true, "params": true },
+    { "regex": "\\(([^)]*)\\)\\s*=>", "local": true, "params": true },
+    { "regex": "(?<![\\w$])([A-Za-z_$][\\w$]*)\\s*=>", "local": true }
+  ],
   "folding": {
     "mode": "delimiter",
     "pairs": [

@@ -187,6 +187,7 @@ Project projectFor(const QString &start)
     readGroups(project, root.value(QLatin1String("groups")).toArray());
     readHide(project.hide, root.value(QLatin1String("hide")).toArray());
     readIndent(project.indent, root.value(QLatin1String("indent")));
+    project.navigation = root.value(QLatin1String("navigation")).toBool(true);
     return project;
 }
 

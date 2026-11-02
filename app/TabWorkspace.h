@@ -18,6 +18,7 @@ class LanguageDefinition;
 class LanguageRegistry;
 class QLabel;
 class QToolButton;
+class SymbolIndex;
 class Theme;
 
 // The tab strip and the documents behind it. Each tab page is either a
@@ -75,6 +76,11 @@ public:
     // unsaved buffer as Markdown before it has an extension to detect from.
     void setCurrentLanguage(const LanguageDefinition *definition);
     void setIndent(const IndentSettings &indent);
+    // Folder whose source files are indexed for Ctrl+click. An empty root
+    // keeps only the open buffers. `hide` is the .crlf name list.
+    void setSymbolProject(const QString &root, const QStringList &hide);
+    // `false` drops the index and stops further scans.
+    void setSymbolNavigation(bool enabled);
     // The editor a command's output will replace. Cleared in the hex view.
     void rememberCommandEditor(const QString &name);
     void applyCommandOutput(const QString &name, const QString &text);
@@ -89,6 +95,8 @@ signals:
     void sessionRestored();
     // A document was written; the argument is the folder it was written in.
     void fileSaved(const QString &directory);
+    // A definition was opened in a file other than the one that was current.
+    void fileRevealed(const QString &path);
 
 private:
     struct Page {
@@ -128,8 +136,10 @@ private:
     // `others` keeps `clicked`. `toTheRight` keeps `clicked` and everything
     // before it. Pinned tabs stay open either way.
     void closeUnpinned(int clicked, bool others, bool toTheRight);
+    void revealDefinition(const QString &path, quintptr editorId, int line, int column);
 
     const LanguageRegistry *m_registry;
+    SymbolIndex *m_symbols = nullptr;
     const Theme *m_theme;
     // Empty page behind the always-last + tab, which scrolls with the
     // documents like a browser's new-tab button.

@@ -30,3 +30,13 @@ struct EmbedRule {
     QRegularExpression end;
     int languageCapture = 1;
 };
+
+// A declaration pattern. `capture` is the group that holds the defined name.
+struct SymbolRule {
+    QRegularExpression regex;
+    int capture = 1;
+    // Kept on the open document only, so a local variable is not a project-wide name.
+    bool local = false;
+    // `capture` is a parameter list; each name in it is a declaration.
+    bool params = false;
+};

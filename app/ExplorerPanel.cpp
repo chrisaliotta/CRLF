@@ -339,6 +339,8 @@ ExplorerPanel::ExplorerPanel(QWidget *parent)
             m_pendingDirectory.clear();
             insertNewFile(directory);
         }
+        if (!m_revealPath.isEmpty())
+            continueReveal();
     });
     connect(m_model, &ExplorerModel::listingFailed, this, [this](const QString &path) {
         if (samePath(path, m_rootPath))
@@ -486,6 +488,84 @@ void ExplorerPanel::showRootFailed()
         setRootPath(restore, false);
     else if (!warn)
         emit closeRequested();
+}
+
+void ExplorerPanel::reveal(const QString &path)
+{
+    const QString clean = QDir::cleanPath(path);
+    const QString root = QDir::cleanPath(m_rootPath);
+    if (clean.isEmpty() || root.isEmpty())
+        return;
+    if (!samePath(clean, root) && !clean.startsWith(root + QLatin1Char('/'), Qt::CaseInsensitive))
+        return;
+    m_revealPath = clean;
+    continueReveal();
+}
+
+void ExplorerPanel::continueReveal()
+{
+    if (m_revealPath.isEmpty() || m_rootPath.isEmpty())
+        return;
+    const QString root = QDir::cleanPath(m_rootPath);
+    QStringList directories;
+    QString dir = parentDirectory(m_revealPath);
+    while (!samePath(dir, root)) {
+        if (samePath(dir, parentDirectory(dir)))
+            break;
+        directories.prepend(dir);
+        dir = parentDirectory(dir);
+    }
+
+    QModelIndex source = m_model->rootIndex();
+    if (!m_model->isListed(source)) {
+        if (m_model->canFetchMore(source))
+            m_model->fetchMore(source);
+        return;
+    }
+    for (const QString &directory : directories) {
+        const QModelIndex child = m_model->existingIndex(directory);
+        if (!child.isValid()) {
+            m_revealPath.clear();
+            return;
+        }
+        const QModelIndex view = m_filter->mapFromSource(child);
+        if (!view.isValid()) {
+            m_revealPath.clear();
+            return;
+        }
+        m_tree->expand(view);
+        if (!m_model->isListed(child)) {
+            if (m_model->canFetchMore(child))
+                m_model->fetchMore(child);
+            return;
+        }
+        source = child;
+    }
+    if (!m_model->isListed(source)) {
+        if (m_model->canFetchMore(source))
+            m_model->fetchMore(source);
+        return;
+    }
+
+    const QModelIndex file = m_model->existingIndex(m_revealPath);
+    if (!file.isValid()) {
+        m_revealPath.clear();
+        return;
+    }
+    const QModelIndex view = m_filter->mapFromSource(file);
+    if (!view.isValid()) {
+        m_revealPath.clear();
+        return;
+    }
+    QList<QModelIndex> ancestors;
+    for (QModelIndex parent = view.parent(); parent.isValid() && parent != m_tree->rootIndex();
+         parent = parent.parent())
+        ancestors.prepend(parent);
+    for (const QModelIndex &parent : ancestors)
+        m_tree->expand(parent);
+    m_tree->setCurrentIndex(view);
+    m_tree->scrollTo(view, QAbstractItemView::PositionAtCenter);
+    m_revealPath.clear();
 }
 
 void ExplorerPanel::scopeToParent()

@@ -47,9 +47,10 @@ LanguageDefinition LanguageDefinition::fromJsonFile(const QString &path)
     }
 
     // Languages such as SQL treat SELECT, select and Select as the same word.
+    def.ignoreCase = root.value(QLatin1String("ignoreCase")).toBool();
     const QRegularExpression::PatternOptions wordOptions =
-        root.value(QLatin1String("ignoreCase")).toBool() ? QRegularExpression::CaseInsensitiveOption
-                                                         : QRegularExpression::NoPatternOption;
+        def.ignoreCase ? QRegularExpression::CaseInsensitiveOption
+                       : QRegularExpression::NoPatternOption;
     def.keywordRegex = wordListRegex(root.value(QLatin1String("keywords")).toArray(), wordOptions);
     def.typeRegex = wordListRegex(root.value(QLatin1String("types")).toArray(), wordOptions);
 
@@ -70,6 +71,18 @@ LanguageDefinition LanguageDefinition::fromJsonFile(const QString &path)
         rule.languageCapture = obj.value(QLatin1String("languageCapture")).toInt(1);
         def.embedded.append(rule);
     }
+
+    for (const QJsonValue &value : root.value(QLatin1String("symbols")).toArray()) {
+        const QJsonObject obj = value.toObject();
+        SymbolRule rule;
+        rule.capture = obj.value(QLatin1String("capture")).toInt(1);
+        rule.local = obj.value(QLatin1String("local")).toBool();
+        rule.params = obj.value(QLatin1String("params")).toBool();
+        rule.regex = QRegularExpression(obj.value(QLatin1String("regex")).toString(), wordOptions);
+        def.symbols.append(rule);
+    }
+
+    def.modules = root.value(QLatin1String("modules")).toBool();
 
     const QJsonObject folding = root.value(QLatin1String("folding")).toObject();
     def.foldMode = foldModeFromName(folding.value(QLatin1String("mode")).toString());

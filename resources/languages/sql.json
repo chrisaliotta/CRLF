@@ -37,5 +37,9 @@
     { "role": "function", "regex": "\\b[A-Za-z_]\\w*(?=\\()" },
     { "role": "text", "regex": "\"[^\"]*\"|\\[[^\\]]*\\]|`[^`]*`" }
   ],
+  "symbols": [
+    { "regex": "\\bcreate\\s+(?:or\\s+replace\\s+)?(?:type|domain)\\s+(?:if\\s+not\\s+exists\\s+)?(?:[\\w.]+\\.)?([A-Za-z_]\\w*)" },
+    { "regex": "\\bdeclare\\s+@?([A-Za-z_]\\w*)", "local": true }
+  ],
   "folding": { "mode": "indent" }
 }
