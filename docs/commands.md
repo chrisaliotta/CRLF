@@ -34,6 +34,7 @@ The file is a JSON array of commands, or an object with a `commands` array and a
 | `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
 | `menu` | no | Where the command appears on the menu bar. The default is Run |
 | `key` | no | A function key, F1 through F35, with no modifiers |
+| `output` | no | `editor` sends the focused editor's text to the process and replaces that editor with standard output. Any other value, or leaving it out, keeps output in the panel |
 
 A `key` that is not a bare function key is ignored. When two commands ask for the same key, the first one in the file keeps it.
 
@@ -144,7 +145,7 @@ When the working directory is inside a WSL distro, the command runs in that dist
 
 On Windows, a command whose working directory is a normal path runs through `cmd.exe /d /s /c`. A working directory under `\\wsl.localhost` or `\\wsl$` runs through `wsl.exe` in that distro: `bash -lc` starts in the Linux directory, and the panel shows the command's own output. Elsewhere the command runs through `/bin/sh -c`.
 
-Standard output and standard error are merged into one log. The panel opens at the bottom of the window when the command starts.
+Standard output and standard error are merged into one log. The panel opens at the bottom of the window when the command starts. A command with `"output": "editor"` is the exception: its streams are described below.
 
 - The menu lists commands that have produced output. Each keeps its own log.
 - The status reads Running, Stopped, or Exit code N.
@@ -153,3 +154,22 @@ Standard output and standard error are merged into one log. The panel opens at t
 - Closing the panel hides it and leaves the process running. Starting the command again shows the panel.
 
 One process runs per command name. Choosing a command that is already running stops it and starts it again, and the variables are read again for the new start. Quitting the application stops every running command.
+
+## Editor output
+
+`"output": "editor"` runs the command against the focused text editor and puts standard output back into that editor. The file on disk is not written. The tab is marked modified, and the replacement is one undo step. The cursor stays where it was.
+
+The editor's text is the process's standard input, as UTF-8 with LF line endings. Standard output is read as UTF-8 and becomes the new buffer. Standard error goes to the output panel, which opens when the process writes an error or exits with a failure code. Exit code 0 with output replaces the editor. Any other exit leaves the editor unchanged and shows standard output in the panel. Stopping the command leaves the editor unchanged. The hex view has no text buffer, so the same command keeps both streams in the panel.
+
+Give the tool the buffer on standard input, not a path to read. A path makes it read the saved file and ignore the editor, including unsaved edits. `--assume-filename` only tells the tool which language the buffer is; it does not open that path.
+
+```json
+{
+  "name": "Format",
+  "command": "clang-format --assume-filename=\"${fileName}\"",
+  "output": "editor",
+  "menu": "File"
+}
+```
+
+An empty editor may be replaced with empty output. A command that exits 0 and writes nothing while the editor has text leaves the buffer as it is, and the panel says "The command wrote nothing."

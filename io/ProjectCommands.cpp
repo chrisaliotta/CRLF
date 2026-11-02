@@ -66,8 +66,10 @@ void readCommands(Project &project, const QJsonArray &entries, const QString &di
                 usedKeys.insert(parsed[0].toCombined());
             }
         }
-        project.commands.append(
-            {name, command, QDir(workingDirectory).absolutePath(), menuPath(obj.value(QLatin1String("menu"))), key});
+        const bool outputToEditor =
+            obj.value(QLatin1String("output")).toString() == QLatin1String("editor");
+        project.commands.append({name, command, QDir(workingDirectory).absolutePath(),
+                                 menuPath(obj.value(QLatin1String("menu"))), key, outputToEditor});
     }
 }
 

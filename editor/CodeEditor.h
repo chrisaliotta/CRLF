@@ -31,6 +31,8 @@ public:
     void setLanguage(const LanguageDefinition *definition);
     // Inserts text without coloring every line before the window can paint.
     void replaceText(const QString &text);
+    // One undo step. Leaves the document modified. Does not write the file.
+    void applyCommandOutput(const QString &text);
     const LanguageDefinition *language() const { return m_definition; }
 
     FoldController *foldController() { return m_foldController; }

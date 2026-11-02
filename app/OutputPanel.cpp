@@ -64,6 +64,11 @@ void OutputPanel::showCommand(const QString &name)
     emit showRequested();
 }
 
+void OutputPanel::allowReveal()
+{
+    m_closed = false;
+}
+
 void OutputPanel::appendOutput(const QString &name, const QString &text)
 {
     ensureCommand(name);

@@ -5,7 +5,9 @@
 #include "io/ProjectCommands.h"
 
 #include <QColor>
+#include <QDateTime>
 #include <QHash>
+#include <QSet>
 #include <QTabWidget>
 
 class QFileSystemWatcher;
@@ -73,6 +75,9 @@ public:
     // unsaved buffer as Markdown before it has an extension to detect from.
     void setCurrentLanguage(const LanguageDefinition *definition);
     void setIndent(const IndentSettings &indent);
+    // The editor a command's output will replace. Cleared in the hex view.
+    void rememberCommandEditor(const QString &name);
+    void applyCommandOutput(const QString &name, const QString &text);
 
     // Open documents; count() also includes the trailing + tab.
     int documentCount() const;
@@ -104,7 +109,9 @@ private:
     void applyIndent(CodeEditor *editor, const QString &path);
     void watchFile(const QString &path);
     void unwatchFile(const QString &path);
-    // Reloads a clean document when the file changes outside the editor.
+    void forgetCommandPage(QWidget *page);
+    // False when the user keeps unsaved edits.
+    bool acceptExternalReload(QWidget *page, const QString &path);
     void reloadExternal(const QString &path);
     CodeEditor *addEditor(const DocumentFile &file, const QString &text, const QString &title,
                           const LanguageDefinition *language = nullptr);
@@ -137,5 +144,13 @@ private:
     QColor m_activeTitle;
     QColor m_inactiveTitle;
     QFileSystemWatcher *m_fileWatcher = nullptr;
+    // Command name to the editor whose text was sent as that command's input.
+    QHash<QString, QWidget *> m_commandEditors;
+    // Paths with a reload question open, so a second disk event during the
+    // dialog does not ask again.
+    QSet<QString> m_reloadPrompt;
+    // Disk time of a change the user chose not to load. A later write, with
+    // a newer time, asks again.
+    QHash<QString, QDateTime> m_declinedReload;
     IndentSettings m_indent;
 };

@@ -290,12 +290,15 @@ void clearProjectCommands(QMenuBar *bar)
     }
 }
 
+// Only project commands are checkable for "running". Built-in items such as
+// Explorer and the theme entries are checkable too, and setChecked would
+// fire their toggled handlers.
 void markRunningCommands(QMenu *menu, const CommandRunner *runner)
 {
     for (QAction *action : menu->actions()) {
         if (QMenu *child = action->menu())
             markRunningCommands(child, runner);
-        else if (action->isEnabled())
+        else if (action->property(kProjectItem).toBool())
             action->setChecked(runner->isRunning(action->text()));
     }
 }
@@ -327,6 +330,16 @@ MainWindow::MainWindow(QWidget *parent)
     });
     m_runner = new CommandRunner(this);
     m_runner->setContextProvider([this] { return commandVariables(); });
+    m_runner->setEditorInputProvider([this](const QString &name) {
+        m_tabs->rememberCommandEditor(name);
+        EditorFeed feed;
+        CodeEditor *editor = m_tabs->currentEditor();
+        if (!editor)
+            return feed;
+        feed.active = true;
+        feed.text = editor->toPlainText();
+        return feed;
+    });
     m_commandWatcher = new QFileSystemWatcher(this);
     m_explorer->hide();
 
@@ -752,10 +765,18 @@ void MainWindow::connectActions()
             m_commandWatcher->addPath(path);
         reloadCommands();
     });
-    connect(m_runner, &CommandRunner::outputReceived, m_output, &OutputPanel::appendOutput);
+    connect(m_runner, &CommandRunner::outputReceived, this,
+            [this](const QString &name, const QString &text) {
+                if (m_runner->sendsOutputToEditor(name) && m_output->currentName() != name)
+                    m_output->showCommand(name);
+                m_output->appendOutput(name, text);
+            });
+    connect(m_runner, &CommandRunner::editorOutput, m_tabs, &TabWorkspace::applyCommandOutput);
     connect(m_runner, &CommandRunner::stateChanged, this,
             [this](const QString &name, bool running, int exitCode) {
                 m_output->setState(name, running, exitCode);
+                if (!running && exitCode > 0 && m_runner->sendsOutputToEditor(name))
+                    m_output->showCommand(name);
                 for (QAction *action : m_menuBar->actions()) {
                     if (QMenu *menu = action->menu())
                         markRunningCommands(menu, m_runner);
@@ -1012,8 +1033,11 @@ void MainWindow::applyProject(const Project &project)
                 action->setShortcut(command.key);
                 action->setShortcutContext(Qt::WindowShortcut);
             }
-            connect(action, &QAction::triggered, this, [this, name = command.name] {
-                m_output->showCommand(name);
+            connect(action, &QAction::triggered, this, [this, name = command.name, toEditor = command.outputToEditor] {
+                if (toEditor && m_tabs->currentEditor() != nullptr)
+                    m_output->allowReveal();
+                else
+                    m_output->showCommand(name);
                 m_runner->start(name);
             });
         }

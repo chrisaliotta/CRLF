@@ -14,6 +14,16 @@ QString linuxPath(const QString &windowsPath)
     return converted.valid() ? converted.path : windowsPath;
 }
 
+// The editor stores LF. A tool's stdout is the file bytes, decoded as UTF-8.
+QString commandEditorText(const QByteArray &bytes)
+{
+    QString text = QString::fromUtf8(bytes);
+    if (!text.isEmpty() && text.at(0) == QChar(0xFEFF))
+        text.remove(0, 1);
+    text.remove(QLatin1Char('\r'));
+    return text;
+}
+
 } // namespace
 
 #ifdef Q_OS_WIN
@@ -38,6 +48,11 @@ struct CommandRunner::Running
     qint64 linuxGroup = 0;
     bool groupResolved = false;
     QByteArray pendingOutput;
+    // output "editor": stdin is input, stdout accumulates in captured, and
+    // stderr stays on its own channel so it is not inserted into the document.
+    bool captureEditor = false;
+    QByteArray input;
+    QByteArray captured;
 };
 
 namespace {
@@ -104,6 +119,17 @@ void CommandRunner::setContextProvider(std::function<CommandVariables()> provide
     m_contextProvider = std::move(provider);
 }
 
+void CommandRunner::setEditorInputProvider(std::function<EditorFeed(const QString &name)> provider)
+{
+    m_editorInput = std::move(provider);
+}
+
+bool CommandRunner::sendsOutputToEditor(const QString &name) const
+{
+    const ProjectCommand *spec = command(name);
+    return spec && spec->outputToEditor;
+}
+
 void CommandRunner::setProject(const QList<ProjectCommand> &commands)
 {
     m_commands = commands;
@@ -156,35 +182,39 @@ void CommandRunner::launch(const QString &name, bool withJob)
 
         connect(running->process, &QProcess::readyReadStandardOutput, this, [this, name] {
             Running *running = m_running.value(name);
-            const QByteArray bytes = running->process->readAllStandardOutput();
-            if (running->distro.isEmpty()) {
-                emit outputReceived(name, QString::fromLocal8Bit(bytes));
+            absorbStdout(name, running->process->readAllStandardOutput());
+        });
+        connect(running->process, &QProcess::readyReadStandardError, this, [this, name] {
+            Running *running = m_running.value(name);
+            if (!running->captureEditor)
                 return;
-            }
-            if (running->groupResolved) {
-                emit outputReceived(name, QString::fromUtf8(bytes));
+            const QByteArray bytes = running->process->readAllStandardError();
+            if (bytes.isEmpty())
                 return;
-            }
-            running->pendingOutput += bytes;
-            const int newline = running->pendingOutput.indexOf('\n');
-            if (newline < 0)
-                return;
-            const QByteArray first = running->pendingOutput.left(newline);
-            QByteArray rest = running->pendingOutput.mid(newline + 1);
-            running->pendingOutput.clear();
-            running->groupResolved = true;
-            const QString line = QString::fromUtf8(first).trimmed();
-            const QString marker = QStringLiteral("CRLF_PGID:");
-            if (line.startsWith(marker))
-                running->linuxGroup = line.mid(marker.size()).toLongLong();
-            else
-                rest.prepend(first + '\n');
-            if (!rest.isEmpty())
-                emit outputReceived(name, QString::fromUtf8(rest));
+            emit outputReceived(name, running->distro.isEmpty() ? QString::fromLocal8Bit(bytes)
+                                                                : QString::fromUtf8(bytes));
         });
         connect(running->process, &QProcess::finished, this,
                 [this, name](int exitCode, QProcess::ExitStatus) {
                     Running *done = m_running.value(name);
+                    if (done->captureEditor) {
+                        absorbStdout(name, done->process->readAllStandardOutput());
+                        const QByteArray err = done->process->readAllStandardError();
+                        if (!err.isEmpty())
+                            emit outputReceived(name, done->distro.isEmpty() ? QString::fromLocal8Bit(err)
+                                                                            : QString::fromUtf8(err));
+                        if (!done->stopRequested && !done->restart) {
+                            const QString text = commandEditorText(done->captured);
+                            if (exitCode != 0) {
+                                if (!text.isEmpty())
+                                    emit outputReceived(name, text);
+                            } else if (text.isEmpty() && !done->input.isEmpty()) {
+                                emit outputReceived(name, QStringLiteral("The command wrote nothing.\n"));
+                            } else {
+                                emit editorOutput(name, text);
+                            }
+                        }
+                    }
                     const bool restart = done->restart;
                     const bool stopped = done->stopRequested;
                     done->restart = false;
@@ -212,6 +242,16 @@ void CommandRunner::launch(const QString &name, bool withJob)
     running->linuxGroup = 0;
     running->groupResolved = false;
     running->pendingOutput.clear();
+    running->captureEditor = false;
+    running->input.clear();
+    running->captured.clear();
+    if (spec->outputToEditor && m_editorInput) {
+        const EditorFeed feed = m_editorInput(name);
+        if (feed.active) {
+            running->captureEditor = true;
+            running->input = feed.text.toUtf8();
+        }
+    }
 
     CommandVariables vars = m_contextProvider ? m_contextProvider() : CommandVariables{};
     vars.cwd = spec->workingDirectory;
@@ -270,7 +310,8 @@ void CommandRunner::launch(const QString &name, bool withJob)
     running->process->setArguments({QStringLiteral("-c"), commandText});
     running->process->setWorkingDirectory(spec->workingDirectory);
 #endif
-    running->process->setProcessChannelMode(QProcess::MergedChannels);
+    running->process->setProcessChannelMode(running->captureEditor ? QProcess::SeparateChannels
+                                                                   : QProcess::MergedChannels);
     running->suppressFailure = withJob;
     running->process->start();
     running->suppressFailure = false;
@@ -284,7 +325,45 @@ void CommandRunner::launch(const QString &name, bool withJob)
         return;
     }
 #endif
+    if (running->captureEditor && running->process->state() != QProcess::NotRunning) {
+        running->process->write(running->input);
+        running->process->closeWriteChannel();
+    }
     emit stateChanged(name, running->process->state() != QProcess::NotRunning, 0);
+}
+
+void CommandRunner::absorbStdout(const QString &name, const QByteArray &bytes)
+{
+    Running *running = m_running.value(name);
+    if (!running)
+        return;
+
+    QByteArray payload = bytes;
+    if (!running->distro.isEmpty() && !running->groupResolved) {
+        running->pendingOutput += bytes;
+        const int newline = running->pendingOutput.indexOf('\n');
+        if (newline < 0)
+            return;
+        const QByteArray first = running->pendingOutput.left(newline);
+        payload = running->pendingOutput.mid(newline + 1);
+        running->pendingOutput.clear();
+        running->groupResolved = true;
+        const QString line = QString::fromUtf8(first).trimmed();
+        const QString marker = QStringLiteral("CRLF_PGID:");
+        if (line.startsWith(marker))
+            running->linuxGroup = line.mid(marker.size()).toLongLong();
+        else
+            payload.prepend(first + '\n');
+    }
+
+    if (payload.isEmpty())
+        return;
+    if (running->captureEditor) {
+        running->captured += payload;
+        return;
+    }
+    emit outputReceived(name, running->distro.isEmpty() ? QString::fromLocal8Bit(payload)
+                                                        : QString::fromUtf8(payload));
 }
 
 void CommandRunner::stopTree(Running &running)

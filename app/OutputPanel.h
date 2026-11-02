@@ -18,7 +18,10 @@ public:
     explicit OutputPanel(QWidget *parent = nullptr);
 
     void showCommand(const QString &name);
+    // The next chunk of output may open the panel. Does not show it now.
+    void allowReveal();
     void appendOutput(const QString &name, const QString &text);
+    QString currentName() const;
     void setState(const QString &name, bool running, int exitCode);
     // Further output stays in the log and does not open the panel.
     void suppress();
@@ -39,7 +42,6 @@ private:
 
     void ensureCommand(const QString &name);
     void showSelected();
-    QString currentName() const;
 
     QComboBox *m_commands = nullptr;
     QLabel *m_status = nullptr;

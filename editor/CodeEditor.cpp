@@ -125,6 +125,37 @@ void CodeEditor::replaceText(const QString &text)
     }
 }
 
+void CodeEditor::applyCommandOutput(const QString &text)
+{
+    if (toPlainText() == text)
+        return;
+    const int position = textCursor().position();
+    const int scroll = verticalScrollBar()->value();
+    if (m_highlighter)
+        m_highlighter->setAutomatic(false);
+    QTextCursor cursor = textCursor();
+    cursor.beginEditBlock();
+    cursor.select(QTextCursor::Document);
+    cursor.insertText(text);
+    cursor.endEditBlock();
+    const int end = qMax(0, int(document()->characterCount()) - 1);
+    cursor.setPosition(qMin(position, end));
+    setTextCursor(cursor);
+    verticalScrollBar()->setValue(scroll);
+    if (m_highlighter) {
+        if (blockCount() > 200)
+            m_highlighter->highlightGradually();
+        else {
+            m_highlighter->setAutomatic(true);
+            m_highlighter->rehighlight();
+        }
+    }
+    // A full-document replace, and the highlight pass after it, can leave
+    // the modified flag clear. The text did change, so the tab must show that.
+    if (!document()->isModified())
+        document()->setModified(true);
+}
+
 void CodeEditor::moveCursorOutOfHiddenBlock()
 {
     QTextCursor cursor = textCursor();

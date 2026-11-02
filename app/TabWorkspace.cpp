@@ -260,36 +260,96 @@ void TabWorkspace::unwatchFile(const QString &path)
     m_fileWatcher->removePath(clean);
 }
 
+void TabWorkspace::forgetCommandPage(QWidget *page)
+{
+    for (auto it = m_commandEditors.begin(); it != m_commandEditors.end();) {
+        if (it.value() == page)
+            it = m_commandEditors.erase(it);
+        else
+            ++it;
+    }
+}
+
+void TabWorkspace::rememberCommandEditor(const QString &name)
+{
+    CodeEditor *editor = currentEditor();
+    if (editor)
+        m_commandEditors.insert(name, editor);
+    else
+        m_commandEditors.remove(name);
+}
+
+void TabWorkspace::applyCommandOutput(const QString &name, const QString &text)
+{
+    QWidget *page = m_commandEditors.value(name);
+    if (!m_pages.contains(page))
+        return;
+    auto *editor = qobject_cast<CodeEditor *>(page);
+    if (!editor)
+        return;
+    editor->applyCommandOutput(text);
+    if (currentWidget() == page)
+        emit statusChanged();
+}
+
+bool TabWorkspace::acceptExternalReload(QWidget *page, const QString &path)
+{
+    const QDateTime modified = QFileInfo(path).lastModified();
+    if (m_declinedReload.contains(path) && m_declinedReload.value(path) == modified)
+        return false;
+
+    setCurrentIndex(indexOf(page));
+    m_reloadPrompt.insert(path);
+    const auto choice = QMessageBox::question(
+        this, QCoreApplication::applicationName(),
+        QStringLiteral("%1 has changed on disk. Reload the file and discard your unsaved edits?")
+            .arg(m_pages[page].title),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    m_reloadPrompt.remove(path);
+    if (choice != QMessageBox::Yes) {
+        m_declinedReload.insert(path, QFileInfo(path).lastModified());
+        return false;
+    }
+    m_declinedReload.remove(path);
+    return true;
+}
+
 void TabWorkspace::reloadExternal(const QString &path)
 {
     if (!QFileInfo::exists(path))
         return;
-    m_fileWatcher->addPath(normalizedPath(path));
-
     const QString clean = normalizedPath(path);
+    m_fileWatcher->addPath(clean);
+    if (m_reloadPrompt.contains(clean))
+        return;
+
     for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
         if (normalizedPath(it->file.path()).compare(clean, Qt::CaseInsensitive) != 0)
             continue;
-        if (isPageModified(it.key()))
-            return;
 
         QWidget *page = it.key();
         if (auto *editor = qobject_cast<CodeEditor *>(page)) {
-            const int position = editor->textCursor().position();
-            const QString text = it->file.load();
-            if (text == editor->toPlainText())
+            // Probe on a copy. load() records the file's encoding, and a
+            // declined reload must leave the open document's encoding as it is.
+            DocumentFile probe = it->file;
+            if (probe.load() == editor->toPlainText())
                 return;
-            editor->replaceText(text);
+            if (isPageModified(page) && !acceptExternalReload(page, clean))
+                return;
+            const int position = editor->textCursor().position();
+            editor->replaceText(it->file.load());
             QTextCursor cursor = editor->textCursor();
             const int end = qMax(0, int(editor->document()->characterCount()) - 1);
             cursor.setPosition(qMin(position, end));
             editor->setTextCursor(cursor);
         } else {
             auto *view = static_cast<HexView *>(page);
+            if (it->file.loadBytes() == view->data())
+                return;
+            if (isPageModified(page) && !acceptExternalReload(page, clean))
+                return;
             const qint64 position = view->cursorOffset();
             const QByteArray bytes = it->file.loadBytes();
-            if (bytes == view->data())
-                return;
             view->setData(bytes);
             view->setCursorOffset(qMin(position, qint64(bytes.size())));
         }
@@ -450,6 +510,7 @@ bool TabWorkspace::closeTab(int index)
     const QString closed = m_pages[page].file.path();
     removeTab(index);
     m_pages.remove(page);
+    forgetCommandPage(page);
     if (m_pages.isEmpty())
         m_untitledCount = 0;
     unwatchFile(closed);
@@ -464,6 +525,7 @@ void TabWorkspace::setCurrentHexMode(bool hex)
     const int index = currentIndex();
     const bool modified = isPageModified(page);
     Page entry = m_pages.take(page);
+    forgetCommandPage(page);
 
     QWidget *replacement = nullptr;
     if (hex) {

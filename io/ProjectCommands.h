@@ -45,7 +45,9 @@ struct IndentSettings
 // top-level menu (an existing one, or a new one). Further parts nest under
 // it. An empty list places the command on Run. "Tools/Format" and
 // ["Tools", "Format"] are the same path. key is an optional function key
-// (F1, F2, ...) that runs the command.
+// (F1, F2, ...) that runs the command. outputToEditor sends the focused
+// editor's text to the process and, on exit 0, replaces that editor with
+// standard output. The file on disk is not written.
 struct ProjectCommand
 {
     QString name;
@@ -53,6 +55,7 @@ struct ProjectCommand
     QString workingDirectory;
     QStringList menu;
     QKeySequence key;
+    bool outputToEditor = false;
 };
 
 // The .crlf discovered by walking parent folders, or an empty filePath when
