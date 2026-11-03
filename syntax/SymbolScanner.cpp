@@ -186,23 +186,26 @@ void addClause(const QString &clause, const QString &specifier, bool reexport, Q
     if (body.startsWith(QLatin1String("type ")))
         body = body.mid(5).trimmed();
 
+    // The default import and a `* as` import come before any braces:
+    // `Default`, `* as ns`, or `Default, * as ns`.
     QString braces;
+    QString head = body;
     const int open = body.indexOf(QLatin1Char('{'));
     if (open >= 0) {
         const int close = body.lastIndexOf(QLatin1Char('}'));
         if (close > open)
             braces = body.mid(open + 1, close - open - 1);
-        QString before = body.left(open).trimmed();
-        if (before.endsWith(QLatin1Char(',')))
-            before.chop(1);
-        before = before.trimmed();
-        if (before.startsWith(QLatin1String("* as "))) {
-            // A namespace import is not a single component or type name.
-        } else if (isIdentifier(before)) {
-            out.append({before, QString(), specifier, reexport, false});
+        head = body.left(open);
+    }
+    for (QString part : head.split(QLatin1Char(','))) {
+        part = part.trimmed();
+        if (part.startsWith(QLatin1String("* as "))) {
+            const QString local = part.mid(5).trimmed();
+            if (isIdentifier(local))
+                out.append({local, QString(), specifier, reexport, false, true});
+        } else if (isIdentifier(part)) {
+            out.append({part, QString(), specifier, reexport, false});
         }
-    } else if (!body.startsWith(QLatin1String("* as ")) && isIdentifier(body)) {
-        out.append({body, QString(), specifier, reexport, false});
     }
 
     const QStringList parts = braces.split(QLatin1Char(','));
@@ -252,8 +255,18 @@ void scanModules(const QString &text, const QString &code, const QVector<int> &l
         addClause(QStringLiteral("{%1}").arg(match.captured(1)), match.captured(2), true, scan.modules);
     }
 
+    const QRegularExpression exportNamespace(QStringLiteral(
+        "(?m)^[ \\t]*export\\s+(?:type\\s+)?\\*\\s+as\\s+([A-Za-z_$][\\w$]*)\\s+from\\s+['\"]([^'\"]+)['\"]"));
+    QRegularExpressionMatchIterator namespaces = exportNamespace.globalMatch(text);
+    while (namespaces.hasNext()) {
+        const QRegularExpressionMatch match = namespaces.next();
+        if (covered(text, code, int(match.capturedStart())))
+            continue;
+        scan.modules.append({match.captured(1), QString(), match.captured(2), true, false, true});
+    }
+
     const QRegularExpression exportStar(
-        QStringLiteral("(?m)^[ \\t]*export\\s+\\*\\s+from\\s+['\"]([^'\"]+)['\"]"));
+        QStringLiteral("(?m)^[ \\t]*export\\s+(?:type\\s+)?\\*\\s+from\\s+['\"]([^'\"]+)['\"]"));
     QRegularExpressionMatchIterator stars = exportStar.globalMatch(text);
     while (stars.hasNext()) {
         const QRegularExpressionMatch match = stars.next();
@@ -309,9 +322,10 @@ SymbolScan scanSource(const QString &text, const LanguageDefinition *definition,
             lineStarts.append(i + 1);
     }
 
+    static const QRegularExpression styleName(QStringLiteral("^(?:[.#$@]|--)?-?[A-Za-z_][\\w-]*$"));
     QSet<QString> seen;
     const auto addHit = [&](const QString &name, int start, bool local) {
-        if (!isIdentifier(name))
+        if (definition->stylesheet ? !styleName.match(name).hasMatch() : !isIdentifier(name))
             return;
         if (!definition->keywordRegex.pattern().isEmpty()) {
             const QRegularExpressionMatch word = definition->keywordRegex.match(name);
@@ -342,7 +356,7 @@ SymbolScan scanSource(const QString &text, const LanguageDefinition *definition,
                 continue;
             const QString captured = match.captured(rule.capture);
             if (!rule.params) {
-                addHit(captured, start, rule.local);
+                addHit(rule.prefix + captured, start, rule.local);
                 continue;
             }
             int offset = 0;

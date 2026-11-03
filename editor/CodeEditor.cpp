@@ -5,6 +5,7 @@
 #include "editor/FoldingLayout.h"
 #include "editor/Gutter.h"
 #include "editor/SymbolIndex.h"
+#include "editor/TailwindNames.h"
 #include "syntax/Highlighter.h"
 #include "syntax/LanguageDefinition.h"
 #include "syntax/Theme.h"
@@ -17,10 +18,12 @@
 #include <QMouseEvent>
 #include <QTimer>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QStyleFactory>
 #include <QStyleOptionViewItem>
 #include <QTextBlock>
+#include <QToolTip>
 
 namespace {
 
@@ -30,6 +33,117 @@ QStyle *foldMarkerStyle()
 {
     static QStyle *style = QStyleFactory::create(QStringLiteral("Fusion"));
     return style;
+}
+
+// Starts with an uppercase letter and has a lowercase one, so `Promise`
+// qualifies and a constant such as `MAX_SIZE` does not.
+bool looksLikeTypeName(const QString &name)
+{
+    if (name.isEmpty() || !name.at(0).isUpper())
+        return false;
+    for (const QChar c : name) {
+        if (c.isLower())
+            return true;
+    }
+    return false;
+}
+
+enum class Attribute { None, Class, Id };
+
+// What the quoted string holding `column` names, on this line: a `class` or
+// `className` value, a string passed to a class helper such as clsx or cn
+// inside one, or an `id` value.
+Attribute attributeAt(const QString &text, int column)
+{
+    static const QRegularExpression classHead(QStringLiteral(
+        "(?:\\bclass(?:Name)?\\s*=\\s*(?:\\{[^}]*)?|\\b(?:clsx|cn|cx|cva|tv|twMerge|twJoin|classNames|classnames)\\s*\\([^)]*|\\btw)$"));
+    static const QRegularExpression idHead(QStringLiteral("\\bid\\s*=\\s*\\{?\\s*$"));
+    QChar quote;
+    int open = -1;
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar c = text.at(i);
+        if (open >= 0) {
+            if (c == QLatin1Char('\\')) {
+                ++i;
+                continue;
+            }
+            if (c != quote)
+                continue;
+            if (column > open && column < i) {
+                const QString head = text.left(open);
+                if (idHead.match(head).hasMatch())
+                    return Attribute::Id;
+                return classHead.match(head).hasMatch() ? Attribute::Class : Attribute::None;
+            }
+            open = -1;
+        } else if (c == QLatin1Char('"') || c == QLatin1Char('\'') || c == QLatin1Char('`')) {
+            quote = c;
+            open = i;
+        }
+    }
+    if (open >= 0 && column > open) {
+        const QString head = text.left(open);
+        if (idHead.match(head).hasMatch())
+            return Attribute::Id;
+        return classHead.match(head).hasMatch() ? Attribute::Class : Attribute::None;
+    }
+    return Attribute::None;
+}
+
+// The index key for the name at [start, end). `column` is the key's 1-based
+// position in the line, and `markStart` is where the underline begins.
+// `external` names a stylesheet reference that may live in a package.
+struct LinkKey {
+    QString name;
+    int column = 0;
+    int markStart = 0;
+    bool external = false;
+};
+
+LinkKey linkKeyFor(const QString &text, int start, int end, Attribute attribute, bool stylesheet)
+{
+    const QString word = text.mid(start, end - start);
+    LinkKey key{word, start + 1, start, false};
+    static const QRegularExpression applyBefore(QStringLiteral("@apply\\b[^;{}]*$"));
+    const bool variant = end < text.size() && text.at(end) == QLatin1Char(':');
+    if (attribute == Attribute::Class || (stylesheet && applyBefore.match(text.left(start)).hasMatch())) {
+        key.name = (variant ? QStringLiteral("--breakpoint-") : QStringLiteral(".")) + word;
+        key.external = true;
+        return key;
+    }
+    if (attribute == Attribute::Id) {
+        key.name = QLatin1Char('#') + word;
+        return key;
+    }
+    if (!stylesheet)
+        return key;
+
+    static const QRegularExpression extendBefore(QStringLiteral("@extend\\s+\\.$"));
+    static const QRegularExpression varBefore(QStringLiteral("var\\(\\s*$"));
+    static const QRegularExpression includeBefore(QStringLiteral("(?:@include\\s+|^\\s*\\+)$"));
+    static const QRegularExpression colonAfter(QStringLiteral("^\\s*:"));
+    const QString head = text.left(start);
+    const QChar before = start > 0 ? text.at(start - 1) : QChar();
+    if (before == QLatin1Char('@'))
+        return {};
+    if (before == QLatin1Char('.') || before == QLatin1Char('#')) {
+        key.name = before + word;
+        key.column = start;
+        key.markStart = start - 1;
+        key.external = before == QLatin1Char('.') && extendBefore.match(head).hasMatch();
+        return key;
+    }
+    if (word.startsWith(QLatin1Char('$'))) {
+        key.external = !colonAfter.match(text.mid(end)).hasMatch();
+        return key;
+    }
+    if (word.startsWith(QLatin1String("--"))) {
+        key.external = varBefore.match(head).hasMatch();
+        return key;
+    }
+    key.name = QLatin1Char('@') + word;
+    key.external = includeBefore.match(head).hasMatch();
+    return key;
 }
 
 } // namespace
@@ -71,6 +185,11 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     m_symbolTimer->setInterval(200);
     connect(m_symbolTimer, &QTimer::timeout, this, &CodeEditor::submitSymbols);
 
+    m_checkTimer = new QTimer(this);
+    m_checkTimer->setSingleShot(true);
+    m_checkTimer->setInterval(500);
+    connect(m_checkTimer, &QTimer::timeout, this, &CodeEditor::checkRequested);
+
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::scheduleOverlayRefresh);
@@ -80,8 +199,17 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
         m_linkActive = false;
         m_linkWord.clear();
         viewport()->setCursor(Qt::IBeamCursor);
+        if (!m_diagnostics.isEmpty()) {
+            m_diagnostics.clear();
+            m_diagnosticLines.clear();
+            m_diagnosticTip.clear();
+        }
         scheduleOverlayRefresh();
         scheduleSymbolScan();
+        if (m_checking) {
+            emit checkInvalidated();
+            scheduleCheck();
+        }
     });
 
     updateGutterWidth();
@@ -90,6 +218,7 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
 CodeEditor::~CodeEditor()
 {
     m_symbolTimer->stop();
+    m_checkTimer->stop();
     // Drop queued overlay and symbol callbacks before the document goes away.
     disconnect(this, nullptr, this, nullptr);
     if (m_symbolIndex != nullptr) {
@@ -140,8 +269,49 @@ void CodeEditor::setSymbolIndex(SymbolIndex *index)
 
 void CodeEditor::setFilePath(const QString &path)
 {
+    const bool changed = m_filePath != path;
     m_filePath = path;
     scheduleSymbolScan();
+    if (changed)
+        emit filePathChanged();
+}
+
+void CodeEditor::setCheckingEnabled(bool enabled)
+{
+    m_checking = enabled;
+    if (enabled) {
+        m_checkTimer->start();
+        return;
+    }
+    m_checkTimer->stop();
+    if (m_diagnostics.isEmpty())
+        return;
+    m_diagnostics.clear();
+    m_diagnosticLines.clear();
+    m_diagnosticTip.clear();
+    scheduleOverlayRefresh();
+}
+
+void CodeEditor::setDiagnostics(const QList<Diagnostic> &spans)
+{
+    m_diagnostics = spans;
+    m_diagnosticLines.clear();
+    for (const Diagnostic &span : spans) {
+        const int last = span.endLine > 0 ? span.endLine : span.line;
+        for (int line = span.line; line <= last; ++line) {
+            const int index = line - 1;
+            if (!m_diagnosticLines.contains(index) || !span.warning())
+                m_diagnosticLines.insert(index, !span.warning());
+        }
+    }
+    highlightCurrentLine();
+    if (m_gutter)
+        m_gutter->update();
+}
+
+int CodeEditor::documentRevision() const
+{
+    return document()->revision();
 }
 
 void CodeEditor::refreshSymbols()
@@ -352,7 +522,10 @@ void CodeEditor::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::ControlModifier)) {
         updateSymbolLink(event->position().toPoint());
         if (m_linkActive) {
-            emit definitionActivated(m_linkPath, m_linkEditor, m_linkLine, m_linkColumn);
+            if (m_link.external)
+                emit externalActivated(m_link);
+            else
+                emit definitionActivated(m_link.path, m_link.editorId, m_link.line, m_link.column);
             return;
         }
     }
@@ -362,13 +535,17 @@ void CodeEditor::mousePressEvent(QMouseEvent *event)
 void CodeEditor::mouseMoveEvent(QMouseEvent *event)
 {
     QPlainTextEdit::mouseMoveEvent(event);
-    updateSymbolLink(event->position().toPoint());
+    const QPoint pos = event->position().toPoint();
+    updateSymbolLink(pos);
+    updateDiagnosticTip(pos);
 }
 
 void CodeEditor::leaveEvent(QEvent *event)
 {
     QPlainTextEdit::leaveEvent(event);
     clearSymbolLink();
+    m_diagnosticTip.clear();
+    QToolTip::hideText();
 }
 
 void CodeEditor::focusOutEvent(QFocusEvent *event)
@@ -471,7 +648,63 @@ void CodeEditor::scheduleOverlayRefresh()
         m_overlayRefreshQueued = false;
         refreshFindSelections();
         highlightCurrentLine();
+        if (m_gutter)
+            m_gutter->update();
     }, Qt::QueuedConnection);
+}
+
+void CodeEditor::scheduleCheck()
+{
+    if (m_checking)
+        m_checkTimer->start();
+}
+
+bool CodeEditor::diagnosticRange(const Diagnostic &span, int *start, int *end) const
+{
+    const QTextBlock startBlock = document()->findBlockByNumber(span.line - 1);
+    if (!startBlock.isValid())
+        return false;
+    const int startColumn = qBound(0, span.column - 1, qMax(0, startBlock.text().size()));
+    *start = startBlock.position() + startColumn;
+
+    const int endLine = span.endLine > 0 ? span.endLine : span.line;
+    QTextBlock endBlock = document()->findBlockByNumber(endLine - 1);
+    if (!endBlock.isValid())
+        endBlock = startBlock;
+    const int endColumn = span.endColumn > 0 ? span.endColumn - 1 : endBlock.text().size();
+    *end = endBlock.position() + qBound(0, endColumn, qMax(0, endBlock.text().size()));
+    if (*end <= *start)
+        *end = qMin(startBlock.position() + startBlock.text().size(), *start + 1);
+    return *end > *start;
+}
+
+void CodeEditor::updateDiagnosticTip(const QPoint &pos)
+{
+    if (m_diagnostics.isEmpty()
+        || QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier)) {
+        if (!m_diagnosticTip.isEmpty()) {
+            m_diagnosticTip.clear();
+            QToolTip::hideText();
+        }
+        return;
+    }
+    const int position = cursorForPosition(pos).position();
+    QString message;
+    for (const Diagnostic &span : m_diagnostics) {
+        int start = 0;
+        int end = 0;
+        if (diagnosticRange(span, &start, &end) && position >= start && position < end) {
+            message = span.message;
+            break;
+        }
+    }
+    if (message == m_diagnosticTip)
+        return;
+    m_diagnosticTip = message;
+    if (message.isEmpty())
+        QToolTip::hideText();
+    else
+        QToolTip::showText(viewport()->mapToGlobal(pos), message, viewport());
 }
 
 void CodeEditor::highlightCurrentLine()
@@ -485,6 +718,22 @@ void CodeEditor::highlightCurrentLine()
     selection.cursor.clearSelection();
     QList<QTextEdit::ExtraSelection> selections{selection};
     selections.append(m_findSelections);
+    if (m_theme != nullptr) {
+        for (const Diagnostic &span : m_diagnostics) {
+            int start = 0;
+            int end = 0;
+            if (!diagnosticRange(span, &start, &end))
+                continue;
+            QTextEdit::ExtraSelection mark;
+            mark.cursor = QTextCursor(document());
+            mark.cursor.setPosition(start);
+            mark.cursor.setPosition(end, QTextCursor::KeepAnchor);
+            mark.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
+            mark.format.setUnderlineColor(span.warning() ? m_theme->diagnosticWarning
+                                                         : m_theme->diagnosticError);
+            selections.append(mark);
+        }
+    }
     if (m_linkActive)
         selections.append(m_linkSelection);
     setExtraSelections(selections);
@@ -514,8 +763,13 @@ void CodeEditor::updateSymbolLink(const QPoint &pos)
     const QTextCursor at = cursorForPosition(pos);
     const QString text = at.block().text();
     int column = at.positionInBlock();
-    const auto isIdent = [](QChar c) {
-        return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('$');
+    const Attribute attribute =
+        m_definition->classAttributes ? attributeAt(text, column) : Attribute::None;
+    const bool dashed = m_definition->stylesheet || attribute != Attribute::None;
+    const bool classContext = attribute == Attribute::Class || m_definition->stylesheet;
+    const auto isIdent = [dashed](QChar c) {
+        return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('$')
+               || (dashed && c == QLatin1Char('-'));
     };
     if ((column >= text.size() || !isIdent(text.at(column))) && column > 0 && isIdent(text.at(column - 1)))
         --column;
@@ -530,21 +784,68 @@ void CodeEditor::updateSymbolLink(const QPoint &pos)
     while (end < text.size() && isIdent(text.at(end)))
         ++end;
     const QString word = text.mid(start, end - start);
-    if (word.at(0).isDigit()) {
+    static const QRegularExpression nameStart(QStringLiteral("[^-$]"));
+    const int firstLetter = word.indexOf(nameStart);
+    if (firstLetter < 0 || word.at(firstLetter).isDigit()) {
+        clearSymbolLink();
+        return;
+    }
+    const LinkKey key = linkKeyFor(text, start, end, attribute, m_definition->stylesheet);
+    if (key.name.isEmpty()) {
         clearSymbolLink();
         return;
     }
     const int line = at.blockNumber() + 1;
-    const int wordColumn = start + 1;
-    if (word == m_linkWord && line == m_linkWordLine && wordColumn == m_linkWordColumn)
+    if (key.name == m_linkWord && line == m_linkWordLine && key.column == m_linkWordColumn)
         return;
 
-    m_linkWord = word;
+    m_linkWord = key.name;
     m_linkWordLine = line;
-    m_linkWordColumn = wordColumn;
-    const SymbolLocation loc = m_symbolIndex->find(word, m_definition->ignoreCase, m_filePath,
-                                                   quintptr(this), line, wordColumn);
-    if (loc.line == 0) {
+    m_linkWordColumn = key.column;
+    QString object;
+    if (m_definition->modules && start >= 2 && text.at(start - 1) == QLatin1Char('.')) {
+        int objectStart = start - 1;
+        while (objectStart > 0 && (text.at(objectStart - 1).isLetterOrNumber() || text.at(objectStart - 1) == QLatin1Char('_')
+                                   || text.at(objectStart - 1) == QLatin1Char('$')))
+            --objectStart;
+        object = text.mid(objectStart, start - 1 - objectStart);
+    }
+    SymbolLocation loc;
+    if (!object.isEmpty())
+        loc = m_symbolIndex->findMember(quintptr(this), object, word);
+    if (loc.line == 0 && !loc.external)
+        loc = m_symbolIndex->find(key.name, m_definition->ignoreCase, m_filePath, quintptr(this), line, key.column);
+    if (loc.line == 0 && !loc.external && classContext && key.name.startsWith(QLatin1Char('.'))) {
+        for (const QString &variable : parseTailwindClass(key.name.mid(1)).variables) {
+            loc = m_symbolIndex->find(variable, false, m_filePath, quintptr(this), line, key.column);
+            if (loc.line != 0)
+                break;
+        }
+    }
+    if (loc.line == 0 && !loc.external && key.external && m_symbolIndex->externalEnabled()) {
+        loc.external = true;
+        loc.kind = ExternalKind::Stylesheet;
+        loc.path = m_filePath;
+        loc.editorId = quintptr(this);
+        loc.name = key.name;
+    }
+    // An undefined PascalCase name in a module file is an ambient declaration,
+    // such as HTMLDivElement or JSX.Element, from the TypeScript libraries or @types.
+    const auto undefinedName = [this](const QString &name) {
+        const SymbolLocation owner = m_symbolIndex->find(name, false, m_filePath, quintptr(this), 0, 0);
+        return owner.line == 0 && !owner.external;
+    };
+    if (loc.line == 0 && !loc.external && m_definition->modules && !classContext
+        && m_symbolIndex->externalEnabled() && looksLikeTypeName(word)
+        && (object.isEmpty() || (looksLikeTypeName(object) && undefinedName(object)))) {
+        loc.external = true;
+        loc.kind = ExternalKind::Global;
+        loc.path = m_filePath;
+        loc.editorId = quintptr(this);
+        loc.name = word;
+        loc.container = object;
+    }
+    if (loc.line == 0 && !loc.external) {
         if (m_linkActive) {
             m_linkActive = false;
             viewport()->setCursor(Qt::IBeamCursor);
@@ -554,20 +855,22 @@ void CodeEditor::updateSymbolLink(const QPoint &pos)
     }
 
     QTextCursor mark(at.block());
-    const int from = at.block().position() + start;
+    const int from = at.block().position() + key.markStart;
     mark.setPosition(from);
-    mark.setPosition(from + word.size(), QTextCursor::KeepAnchor);
+    mark.setPosition(at.block().position() + end, QTextCursor::KeepAnchor);
     QTextCharFormat format;
     format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
-    if (m_theme != nullptr)
-        format.setUnderlineColor(m_theme->foreground);
+    if (m_theme != nullptr) {
+        const QColor color = loc.external ? m_theme->tokenFormat(TokenRole::Function).foreground().color()
+                                          : m_theme->foreground;
+        format.setUnderlineColor(color);
+        if (loc.external)
+            format.setForeground(color);
+    }
     m_linkSelection.cursor = mark;
     m_linkSelection.format = format;
     m_linkActive = true;
-    m_linkPath = loc.path;
-    m_linkEditor = loc.editorId;
-    m_linkLine = loc.line;
-    m_linkColumn = loc.column;
+    m_link = loc;
     viewport()->setCursor(Qt::PointingHandCursor);
     highlightCurrentLine();
 }
@@ -578,8 +881,7 @@ void CodeEditor::clearSymbolLink()
         return;
     m_linkActive = false;
     m_linkWord.clear();
-    m_linkPath.clear();
-    m_linkEditor = 0;
+    m_link = {};
     viewport()->setCursor(Qt::IBeamCursor);
     highlightCurrentLine();
 }
@@ -604,6 +906,14 @@ void CodeEditor::paintGutter(QPaintEvent *event)
             if (m_lineNumbers) {
                 painter.drawText(0, top, numberWidth, lineHeight, Qt::AlignRight,
                                  QString::number(block.blockNumber() + 1));
+            }
+            const auto mark = m_diagnosticLines.constFind(block.blockNumber());
+            if (mark != m_diagnosticLines.cend() && m_theme != nullptr) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(mark.value() ? m_theme->diagnosticError : m_theme->diagnosticWarning);
+                const int size = 6;
+                painter.drawRect(1, top + (lineHeight - size) / 2, size, size);
+                painter.setPen(m_theme->gutterForeground);
             }
             if (FoldController::isFoldHeader(block)) {
                 const QRect markerRect(markerX, top, foldMarkerWidth(), lineHeight);

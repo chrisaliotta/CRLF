@@ -2,15 +2,19 @@
 
 #include "app/Actions.h"
 #include "app/FileIconTheme.h"
+#include "editor/Diagnostic.h"
 #include "io/CommandVariables.h"
 #include "io/SessionStore.h"
 #include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
 
+#include <QHash>
 #include <QList>
 #include <QMainWindow>
 
 class BottomPanel;
+class CheckRunner;
+class CodeEditor;
 class CommandRunner;
 class ExplorerPanel;
 class FindBar;
@@ -67,6 +71,10 @@ private:
     void applyProject(const Project &project);
     void finishStartup(const QStringList &paths);
     CommandVariables commandVariables() const;
+    CommandVariables variablesFor(QWidget *page) const;
+    void runCheck(CodeEditor *editor);
+    void applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans);
+    QString diagnosticKey(const CodeEditor *editor) const;
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
@@ -89,6 +97,11 @@ private:
     OutputPanel *m_output = nullptr;
     bool m_syncingTerminal = false;
     CommandRunner *m_runner = nullptr;
+    CheckRunner *m_checks = nullptr;
+    bool m_checkEnabled = false;
+    QString m_checkCommand;
+    QString m_checkDirectory;
+    QHash<quintptr, QString> m_diagnosticKeys;
     QFileSystemWatcher *m_commandWatcher = nullptr;
     QString m_projectFile;
     int m_commandGeneration = 0;

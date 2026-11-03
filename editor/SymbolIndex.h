@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/ImportAliases.h"
+#include "editor/SymbolLocation.h"
 #include "syntax/SymbolScanner.h"
 
 #include <QHash>
@@ -12,16 +13,6 @@
 
 class LanguageDefinition;
 class LanguageRegistry;
-
-// Where a defined name lives. line and column are 1-based. path is empty for
-// an untitled buffer, and editorId is zero when the hit came from a file that
-// is not open. line is zero when a lookup found nothing.
-struct SymbolLocation {
-    QString path;
-    quintptr editorId = 0;
-    int line = 0;
-    int column = 0;
-};
 
 // Names defined in open buffers and, when a folder is scoped, in that folder.
 // The map is read on the UI thread. Scans run on the thread pool.
@@ -38,6 +29,10 @@ public:
     void setProject(const QString &root, const QStringList &hide);
     void setEnabled(bool enabled);
     bool isEnabled() const { return m_enabled; }
+    // Package imports and unresolved stylesheet names are external links.
+    // Off, they are plain text and node_modules is never read.
+    void setExternalEnabled(bool enabled) { m_external = enabled; }
+    bool externalEnabled() const { return m_enabled && m_external; }
     // Rescans one editor. An open buffer replaces the disk slice of its path.
     void updateBuffer(quintptr editorId, const QString &path, const QString &text,
                       const LanguageDefinition *language);
@@ -46,12 +41,18 @@ public:
 
     // An import in the current file wins. A relative specifier, a tsconfig or
     // Vite directory alias, or a `/@dir` path is resolved to that module's
-    // export. Otherwise prefers a hit in the current file,
+    // export. A package import is an external location. Otherwise prefers a
+    // hit in the current file,
     // then any other hit. The token at line/column is skipped, so the
     // definition under the pointer is not a link to itself when it is the
     // only hit.
     SymbolLocation find(const QString &name, bool ignoreCase, const QString &currentPath,
                         quintptr editorId, int line, int column) const;
+    // `object.member` where `object` is an import. A CSS module member is that
+    // file's class, as written or in kebab-case. A default or `* as` import
+    // of a script resolves the member as an export of that module, or as an
+    // external location for a package.
+    SymbolLocation findMember(quintptr editorId, const QString &object, const QString &member) const;
 
 signals:
     void updated();
@@ -93,6 +94,18 @@ private:
     // `matched` is set when the name is an import in this file, including a
     // package import that has no project file to open.
     SymbolLocation resolveImport(const Slice &slice, const QString &name, bool &matched) const;
+    // `name` as the original side of `import { name as local }`, such as the
+    // `AlertDialog` in `{ AlertDialog as AlertDialogPrimitive }`.
+    SymbolLocation resolveImportedName(const Slice &slice, const QString &name) const;
+    SymbolLocation resolveBinding(const Slice &slice, const ModuleBinding &binding) const;
+    // Line 1 of an indexed module, the target of a `* as` import or re-export.
+    SymbolLocation moduleTop(const QString &path) const;
+    // The module that `path` re-exports as `export * as name from`.
+    QString namespaceModule(const QString &path, const QString &name) const;
+    // An external location for `name` from a package import, or nothing for a
+    // relative specifier or when external links are off.
+    SymbolLocation packageLocation(const Slice &slice, const ModuleBinding &binding, const QString &name,
+                                   bool wholeModule) const;
     QString resolveSpecifier(const QString &fromFile, const QString &specifier) const;
     QString indexedModule(const QString &base) const;
     const ImportAliases &aliasesFor(const QString &fromFile) const;
@@ -110,6 +123,7 @@ private:
 
     const LanguageRegistry *m_registry;
     bool m_enabled = true;
+    bool m_external = true;
     QString m_root;
     QStringList m_hide;
     int m_walkGeneration = 0;

@@ -78,11 +78,14 @@ LanguageDefinition LanguageDefinition::fromJsonFile(const QString &path)
         rule.capture = obj.value(QLatin1String("capture")).toInt(1);
         rule.local = obj.value(QLatin1String("local")).toBool();
         rule.params = obj.value(QLatin1String("params")).toBool();
+        rule.prefix = obj.value(QLatin1String("prefix")).toString();
         rule.regex = QRegularExpression(obj.value(QLatin1String("regex")).toString(), wordOptions);
         def.symbols.append(rule);
     }
 
     def.modules = root.value(QLatin1String("modules")).toBool();
+    def.stylesheet = root.value(QLatin1String("stylesheet")).toBool();
+    def.classAttributes = root.value(QLatin1String("classAttributes")).toBool();
 
     const QJsonObject folding = root.value(QLatin1String("folding")).toObject();
     def.foldMode = foldModeFromName(folding.value(QLatin1String("mode")).toString());

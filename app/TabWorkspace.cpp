@@ -5,6 +5,7 @@
 
 #include "app/DocumentTabBar.h"
 #include "editor/CodeEditor.h"
+#include "editor/ExternalLookup.h"
 #include "editor/SymbolIndex.h"
 #include "hex/HexView.h"
 #include "syntax/LanguageRegistry.h"
@@ -20,6 +21,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
 #include <QTabBar>
 #include <QToolButton>
 
@@ -204,10 +206,16 @@ CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &
     editor->setFilePath(file.path());
     applyIndent(editor, file.path());
     connect(editor, &CodeEditor::definitionActivated, this, &TabWorkspace::revealDefinition);
+    connect(editor, &CodeEditor::externalActivated, this,
+            [this, editor](const SymbolLocation &target) { revealExternal(editor, target); });
     editor->setLineWrapMode(m_wordWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
     editor->setLineNumbersVisible(m_lineNumbers);
     editor->replaceText(text);
+    editor->setCheckingEnabled(m_checking);
 
+    connect(editor, &CodeEditor::checkRequested, this, [this, editor] { emit checkRequested(editor); });
+    connect(editor, &CodeEditor::checkInvalidated, this, [this, editor] { emit checkInvalidated(editor); });
+    connect(editor, &CodeEditor::filePathChanged, this, [this, editor] { emit editorRetargeted(editor); });
     connect(editor->document(), &QTextDocument::modificationChanged, this,
             [this, editor] { refreshTabTitle(editor); });
     connect(editor, &QPlainTextEdit::cursorPositionChanged, this, [this, editor] {
@@ -234,7 +242,74 @@ HexView *TabWorkspace::createHexView(const QByteArray &bytes)
 
 void TabWorkspace::setSymbolProject(const QString &root, const QStringList &hide)
 {
+    m_symbolRoot = root;
     m_symbols->setProject(root, hide);
+}
+
+void TabWorkspace::setExternalNavigation(bool enabled)
+{
+    m_symbols->setExternalEnabled(enabled);
+}
+
+void TabWorkspace::setCheckingEnabled(bool enabled)
+{
+    m_checking = enabled;
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+            editor->setCheckingEnabled(enabled);
+    }
+}
+
+CodeEditor *TabWorkspace::editorFor(quintptr editorId) const
+{
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (quintptr(it.key()) == editorId)
+            return qobject_cast<CodeEditor *>(it.key());
+    }
+    return nullptr;
+}
+
+void TabWorkspace::goToDiagnostic(const QString &path, quintptr editorId, int line, int column)
+{
+    CodeEditor *editor = editorFor(editorId);
+    if (!editor && !path.isEmpty()) {
+        for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+            if (normalizedPath(it->file.path()).compare(normalizedPath(path), Qt::CaseInsensitive) == 0) {
+                editor = qobject_cast<CodeEditor *>(it.key());
+                break;
+            }
+        }
+    }
+    if (!editor)
+        return;
+    setCurrentWidget(editor);
+    editor->goTo(line, column);
+    editor->setFocus();
+}
+
+void TabWorkspace::revealExternal(CodeEditor *editor, const SymbolLocation &target)
+{
+    const int generation = m_externalGeneration->fetchAndAddOrdered(1) + 1;
+    ExternalQuery query;
+    query.target = target;
+    query.root = m_symbolRoot;
+    if (target.kind == ExternalKind::Stylesheet)
+        query.text = editor->toPlainText();
+    query.cancelled = [latest = m_externalGeneration, generation] { return latest->loadAcquire() != generation; };
+
+    const LanguageRegistry *registry = m_registry;
+    QPointer<TabWorkspace> alive(this);
+    QThreadPool::globalInstance()->start([alive, query, registry, generation] {
+        const SymbolLocation found = findExternal(query, registry);
+        QCoreApplication *app = QCoreApplication::instance();
+        if (found.line == 0 || app == nullptr)
+            return;
+        QMetaObject::invokeMethod(app, [alive, found, generation] {
+            if (alive.isNull() || alive->m_externalGeneration->loadAcquire() != generation)
+                return;
+            alive->revealDefinition(found.path, 0, found.line, found.column);
+        }, Qt::QueuedConnection);
+    });
 }
 
 void TabWorkspace::setSymbolNavigation(bool enabled)
@@ -591,6 +666,10 @@ bool TabWorkspace::closeTab(int index)
             return false;
     }
     const QString closed = m_pages[page].file.path();
+    if (auto *editor = qobject_cast<CodeEditor *>(page)) {
+        editor->setCheckingEnabled(false);
+        emit editorClosed(quintptr(editor));
+    }
     removeTab(index);
     m_pages.remove(page);
     forgetCommandPage(page);
@@ -613,6 +692,8 @@ void TabWorkspace::setCurrentHexMode(bool hex)
     QWidget *replacement = nullptr;
     if (hex) {
         auto *editor = static_cast<CodeEditor *>(page);
+        editor->setCheckingEnabled(false);
+        emit editorClosed(quintptr(editor));
         const QByteArray bytes = !modified && !entry.file.path().isEmpty()
                                      ? entry.file.loadBytes()
                                      : entry.file.encode(editor->toPlainText());

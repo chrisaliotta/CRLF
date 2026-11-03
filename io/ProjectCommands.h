@@ -59,6 +59,16 @@ struct ProjectIcons
     QList<IconRule> rules;
 };
 
+// An external checker. See docs/diagnostics.md. `enabled` is false when the
+// .crlf file has no `check` key. `command` is expanded when a check starts.
+// `workingDirectory` is absolute: the .crlf directory, or its `cwd`.
+struct CheckSettings
+{
+    bool enabled = false;
+    QString command;
+    QString workingDirectory;
+};
+
 // One entry from a project's .crlf file. workingDirectory is absolute:
 // the .crlf directory, or its `cwd` resolved against that directory.
 // command may contain ${...} names from CommandVariables, filled in when
@@ -92,6 +102,9 @@ struct Project
     ProjectIcons icons;
     // Ctrl+click definition navigation. Missing from the file means enabled.
     bool navigation = true;
+    // Package and stylesheet links resolved under node_modules on click.
+    bool externalNavigation = true;
+    CheckSettings check;
     QString error;
 };
 

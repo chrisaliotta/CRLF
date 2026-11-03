@@ -17,12 +17,14 @@ struct SymbolHit {
 
 // A name tied to a module specifier. `imported` is empty for a default
 // import or export. `reexport` is an `export ... from`. `star` is `export *`.
+// `whole` is `import * as local`, a name for the entire module.
 struct ModuleBinding {
     QString local;
     QString imported;
     QString specifier;
     bool reexport = false;
     bool star = false;
+    bool whole = false;
 };
 
 // Declarations, plus import and export bindings when the language tracks

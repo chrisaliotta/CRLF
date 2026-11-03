@@ -25,6 +25,10 @@ public:
     QColor gutterForeground;
     // Behind text inside embedded regions such as Markdown fenced code.
     QColor codeBlockBackground;
+    // Wavy underlines and gutter marks for an external check. A theme that
+    // omits these keeps the terminal red and yellow.
+    QColor diagnosticError;
+    QColor diagnosticWarning;
     // ANSI colors 0–15 for terminal output. A theme file's `terminal` object
     // replaces these; a missing entry keeps the default for that theme's
     // background.

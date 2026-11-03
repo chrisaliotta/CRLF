@@ -39,4 +39,7 @@ struct SymbolRule {
     bool local = false;
     // `capture` is a parameter list; each name in it is a declaration.
     bool params = false;
+    // Prepended to the captured name, such as `@` for a Sass mixin, so the
+    // name does not share a key with an identifier from another language.
+    QString prefix;
 };

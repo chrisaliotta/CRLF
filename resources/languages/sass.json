@@ -19,5 +19,13 @@
     { "role": "type", "regex": "(?<=^\\s{0,40})-?[-A-Za-z]+(?=\\s*:)" },
     { "role": "function", "regex": "\\b[A-Za-z_][\\w-]*(?=\\()" }
   ],
+  "stylesheet": true,
+  "symbols": [
+    { "regex": "(?<!:\\s[^\\n]{0,120})(?<![\\w-])([.#]-?[A-Za-z_][\\w-]*)(?![^\\n]*:\\s)" },
+    { "regex": "(?m)^[ \\t]*(--[A-Za-z_][\\w-]*)\\s*:" },
+    { "regex": "(?m)^[ \\t]*(\\$[A-Za-z_][\\w-]*)\\s*:" },
+    { "regex": "(?m)^[ \\t]*(?:@mixin|@function|=)\\s*(-?[A-Za-z_][\\w-]*)", "prefix": "@" },
+    { "regex": "@(?:-webkit-)?keyframes\\s+(-?[A-Za-z_][\\w-]*)", "prefix": "@" }
+  ],
   "folding": { "mode": "indent" }
 }

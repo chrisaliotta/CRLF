@@ -74,6 +74,11 @@ Theme Theme::fromJsonFile(const QString &path)
         theme.terminal.append(named.isValid() ? named : defaults.at(i));
     }
 
+    const QColor diagnosticError(editor.value(QLatin1String("diagnosticError")).toString());
+    const QColor diagnosticWarning(editor.value(QLatin1String("diagnosticWarning")).toString());
+    theme.diagnosticError = diagnosticError.isValid() ? diagnosticError : theme.terminal.at(1);
+    theme.diagnosticWarning = diagnosticWarning.isValid() ? diagnosticWarning : theme.terminal.at(3);
+
     const QJsonObject tokens = root.value(QLatin1String("tokens")).toObject();
     for (auto it = tokens.begin(); it != tokens.end(); ++it) {
         const QJsonObject spec = it.value().toObject();

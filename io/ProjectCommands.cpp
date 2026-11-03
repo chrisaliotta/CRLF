@@ -117,6 +117,24 @@ IndentRule readIndentRule(const QJsonObject &obj, const IndentRule &base)
     return rule;
 }
 
+void readCheck(CheckSettings &check, const QJsonValue &value, const QString &directory)
+{
+    check.workingDirectory = QDir(directory).absolutePath();
+    if (value.isBool()) {
+        check.enabled = value.toBool();
+        return;
+    }
+    if (!value.isObject())
+        return;
+    const QJsonObject obj = value.toObject();
+    check.enabled = obj.value(QLatin1String("enabled")).toBool(false);
+    check.command = obj.value(QLatin1String("command")).toString();
+    const QString cwd = obj.value(QLatin1String("cwd")).toString();
+    if (!cwd.isEmpty())
+        check.workingDirectory = QDir(directory).filePath(cwd);
+    check.workingDirectory = QDir(check.workingDirectory).absolutePath();
+}
+
 void readIndent(IndentSettings &indent, const QJsonValue &value)
 {
     if (!value.isObject())
@@ -240,6 +258,8 @@ Project projectFor(const QString &start)
     readIcons(project.icons, root.value(QLatin1String("icons")));
     readIndent(project.indent, root.value(QLatin1String("indent")));
     project.navigation = root.value(QLatin1String("navigation")).toBool(true);
+    project.externalNavigation = root.value(QLatin1String("externalNavigation")).toBool(true);
+    readCheck(project.check, root.value(QLatin1String("check")), directory);
     return project;
 }
 

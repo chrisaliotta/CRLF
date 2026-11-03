@@ -31,6 +31,7 @@
     { "role": "function", "regex": "\\b[A-Za-z_$][\\w$]*(?=\\s*\\()" }
   ],
   "modules": true,
+  "classAttributes": true,
   "symbols": [
     { "regex": "\\b(?:class|interface|enum)\\s+([A-Za-z_$][\\w$]*)" },
     { "regex": "\\btype\\s+([A-Za-z_$][\\w$]*)\\s*(?:<[^;{]*>)?\\s*=" },

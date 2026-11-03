@@ -73,7 +73,8 @@ QList<ScannedFile> collectProject(const QString &root, const QStringList &hide,
             if (nameHidden(hide, info.fileName()))
                 continue;
             if (info.isDir()) {
-                if (!info.fileName().startsWith(QLatin1Char('.')))
+                if (!info.fileName().startsWith(QLatin1Char('.'))
+                    && info.fileName().compare(QLatin1String("node_modules"), Qt::CaseInsensitive) != 0)
                     pending.append(info.absoluteFilePath());
                 continue;
             }
@@ -247,6 +248,8 @@ SymbolLocation SymbolIndex::find(const QString &name, bool ignoreCase, const QSt
     if (const Slice *current = sliceForEditor(editorId)) {
         bool imported = false;
         const SymbolLocation resolved = resolveImport(*current, name, imported);
+        if (resolved.external)
+            return resolved;
         if (imported) {
             const bool sameToken = resolved.line == line && resolved.column == column
                                    && (resolved.editorId == editorId
@@ -259,6 +262,9 @@ SymbolLocation SymbolIndex::find(const QString &name, bool ignoreCase, const QSt
         const SymbolLocation local = hitLocation(*current, name, line, column);
         if (local.line != 0)
             return local;
+        const SymbolLocation original = resolveImportedName(*current, name);
+        if (original.line != 0 || original.external)
+            return original;
     }
 
     const QString key = ignoreCase ? name.toLower() : name;
@@ -278,6 +284,49 @@ SymbolLocation SymbolIndex::find(const QString &name, bool ignoreCase, const QSt
         }
     }
     return sameFile.line != 0 ? sameFile : other;
+}
+
+SymbolLocation SymbolIndex::findMember(quintptr editorId, const QString &object, const QString &member) const
+{
+    static const QRegularExpression stylesheet(QStringLiteral("\\.(?:css|scss|sass|less)$"),
+                                               QRegularExpression::CaseInsensitiveOption);
+    const Slice *current = sliceForEditor(editorId);
+    if (!m_enabled || current == nullptr || current->path.isEmpty())
+        return {};
+    for (const ModuleBinding &binding : current->modules) {
+        if (binding.reexport || binding.local != object)
+            continue;
+        const QString target = resolveSpecifier(current->path, binding.specifier);
+        if (!stylesheet.match(binding.specifier).hasMatch()) {
+            // A named import may itself be a namespace, as in
+            // `export * as AlertDialog from './parts'`.
+            const bool named = !binding.whole && !binding.imported.isEmpty();
+            if (target.isEmpty()) {
+                SymbolLocation loc = packageLocation(*current, binding, member, false);
+                if (named)
+                    loc.container = binding.imported;
+                return loc;
+            }
+            if (named) {
+                const QString parts = namespaceModule(target, binding.imported);
+                return parts.isEmpty() ? SymbolLocation() : lookupExport(parts, member, 0);
+            }
+            return lookupExport(target, member, 0);
+        }
+        const Slice *sheet = sliceForPath(target);
+        if (sheet == nullptr)
+            return {};
+        QString kebab;
+        for (const QChar c : member) {
+            if (c.isUpper())
+                kebab += QLatin1Char('-') + c.toLower();
+            else
+                kebab += c;
+        }
+        const SymbolLocation exact = hitLocation(*sheet, QLatin1Char('.') + member);
+        return exact.line != 0 ? exact : hitLocation(*sheet, QLatin1Char('.') + kebab);
+    }
+    return {};
 }
 
 QString SymbolIndex::sliceKey(quintptr editorId, const QString &path) const
@@ -398,6 +447,8 @@ QString SymbolIndex::indexedModule(const QString &base) const
 {
     if (base.isEmpty())
         return {};
+    if (sliceForPath(base) != nullptr)
+        return normalizedPath(base);
     const QStringList extensions = {QStringLiteral(".tsx"), QStringLiteral(".ts"), QStringLiteral(".jsx"),
                                     QStringLiteral(".js"),  QStringLiteral(".mts"), QStringLiteral(".cts"),
                                     QStringLiteral(".mjs"), QStringLiteral(".cjs")};
@@ -513,11 +564,14 @@ SymbolLocation SymbolIndex::lookupExport(const QString &path, const QString &imp
     for (const ModuleBinding &binding : slice->modules) {
         if (!binding.reexport || binding.star)
             continue;
-        const bool match = imported.isEmpty() ? binding.imported.isEmpty()
+        const bool match = imported.isEmpty() ? binding.imported.isEmpty() && !binding.whole
                                               : namesEqual(binding.local, imported, slice->ignoreCase);
         if (!match)
             continue;
-        return lookupExport(resolveSpecifier(slice->path, binding.specifier), binding.imported, depth + 1);
+        const QString target = resolveSpecifier(slice->path, binding.specifier);
+        if (binding.whole)
+            return moduleTop(target);
+        return lookupExport(target, binding.imported, depth + 1);
     }
     if (!imported.isEmpty()) {
         for (const ModuleBinding &binding : slice->modules) {
@@ -541,11 +595,74 @@ SymbolLocation SymbolIndex::resolveImport(const Slice &slice, const QString &nam
         if (!namesEqual(binding.local, name, slice.ignoreCase))
             continue;
         matched = true;
-        if (slice.path.isEmpty())
-            return {};
-        return lookupExport(resolveSpecifier(slice.path, binding.specifier), binding.imported, 0);
+        return resolveBinding(slice, binding);
     }
     return {};
+}
+
+SymbolLocation SymbolIndex::resolveImportedName(const Slice &slice, const QString &name) const
+{
+    for (const ModuleBinding &binding : slice.modules) {
+        if (binding.reexport || binding.star || binding.whole || binding.imported.isEmpty()
+            || !namesEqual(binding.imported, name, slice.ignoreCase))
+            continue;
+        return resolveBinding(slice, binding);
+    }
+    return {};
+}
+
+SymbolLocation SymbolIndex::resolveBinding(const Slice &slice, const ModuleBinding &binding) const
+{
+    if (slice.path.isEmpty())
+        return {};
+    const QString target = resolveSpecifier(slice.path, binding.specifier);
+    if (target.isEmpty())
+        return packageLocation(slice, binding, binding.imported, binding.whole);
+    if (binding.whole)
+        return moduleTop(target);
+    return lookupExport(target, binding.imported, 0);
+}
+
+SymbolLocation SymbolIndex::moduleTop(const QString &path) const
+{
+    const Slice *slice = sliceForPath(path);
+    if (slice == nullptr)
+        return {};
+    SymbolLocation loc;
+    loc.path = slice->path;
+    loc.editorId = slice->editorId;
+    loc.line = 1;
+    loc.column = 1;
+    return loc;
+}
+
+QString SymbolIndex::namespaceModule(const QString &path, const QString &name) const
+{
+    const Slice *slice = sliceForPath(path);
+    if (slice == nullptr)
+        return {};
+    for (const ModuleBinding &binding : slice->modules) {
+        if (binding.reexport && binding.whole && namesEqual(binding.local, name, slice->ignoreCase))
+            return resolveSpecifier(slice->path, binding.specifier);
+    }
+    return {};
+}
+
+SymbolLocation SymbolIndex::packageLocation(const Slice &slice, const ModuleBinding &binding, const QString &name,
+                                            bool wholeModule) const
+{
+    if (binding.specifier.startsWith(QLatin1Char('.')) || !externalEnabled())
+        return {};
+    SymbolLocation loc;
+    loc.path = slice.path;
+    loc.editorId = slice.editorId;
+    loc.external = true;
+    loc.kind = ExternalKind::Package;
+    loc.specifier = binding.specifier;
+    loc.name = name;
+    loc.defaultExport = name.isEmpty() && !wholeModule;
+    loc.wholeModule = wholeModule;
+    return loc;
 }
 
 void SymbolIndex::rebuild()

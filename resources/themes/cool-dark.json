@@ -7,7 +7,9 @@
     "selection": "#2a5a68",
     "gutterBackground": "#20272e",
     "gutterForeground": "#8b98a5",
-    "codeBlockBackground": "#28313a"
+    "codeBlockBackground": "#28313a",
+    "diagnosticError": "#f14c4c",
+    "diagnosticWarning": "#d7ba7d"
   },
   "tokens": {
     "text": { "color": "#d6dde6" },

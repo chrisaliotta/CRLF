@@ -106,6 +106,12 @@ Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `
 "navigation": false
 ```
 
+`externalNavigation` controls links to code outside the project. With it on (the default), a name imported from a package, such as `useState` from `react`, and a stylesheet class or variable that the project does not define are underlined in the theme's function color. Ctrl+click reads that package's `package.json` and entry file under `node_modules`, or the stylesheets of packages the document imports, on a background thread. A member of a default or `* as` package import, such as `React.FC`, is searched in that package. A PascalCase name with no definition and no import, such as `HTMLDivElement` or `JSX.Element`, is searched in the `@types` packages and TypeScript's `lib` declaration files. A Tailwind utility class also searches the `tailwindcss` package for its theme variable, then a Tailwind 3 `tailwind.config` for the theme key. pnpm's linked packages, and those kept only under `node_modules/.pnpm/node_modules`, are found the same way. `false` leaves those names as plain text and never reads `node_modules`. Project definitions, including project stylesheets, still link. `node_modules` is never part of the folder scan.
+
+```json
+"externalNavigation": false
+```
+
 ## Indent
 
 `indent` sets what Tab inserts. `style` is `spaces` or `tab`. `size` is how many spaces a spaces-style Tab inserts, and how many columns a tab character is wide. With no `indent` key, Tab inserts one tab character four columns wide.
@@ -198,3 +204,46 @@ Give the tool the buffer on standard input, not a path to read. A path makes it 
 ```
 
 An empty editor may be replaced with empty output. A command that exits 0 and writes nothing while the editor has text leaves the buffer as it is, and the panel says "The command wrote nothing."
+
+## Check
+
+`check` runs an external program against the focused editor's buffer and draws what it reports. Leaving the key out leaves checking off. `"check": false` does the same. Implementation notes for a later change are in [diagnostics.md](diagnostics.md).
+
+```json
+"check": {
+  "enabled": true,
+  "command": "scripts/check.sh \"${file}\"",
+  "cwd": "."
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `enabled` | no | `false` stops scheduling. The command stays in the file. Missing `check` means off |
+| `command` | when enabled | The shell command. Variables are filled in when a check starts, the same names as a menu command |
+| `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
+
+The editor's text is standard input, UTF-8 with LF line endings. `${file}` tells the tool which language the buffer is and where its includes live. A tool that opens `${file}` checks the saved copy and misses unsaved edits.
+
+Standard output is a JSON array. `line` and `column` are required and start at 1. `endLine` and `endColumn` are optional; without them the mark runs from `column` through the end of the line. When they are present, `endColumn` is the column where the mark stops, and that column is not included. `severity` is `error` or `warning`.
+
+```json
+[
+  {
+    "line": 12,
+    "column": 5,
+    "endLine": 12,
+    "endColumn": 14,
+    "severity": "error",
+    "message": "expected ';'"
+  }
+]
+```
+
+Exit code 0 means that array is the result. `[]` means the file is clean. Any other exit leaves the current marks and puts standard error on the status bar. A script that treats "found problems" as a failure, the way clang and eslint do, exits 0 after it has written the array.
+
+An edit clears the marks in that editor and runs the command again once typing has been still for a moment. Each open editor has its own run. The hex view is not checked.
+
+`scripts/check.sh` is a Linux example. It reads stdin and picks the tool from the extension: `clang` or `clang++ -fsyntax-only` for C and C++, `csc` or the .NET SDK compiler for `.cs` when one of those is installed, and `node --check` for `.js`, `.mjs`, and `.cjs` when `node` is installed. A missing C# or Node toolchain writes `[]`. Other extensions write `[]`. A command whose working directory is inside a WSL distro runs in that distro, so the script path has to be one that distro can execute. `scripts/check.sh` from the project directory is the form above.
+
+The Problems page at the bottom lists every span from the editors that have been checked. Rows are grouped by directory, then by file name. A file in the project root is under `.`. A buffer that has never been saved is under `(unsaved)`. Activating a row moves the cursor to that span. The page opens when a check finds spans and the strip is hidden. A check that finishes while Output or Terminal is showing updates the list and leaves that page where it is. Closing the strip does not stop checking.

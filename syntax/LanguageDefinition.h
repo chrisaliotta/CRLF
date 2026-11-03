@@ -34,6 +34,12 @@ public:
     // in from another file jumps to that file instead of a same-named symbol
     // elsewhere in the project.
     bool modules = false;
+    // CSS-family names: `-` is part of a name, and a class or id keeps its
+    // `.` or `#` so it never matches an identifier from a script.
+    bool stylesheet = false;
+    // `class`, `className`, and `id` attribute values name stylesheet classes
+    // and ids.
+    bool classAttributes = false;
 
     FoldMode foldMode = FoldMode::Indent;
     QList<FoldPair> foldPairs;

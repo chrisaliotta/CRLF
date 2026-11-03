@@ -1,5 +1,9 @@
 #pragma once
 
+#include "editor/Diagnostic.h"
+#include "editor/SymbolLocation.h"
+
+#include <QHash>
 #include <QList>
 #include <QPlainTextEdit>
 
@@ -36,6 +40,11 @@ public:
     // Reads the open document into the symbol index.
     void refreshSymbols();
     void setFilePath(const QString &path);
+    const QString &filePath() const { return m_filePath; }
+    // When false, edits do not schedule a check and any spans are cleared.
+    void setCheckingEnabled(bool enabled);
+    void setDiagnostics(const QList<Diagnostic> &spans);
+    int documentRevision() const;
     // 1-based. Unfolds a region that hides the line, then centers it.
     void goTo(int line, int column);
     // Inserts text without coloring every line before the window can paint.
@@ -66,6 +75,13 @@ public:
 signals:
     // Ctrl+click on a name whose definition is in the index.
     void definitionActivated(const QString &path, quintptr editorId, int line, int column);
+    // Ctrl+click on a package import or an unresolved stylesheet name.
+    void externalActivated(const SymbolLocation &target);
+    // The buffer has been still for 500ms and checking is enabled.
+    void checkRequested();
+    // An edit invalidated the check that was in flight.
+    void checkInvalidated();
+    void filePathChanged();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -88,6 +104,9 @@ private:
     // frees formats the edit is still using, so the refresh is deferred.
     void scheduleOverlayRefresh();
     void scheduleSymbolScan();
+    void scheduleCheck();
+    bool diagnosticRange(const Diagnostic &span, int *start, int *end) const;
+    void updateDiagnosticTip(const QPoint &pos);
     void submitSymbols();
     void updateSymbolLink(const QPoint &pos);
     void clearSymbolLink();
@@ -107,16 +126,19 @@ private:
     const LanguageDefinition *m_definition = nullptr;
     SymbolIndex *m_symbolIndex = nullptr;
     class QTimer *m_symbolTimer = nullptr;
+    class QTimer *m_checkTimer = nullptr;
     QString m_filePath;
+    bool m_checking = false;
+    QList<Diagnostic> m_diagnostics;
+    // Block number to true when that line's strongest span is an error.
+    QHash<int, bool> m_diagnosticLines;
+    QString m_diagnosticTip;
     // The identifier currently under Ctrl, and the definition it points at.
     QString m_linkWord;
     int m_linkWordLine = 0;
     int m_linkWordColumn = 0;
     bool m_linkActive = false;
-    QString m_linkPath;
-    quintptr m_linkEditor = 0;
-    int m_linkLine = 0;
-    int m_linkColumn = 0;
+    SymbolLocation m_link;
     QTextEdit::ExtraSelection m_linkSelection;
     int m_basePointSize = 0;
     bool m_lineNumbers = true;

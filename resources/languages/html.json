@@ -12,5 +12,6 @@
     { "role": "number", "regex": "&#?\\w+;" },
     { "role": "function", "regex": "(?<=\\bclass(?:Name)?\\s*=\\s*[\"'])[^\"']+", "insideStrings": true }
   ],
+  "classAttributes": true,
   "folding": { "mode": "indent" }
 }

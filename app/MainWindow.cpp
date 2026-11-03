@@ -1,11 +1,13 @@
 #include "app/MainWindow.h"
 
 #include "app/BottomPanel.h"
+#include "app/CheckRunner.h"
 #include "app/CommandRunner.h"
 #include "app/ExplorerPanel.h"
 #include "app/FindBar.h"
 #include "app/OpenWith.h"
 #include "app/OutputPanel.h"
+#include "app/ProblemsPanel.h"
 #include "app/TabWorkspace.h"
 #include "app/TemplateDialog.h"
 #include "app/TitleBar.h"
@@ -128,12 +130,17 @@ FindBar QToolButton:hover { background: %4; }
 FindBar QListWidget { background: %7; color: %2; border: none; outline: 0; }
 FindBar QListWidget::item { padding: 2px 8px; }
 FindBar QListWidget::item:selected { background: %6; color: %2; }
-OutputPanel, TerminalPanel, BottomPanel { background: %1; }
-OutputPanel QLabel, TerminalPanel QLabel, BottomPanel QLabel { color: %2; }
+OutputPanel, TerminalPanel, ProblemsPanel, BottomPanel { background: %1; }
+OutputPanel QLabel, TerminalPanel QLabel, ProblemsPanel QLabel, BottomPanel QLabel { color: %2; }
 OutputPanel QToolButton, TerminalPanel QToolButton, BottomPanel QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px 8px; }
 OutputPanel QToolButton:hover, TerminalPanel QToolButton:hover, BottomPanel QToolButton:hover { background: %4; }
-#outputPage:checked, #terminalPage:checked { background: %5; }
+#outputPage:checked, #problemsPage:checked, #terminalPage:checked { background: %5; }
 OutputPanel QPlainTextEdit { background: %7; color: %2; }
+ProblemsPanel QTreeWidget { background: %1; color: %2; border: none; outline: 0; }
+ProblemsPanel QTreeWidget::item { padding: 2px 4px; }
+ProblemsPanel QTreeWidget::item:hover { background: %4; }
+ProblemsPanel QTreeWidget::item:selected { background: %6; color: %2; }
+ProblemsPanel QHeaderView::section { background: %1; color: %2; border: none; padding: 4px; }
 OutputPanel QComboBox, TerminalPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
 OutputPanel QComboBox QAbstractItemView, TerminalPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 ExplorerPanel { background: %1; }
@@ -340,6 +347,7 @@ MainWindow::MainWindow(QWidget *parent)
         return directory;
     });
     m_runner = new CommandRunner(this);
+    m_checks = new CheckRunner(this);
     m_runner->setContextProvider([this] { return commandVariables(); });
     m_runner->setEditorInputProvider([this](const QString &name) {
         m_tabs->rememberCommandEditor(name);
@@ -351,6 +359,36 @@ MainWindow::MainWindow(QWidget *parent)
         feed.text = editor->toPlainText();
         return feed;
     });
+    connect(m_tabs, &TabWorkspace::checkRequested, this, &MainWindow::runCheck);
+    connect(m_tabs, &TabWorkspace::checkInvalidated, this, [this](CodeEditor *editor) {
+        if (editor)
+            m_checks->cancel(quintptr(editor));
+    });
+    connect(m_tabs, &TabWorkspace::editorClosed, this, [this](quintptr editorId) {
+        m_checks->cancel(editorId);
+        const QString key = m_diagnosticKeys.take(editorId);
+        if (!key.isEmpty())
+            m_bottom->problems()->removeFile(key);
+    });
+    connect(m_tabs, &TabWorkspace::editorRetargeted, this, [this](CodeEditor *editor) {
+        const quintptr editorId = quintptr(editor);
+        const QString previous = m_diagnosticKeys.value(editorId);
+        if (previous.isEmpty())
+            return;
+        const QString key = diagnosticKey(editor);
+        if (key == previous)
+            return;
+        m_bottom->problems()->retarget(previous, key, editor->filePath(), m_tabs->titleFor(editor), editorId);
+        m_diagnosticKeys.insert(editorId, key);
+    });
+    connect(m_checks, &CheckRunner::completed, this, &MainWindow::applyCheck);
+    connect(m_checks, &CheckRunner::failed, this, [this](quintptr, const QString &message) {
+        statusBar()->showMessage(message, 5000);
+    });
+    connect(m_bottom->problems(), &ProblemsPanel::diagnosticActivated, this,
+            [this](const QString &path, quintptr editorId, int line, int column) {
+                m_tabs->goToDiagnostic(path, editorId, line, column);
+            });
     m_commandWatcher = new QFileSystemWatcher(this);
     m_explorer->hide();
 
@@ -1000,6 +1038,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_sessionStore.save(m_tabs->captureSession());
         m_bottom->closeSessions();
         m_runner->stopAll();
+        m_checks->cancelAll();
         event->accept();
         return;
     }
@@ -1012,19 +1051,24 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
     m_bottom->closeSessions();
     m_runner->stopAll();
+    m_checks->cancelAll();
     event->accept();
 }
 
 CommandVariables MainWindow::commandVariables() const
+{
+    return variablesFor(m_tabs->currentWidget());
+}
+
+CommandVariables MainWindow::variablesFor(QWidget *page) const
 {
     CommandVariables vars;
     if (!m_projectFile.isEmpty())
         vars.project = QFileInfo(m_projectFile).absolutePath();
     vars.folder = m_explorer->rootPath();
 
-    QWidget *page = m_tabs->currentWidget();
-    CodeEditor *editor = m_tabs->currentEditor();
-    HexView *hex = m_tabs->currentHexView();
+    CodeEditor *editor = qobject_cast<CodeEditor *>(page);
+    HexView *hex = qobject_cast<HexView *>(page);
     if (!editor && !hex)
         return vars;
 
@@ -1055,6 +1099,50 @@ CommandVariables MainWindow::commandVariables() const
     vars.selection.replace(QChar(0x2028), QLatin1Char('\n'));
     vars.language = editor->language()->name;
     return vars;
+}
+
+QString MainWindow::diagnosticKey(const CodeEditor *editor) const
+{
+    if (editor->filePath().isEmpty())
+        return QStringLiteral("unsaved:%1").arg(quintptr(editor));
+    return editor->filePath();
+}
+
+void MainWindow::runCheck(CodeEditor *editor)
+{
+    if (!m_checkEnabled || m_checkCommand.isEmpty() || editor == nullptr)
+        return;
+    QString text = editor->toPlainText();
+    text.remove(QLatin1Char('\r'));
+    CheckRequest request;
+    request.editorId = quintptr(editor);
+    request.command = m_checkCommand;
+    request.workingDirectory = m_checkDirectory;
+    request.variables = variablesFor(editor);
+    request.text = text;
+    request.revision = editor->documentRevision();
+    m_checks->start(request);
+}
+
+void MainWindow::applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans)
+{
+    if (!m_checkEnabled || m_checkCommand.isEmpty())
+        return;
+    CodeEditor *editor = m_tabs->editorFor(editorId);
+    if (!editor || editor->documentRevision() != revision)
+        return;
+    editor->setDiagnostics(spans);
+    const QString key = diagnosticKey(editor);
+    const QString previous = m_diagnosticKeys.value(editorId);
+    if (!previous.isEmpty() && previous != key)
+        m_bottom->problems()->removeFile(previous);
+    if (spans.isEmpty()) {
+        m_bottom->problems()->removeFile(key);
+        m_diagnosticKeys.remove(editorId);
+        return;
+    }
+    m_diagnosticKeys.insert(editorId, key);
+    m_bottom->problems()->setFile(key, editor->filePath(), m_tabs->titleFor(editor), editorId, spans);
 }
 
 void MainWindow::reloadCommands()
@@ -1090,8 +1178,24 @@ void MainWindow::applyProject(const Project &project)
     m_projectIcons = project.icons;
     applyComposedIcons();
     m_tabs->setSymbolNavigation(project.navigation);
+    m_tabs->setExternalNavigation(project.externalNavigation);
     m_tabs->setSymbolProject(m_explorer->rootPath(), project.hide);
     m_tabs->setIndent(project.indent);
+    const bool checkEnabled = project.check.enabled && !project.check.command.isEmpty();
+    const bool checkChanged = checkEnabled != m_checkEnabled || project.check.command != m_checkCommand
+                              || project.check.workingDirectory != m_checkDirectory;
+    m_checkEnabled = checkEnabled;
+    m_checkCommand = project.check.command;
+    m_checkDirectory = project.check.workingDirectory;
+    m_bottom->problems()->setProjectDirectory(
+        project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath());
+    if (checkChanged)
+        m_tabs->setCheckingEnabled(m_checkEnabled);
+    if (!m_checkEnabled) {
+        m_checks->cancelAll();
+        m_bottom->problems()->clear();
+        m_diagnosticKeys.clear();
+    }
     clearProjectCommands(m_menuBar);
     if (project.commands.isEmpty()) {
         if (!project.error.isEmpty())

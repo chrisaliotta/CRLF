@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CRLF VERSION 1.0.1 LANGUAGES C CXX)
+project(CRLF VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -74,8 +74,12 @@ set(APP_SOURCES
     app/TemplateDialog.cpp
     app/CommandRunner.h
     app/CommandRunner.cpp
+    app/CheckRunner.h
+    app/CheckRunner.cpp
     app/OutputPanel.h
     app/OutputPanel.cpp
+    app/ProblemsPanel.h
+    app/ProblemsPanel.cpp
     app/ConPtySession.h
     app/ConPtySession.cpp
     app/TerminalView.h
@@ -91,6 +95,8 @@ set(APP_SOURCES
 set(EDITOR_SOURCES
     editor/CodeEditor.h
     editor/CodeEditor.cpp
+    editor/Diagnostic.h
+    editor/Diagnostic.cpp
     editor/FoldingLayout.h
     editor/BlockData.h
     editor/Gutter.h
@@ -101,6 +107,11 @@ set(EDITOR_SOURCES
     editor/SymbolIndex.cpp
     editor/ImportAliases.h
     editor/ImportAliases.cpp
+    editor/ExternalLookup.h
+    editor/ExternalLookup.cpp
+    editor/SymbolLocation.h
+    editor/TailwindNames.h
+    editor/TailwindNames.cpp
 )
 
 set(HEX_SOURCES
@@ -189,6 +200,11 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         "-DSRC=${CMAKE_SOURCE_DIR}/resources/default.crlf"
         "-DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/.crlf"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/check.sh"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/check.sh"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -214,6 +230,8 @@ install(CODE "
         \"-DDST=\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.crlf\"
         -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake\")
 ")
+install(FILES "${CMAKE_SOURCE_DIR}/scripts/check.sh"
+    DESTINATION scripts)
 
 qt_generate_deploy_app_script(
     TARGET ${PROJECT_NAME}

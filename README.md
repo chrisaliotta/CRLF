@@ -16,6 +16,10 @@ custom menu commands that will run scripts or shell commands.
 - Tab indents the highlighted lines instead of replacing them. Shift+Tab removes one indent. `.crlf` can set spaces or a tab character, the width, and a different rule per file extension
 - Word wrap, and zoom in, out, or reset (Ctrl+0)
 - Ctrl+click a type, function, method, component, or variable to jump to its definition. Ctrl+hover underlines a name that can be opened. `"navigation": false` in `.crlf` turns the links off. Opening a definition in another file selects that file in the explorer
+- Stylesheet classes, ids, custom properties, Sass variables, mixins, and keyframes link to their definitions, including a class named in a `class` or `className` attribute. A package import, or a stylesheet name the project does not define, is drawn in a different color and opened from `node_modules` when clicked. `"externalNavigation": false` in `.crlf` turns those external links off
+- External code definitions: a class, enum, interface, type, function, or constant imported from a package opens its declaration under `node_modules` (following re-exports and `@types`). `React.FC` on a default import and `z.infer` on `import * as z` open that member. An undefined PascalCase name such as `HTMLDivElement`, `Promise`, or `JSX.Element` opens its ambient declaration in `@types` or TypeScript's `lib` files
+- React: class strings inside `className={...}` and helpers such as `clsx`, `cn`, `cva`, and `twMerge` are class names, and `styles.card` on an imported CSS module opens `.card` (or `.card-name` for `cardName`) in that file
+- Tailwind: a utility class opens the theme variable it reads, such as `bg-brand-500` to `--color-brand-500` and `p-4` to `--spacing`, in the project's `@theme` or in the `tailwindcss` package. A breakpoint such as `md:` opens `--breakpoint-md`. `@utility` names and `@apply` classes link too, and a Tailwind 3 project falls back to the key in `tailwind.config`. pnpm layouts, including packages kept only under `node_modules/.pnpm`, are followed
 - Line-number gutter with clickable fold markers. View > Line Numbers hides the numbers and leaves the fold markers. Fold All and Unfold All are on the View menu
 - Status bar with cursor position, language, encoding, and line endings
 - Encoding (UTF-8 and UTF-16, with BOM detection) and CRLF/LF preservation on save
@@ -74,6 +78,7 @@ A `.crlf` file in the explorer folder, or in a parent folder up to the drive or 
 - `key` is an optional function key from F1 through F35, with no modifiers. The first command to claim a key keeps it
 - The command string may use `${file}`, `${fileName}`, `${fileBase}`, `${fileExt}`, `${fileDir}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`, `${language}`, `${project}`, `${folder}`, and `${cwd}`, filled from the focused document when the command starts
 - Output opens in a panel at the bottom of the window, one log per command. Clear wipes the log that is showing. Stop is shown only while that command's process is still running, and it kills the process tree. Closing the panel hides it and leaves the process running
+- `"check"` in the same file runs an external script against the editor buffer and marks what it reports. The Problems page lists those marks by directory and file. [docs/commands.md](docs/commands.md) describes the key. `scripts/check.sh` is the Linux script that drives `clang`, `clang++`, C# when `csc` or the .NET SDK is installed, and JavaScript when `node` is installed
 
 ### Appearance
 
@@ -115,7 +120,7 @@ and sessions in `%APPDATA%\CRLF` are kept.
 | --- | --- |
 | `Types.h` | Types shared across module boundaries (`TokenRole`, `FoldMode`, `FoldPair`) |
 | `app/` | `MainWindow`, `TabWorkspace` (tab strip, pins, documents), `ExplorerPanel` and `ExplorerModel`, `CommandRunner`, `OutputPanel`, `Actions`, `FindBar` |
-| `editor/` | `CodeEditor` (QPlainTextEdit subclass), `Gutter`, `FoldController`, `FoldingLayout`, `BlockData` |
+| `editor/` | `CodeEditor` (QPlainTextEdit subclass), `Gutter`, `FoldController`, `FoldingLayout`, `BlockData`, and definition navigation: `SymbolIndex`, `ImportAliases`, `ExternalLookup`, `TailwindNames` |
 | `hex/` | `HexView` |
 | `syntax/` | JSON-driven `LanguageDefinition`/`LanguageRegistry`, `Theme`, `Highlighter` |
 | `io/` | `DocumentFile` (load/save, encoding, line endings), `SessionStore`, `ProjectCommands`, `WslPath` |
@@ -130,6 +135,10 @@ whether a brace sits inside a string or comment, so it computes a per-block
 `foldingIndent` (stored in `BlockData`) which the fold controller and gutter
 consume. Brace depth is bit-packed into the highlighter's block state so edits
 cascade rehighlighting exactly as far as needed.
+
+Definition navigation (Ctrl+hover and Ctrl+click) is documented, with the
+reasoning behind its threading, lookup order, and limits, in
+[docs/navigation.md](docs/navigation.md).
 
 ## Adding a language or theme
 
@@ -160,6 +169,10 @@ or `@utils` path that names a folder in the project. An imported function,
 method, component, constant, or type jumps to that export, and the same kinds
 of names defined in the open file jump to their declaration there.
 `"navigation": false` in `.crlf` turns the links off; leaving the key out leaves them on.
+`"stylesheet": true` lets a name contain `-` and keeps a class's `.` or an id's `#`
+in its key (see `css.json`). `"classAttributes": true` reads `class`, `className`,
+and `id` values as those stylesheet names (see `html.json`). `"prefix"` on a
+symbol is added to the captured name, such as `@` for a Sass mixin.
 `"local": true` on a symbol keeps that name out of the project-wide index,
 which is how a variable such as `i` stays in the open document. `"params": true`
 means the capture is a parameter list.

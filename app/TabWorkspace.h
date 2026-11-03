@@ -1,13 +1,16 @@
 #pragma once
 
 #include "Types.h"
+#include "editor/SymbolLocation.h"
 #include "io/DocumentFile.h"
 #include "io/ProjectCommands.h"
 
 #include <QColor>
 #include <QDateTime>
+#include <QAtomicInt>
 #include <QHash>
 #include <QSet>
+#include <QSharedPointer>
 #include <QTabWidget>
 
 class QFileSystemWatcher;
@@ -81,6 +84,14 @@ public:
     void setSymbolProject(const QString &root, const QStringList &hide);
     // `false` drops the index and stops further scans.
     void setSymbolNavigation(bool enabled);
+    // `false` leaves package imports and unresolved stylesheet names unlinked.
+    void setExternalNavigation(bool enabled);
+    // `false` stops scheduling checks and clears spans in open editors.
+    void setCheckingEnabled(bool enabled);
+    CodeEditor *editorFor(quintptr editorId) const;
+    // Focuses the open document and moves its cursor. A path that is not open
+    // is left alone; check rows belong to documents that are still open.
+    void goToDiagnostic(const QString &path, quintptr editorId, int line, int column);
     // The editor a command's output will replace. Cleared in the hex view.
     void rememberCommandEditor(const QString &name);
     void applyCommandOutput(const QString &name, const QString &text);
@@ -97,6 +108,10 @@ signals:
     void fileSaved(const QString &directory);
     // A definition was opened in a file other than the one that was current.
     void fileRevealed(const QString &path);
+    void checkRequested(CodeEditor *editor);
+    void checkInvalidated(CodeEditor *editor);
+    void editorClosed(quintptr editorId);
+    void editorRetargeted(CodeEditor *editor);
 
 private:
     struct Page {
@@ -137,6 +152,8 @@ private:
     // before it. Pinned tabs stay open either way.
     void closeUnpinned(int clicked, bool others, bool toTheRight);
     void revealDefinition(const QString &path, quintptr editorId, int line, int column);
+    // Looks the target up under node_modules on a worker. A newer click wins.
+    void revealExternal(CodeEditor *editor, const SymbolLocation &target);
 
     const LanguageRegistry *m_registry;
     SymbolIndex *m_symbols = nullptr;
@@ -163,4 +180,9 @@ private:
     // a newer time, asks again.
     QHash<QString, QDateTime> m_declinedReload;
     IndentSettings m_indent;
+    bool m_checking = false;
+    // node_modules is searched from here when the document has no path.
+    QString m_symbolRoot;
+    // Shared with the lookup worker, which stops once a newer click bumps it.
+    QSharedPointer<QAtomicInt> m_externalGeneration = QSharedPointer<QAtomicInt>::create(0);
 };
