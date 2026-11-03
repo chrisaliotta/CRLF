@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/CompletionItem.h"
 #include "editor/Diagnostic.h"
 #include "editor/SymbolLocation.h"
 
@@ -18,6 +19,7 @@ class QFocusEvent;
 class QMouseEvent;
 class LanguageDefinition;
 class LanguageRegistry;
+class ProcessOrchestrator;
 class SymbolIndex;
 class Theme;
 
@@ -37,12 +39,17 @@ public:
     void setTheme(const Theme *theme);
     void setLanguage(const LanguageDefinition *definition);
     void setSymbolIndex(SymbolIndex *index);
+    void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
+    // Tab title and path, shown while this buffer's symbol scan is waiting.
+    void setWorkOwner(const QString &owner) { m_workOwner = owner; }
     // Reads the open document into the symbol index.
     void refreshSymbols();
     void setFilePath(const QString &path);
     const QString &filePath() const { return m_filePath; }
     // When false, edits do not schedule a check and any spans are cleared.
     void setCheckingEnabled(bool enabled);
+    void setCompletionEnabled(bool enabled);
+    void showCompletions(const QList<CompletionItem> &items);
     void setDiagnostics(const QList<Diagnostic> &spans);
     int documentRevision() const;
     // 1-based. Unfolds a region that hides the line, then centers it.
@@ -79,8 +86,8 @@ signals:
     void externalActivated(const SymbolLocation &target);
     // The buffer has been still for 500ms and checking is enabled.
     void checkRequested();
-    // An edit invalidated the check that was in flight.
-    void checkInvalidated();
+    // Ctrl+Space, a trigger character, or another character while the list is open.
+    void completionRequested();
     void filePathChanged();
 
 protected:
@@ -105,9 +112,12 @@ private:
     void scheduleOverlayRefresh();
     void scheduleSymbolScan();
     void scheduleCheck();
+    void scheduleCompletion(const QString &text, bool listOpen);
+    void hideCompletions();
+    void applyCompletion(const CompletionItem &item);
+    void placeCompletionPopup();
     bool diagnosticRange(const Diagnostic &span, int *start, int *end) const;
     void updateDiagnosticTip(const QPoint &pos);
-    void submitSymbols();
     void updateSymbolLink(const QPoint &pos);
     void clearSymbolLink();
     int foldMarkerWidth() const;
@@ -125,9 +135,13 @@ private:
     const Theme *m_theme = nullptr;
     const LanguageDefinition *m_definition = nullptr;
     SymbolIndex *m_symbolIndex = nullptr;
-    class QTimer *m_symbolTimer = nullptr;
+    ProcessOrchestrator *m_orchestrator = nullptr;
     class QTimer *m_checkTimer = nullptr;
+    class QTimer *m_completeTimer = nullptr;
+    class CompletionPopup *m_completionPopup = nullptr;
+    bool m_completion = false;
     QString m_filePath;
+    QString m_workOwner;
     bool m_checking = false;
     QList<Diagnostic> m_diagnostics;
     // Block number to true when that line's strongest span is an error.

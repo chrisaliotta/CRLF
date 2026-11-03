@@ -7,6 +7,8 @@
 #include <QList>
 #include <QObject>
 
+class ProcessOrchestrator;
+
 // One check of one editor. See docs/diagnostics.md. This is not a menu
 // command: each editor has its own short process, and stdout is a diagnostic
 // list rather than a log.
@@ -32,7 +34,10 @@ public:
     explicit CheckRunner(QObject *parent = nullptr);
     ~CheckRunner() override;
 
+    void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
+
     // A check already running for this editor is stopped and replaced.
+    // The replacement starts from the finished handler on this thread.
     void start(const CheckRequest &request);
     // The result of a stopped check is dropped.
     void cancel(quintptr editorId);
@@ -50,4 +55,5 @@ private:
     void absorbStdout(Running &running, const QByteArray &bytes);
 
     QHash<quintptr, Running *> m_running;
+    ProcessOrchestrator *m_orchestrator = nullptr;
 };

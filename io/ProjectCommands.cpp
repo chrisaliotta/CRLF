@@ -260,6 +260,7 @@ Project projectFor(const QString &start)
     project.navigation = root.value(QLatin1String("navigation")).toBool(true);
     project.externalNavigation = root.value(QLatin1String("externalNavigation")).toBool(true);
     readCheck(project.check, root.value(QLatin1String("check")), directory);
+    readCheck(project.complete, root.value(QLatin1String("complete")), directory);
     return project;
 }
 

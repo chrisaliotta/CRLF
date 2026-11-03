@@ -32,6 +32,7 @@ struct Actions
 
     QAction *explorer;
     QAction *terminal;
+    QAction *processes;
     QAction *wordWrap;
     QAction *lineNumbers;
     QAction *hexMode;

@@ -8,6 +8,7 @@
 
 #include <functional>
 
+class ProcessOrchestrator;
 class QProcess;
 
 // Text of the focused editor for a command whose output is "editor".
@@ -29,6 +30,11 @@ public:
     explicit CommandRunner(QObject *parent = nullptr);
     ~CommandRunner() override;
 
+    void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
+    // requestLaunch reads the providers on this object's thread, then starts
+    // the process back here. Restarts take the same path.
+    void setUi(QObject *ui) { m_ui = ui; }
+
     void setProject(const QList<ProjectCommand> &commands);
     // Asked again every time a command starts, including a restart, so
     // ${file} and the rest follow the document focused at that moment.
@@ -36,6 +42,7 @@ public:
     // Asked when a command's output is "editor", at the same moment as the
     // context, so stdin is the document that document's variables describe.
     void setEditorInputProvider(std::function<EditorFeed(const QString &name)> provider);
+    void requestLaunch(const QString &name);
     void start(const QString &name);
     void stop(const QString &name);
     void stopAll();
@@ -64,4 +71,8 @@ private:
     std::function<CommandVariables()> m_contextProvider;
     std::function<EditorFeed(const QString &name)> m_editorInput;
     QHash<QString, Running *> m_running;
+    QHash<QString, CommandVariables> m_launchVars;
+    QHash<QString, EditorFeed> m_launchFeed;
+    ProcessOrchestrator *m_orchestrator = nullptr;
+    QObject *m_ui = nullptr;
 };

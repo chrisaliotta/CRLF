@@ -1,5 +1,6 @@
 #include "app/CheckRunner.h"
 
+#include "app/ProcessOrchestrator.h"
 #include "io/WslPath.h"
 
 #include <QHash>
@@ -38,6 +39,7 @@ struct CheckRunner::Running
     bool hasPending = false;
     CheckRequest pending;
     bool suppressFailure = false;
+    int token = 0;
     QString distro;
     qint64 linuxGroup = 0;
     bool groupResolved = false;
@@ -88,6 +90,23 @@ void freeAttributes(LPPROC_THREAD_ATTRIBUTE_LIST attributes)
     HeapFree(GetProcessHeap(), 0, attributes);
 }
 
+// The Linux process group is ended from this thread. The call is not waited on.
+void startGroupKill(QObject *parent, const QString &distro, qint64 group)
+{
+    if (distro.isEmpty() || group <= 0)
+        return;
+    auto *killer = new QProcess(parent);
+    killer->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
+    killer->setArguments({QStringLiteral("-d"), distro, QStringLiteral("--"), QStringLiteral("kill"),
+                          QStringLiteral("--"), QString::number(-group)});
+    QObject::connect(killer, &QProcess::finished, killer, &QObject::deleteLater);
+    QObject::connect(killer, &QProcess::errorOccurred, killer, [killer](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            killer->deleteLater();
+    });
+    killer->start();
+}
+
 #endif
 
 } // namespace
@@ -100,11 +119,13 @@ CheckRunner::CheckRunner(QObject *parent)
 CheckRunner::~CheckRunner()
 {
     cancelAll();
-    for (Running *running : m_running) {
-        if (running->process->state() != QProcess::NotRunning)
-            running->process->waitForFinished(2000);
+    const auto processes = findChildren<QProcess *>(Qt::FindDirectChildrenOnly);
+    for (QProcess *process : processes) {
+        if (process->state() != QProcess::NotRunning)
+            process->setParent(nullptr);
     }
     qDeleteAll(m_running);
+    m_running.clear();
 }
 
 void CheckRunner::start(const CheckRequest &request)
@@ -124,6 +145,8 @@ void CheckRunner::start(const CheckRequest &request)
 
 void CheckRunner::cancel(quintptr editorId)
 {
+    if (m_orchestrator != nullptr)
+        m_orchestrator->cancel(QStringLiteral("check:%1").arg(editorId));
     Running *running = m_running.value(editorId);
     if (!running)
         return;
@@ -184,9 +207,12 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
                 launch(next);
                 return;
             }
+            const int token = done->token;
             if (done->discard || done->stopRequested) {
                 done->discard = false;
                 done->stopRequested = false;
+                if (m_orchestrator != nullptr)
+                    m_orchestrator->release(QStringLiteral("check:%1").arg(editorId), token);
                 return;
             }
 
@@ -196,14 +222,15 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
                 if (message.isEmpty())
                     message = QStringLiteral("Check failed.");
                 emit failed(editorId, message);
-                return;
+            } else {
+                QList<Diagnostic> spans;
+                if (!diagnosticsFromJson(done->captured, &spans))
+                    emit failed(editorId, QStringLiteral("Couldn't read check results."));
+                else
+                    emit completed(editorId, done->request.revision, spans);
             }
-            QList<Diagnostic> spans;
-            if (!diagnosticsFromJson(done->captured, &spans)) {
-                emit failed(editorId, QStringLiteral("Couldn't read check results."));
-                return;
-            }
-            emit completed(editorId, done->request.revision, spans);
+            if (m_orchestrator != nullptr)
+                m_orchestrator->release(QStringLiteral("check:%1").arg(editorId), token);
         });
         connect(running->process, &QProcess::errorOccurred, this, [this, editorId](QProcess::ProcessError error) {
             if (error != QProcess::FailedToStart)
@@ -212,10 +239,15 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
             if (!failedRun || failedRun->suppressFailure || failedRun->discard || failedRun->stopRequested)
                 return;
             emit failed(editorId, failedRun->process->errorString());
+            if (m_orchestrator != nullptr)
+                m_orchestrator->release(QStringLiteral("check:%1").arg(editorId), failedRun->token);
         });
     }
 
     running->request = request;
+    running->token = m_orchestrator == nullptr
+                         ? 0
+                         : m_orchestrator->currentToken(QStringLiteral("check:%1").arg(request.editorId));
     running->stopRequested = false;
     running->discard = false;
     running->distro.clear();
@@ -327,29 +359,11 @@ void CheckRunner::stopTree(Running &running)
 {
     running.stopRequested = true;
 #ifdef Q_OS_WIN
-    if (!running.distro.isEmpty() && running.linuxGroup > 0) {
-        QProcess killer;
-        killer.setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
-        killer.setArguments({QStringLiteral("-d"), running.distro, QStringLiteral("--"),
-                             QStringLiteral("kill"), QStringLiteral("--"),
-                             QString::number(-running.linuxGroup)});
-        killer.start();
-        killer.waitForFinished(3000);
-    }
-    const qint64 pid = running.process->processId();
-    if (pid > 0) {
-        QProcess killer;
-        killer.setProgram(QStringLiteral("taskkill"));
-        killer.setArguments({QStringLiteral("/F"), QStringLiteral("/T"), QStringLiteral("/PID"),
-                             QString::number(pid)});
-        killer.start();
-        killer.waitForFinished(3000);
-    }
+    startGroupKill(this, running.distro, running.linuxGroup);
     if (running.job) {
         CloseHandle(static_cast<HANDLE>(running.job));
         running.job = nullptr;
     }
-#else
-    running.process->terminate();
 #endif
+    running.process->kill();
 }

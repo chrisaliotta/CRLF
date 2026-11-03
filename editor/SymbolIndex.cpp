@@ -1,5 +1,6 @@
 #include "editor/SymbolIndex.h"
 
+#include "app/ProcessOrchestrator.h"
 #include "editor/ImportAliases.h"
 
 #include "io/DocumentFile.h"
@@ -14,7 +15,6 @@
 #include <QRegularExpression>
 #include <QPointer>
 #include <QSet>
-#include <QThreadPool>
 
 namespace {
 
@@ -122,6 +122,15 @@ void SymbolIndex::setEnabled(bool enabled)
     if (m_enabled == enabled)
         return;
     m_enabled = enabled;
+    if (!enabled && m_orchestrator != nullptr) {
+        m_orchestrator->cancel(QStringLiteral("symbols:project"));
+        const auto ids = m_editors.keys();
+        for (quintptr id : ids)
+            m_orchestrator->cancel(QStringLiteral("symbols:%1").arg(id));
+        const auto files = m_fileGeneration.keys();
+        for (const QString &path : files)
+            m_orchestrator->cancel(QStringLiteral("symbols:file:%1").arg(path));
+    }
     ++m_walkGeneration;
     m_bufferGeneration.clear();
     m_fileGeneration.clear();
@@ -152,6 +161,8 @@ void SymbolIndex::setProject(const QString &root, const QStringList &hide)
     m_hide = hide;
     const int generation = ++m_walkGeneration;
     if (normal.isEmpty()) {
+        if (m_orchestrator != nullptr)
+            m_orchestrator->cancel(QStringLiteral("symbols:project"));
         QStringList drop;
         for (auto it = m_slices.cbegin(); it != m_slices.cend(); ++it) {
             if (it.value().editorId == 0)
@@ -166,7 +177,8 @@ void SymbolIndex::setProject(const QString &root, const QStringList &hide)
 
     const LanguageRegistry *registry = m_registry;
     QPointer<SymbolIndex> alive(this);
-    QThreadPool::globalInstance()->start([alive, normal, hide, registry, generation] {
+    m_orchestrator->submit(QStringLiteral("symbols:project"), QStringLiteral("Project symbols"), normal, 0, normal,
+                           [alive, normal, hide, registry, generation] {
         const QList<ScannedFile> scanned = collectProject(normal, hide, registry);
         QCoreApplication *app = QCoreApplication::instance();
         if (app == nullptr)
@@ -195,8 +207,10 @@ void SymbolIndex::setProject(const QString &root, const QStringList &hide)
 void SymbolIndex::updateBuffer(quintptr editorId, const QString &path, const QString &text,
                                const LanguageDefinition *language)
 {
-    if (!m_enabled)
+    if (!m_enabled) {
+        m_orchestrator->releaseBound();
         return;
+    }
     const QString normal = normalizedPath(path);
     const QString key = sliceKey(editorId, normal);
     const QString previous = m_editors.value(editorId);
@@ -207,7 +221,8 @@ void SymbolIndex::updateBuffer(quintptr editorId, const QString &path, const QSt
     const int generation = ++m_bufferGeneration[editorId];
     const bool ignoreCase = language != nullptr && language->ignoreCase;
     QPointer<SymbolIndex> alive(this);
-    QThreadPool::globalInstance()->start([alive, editorId, key, normal, text, language, ignoreCase, generation] {
+    m_orchestrator->runOnPool(QStringLiteral("symbols:%1").arg(editorId),
+                              [alive, editorId, key, normal, text, language, ignoreCase, generation] {
         const SymbolScan scan = language == nullptr ? SymbolScan() : scanSource(text, language, true);
         QCoreApplication *app = QCoreApplication::instance();
         if (app == nullptr)
@@ -234,6 +249,8 @@ void SymbolIndex::updateBuffer(quintptr editorId, const QString &path, const QSt
 
 void SymbolIndex::removeBuffer(quintptr editorId)
 {
+    if (m_orchestrator != nullptr)
+        m_orchestrator->cancel(QStringLiteral("symbols:%1").arg(editorId));
     const QString key = m_editors.take(editorId);
     m_bufferGeneration.remove(editorId);
     if (!key.isEmpty())
@@ -373,7 +390,9 @@ void SymbolIndex::scheduleDiskFile(const QString &path)
     const int generation = ++m_fileGeneration[path];
     const LanguageRegistry *registry = m_registry;
     QPointer<SymbolIndex> alive(this);
-    QThreadPool::globalInstance()->start([alive, path, registry, generation] {
+    const QString name = QFileInfo(path).fileName();
+    m_orchestrator->submit(QStringLiteral("symbols:file:%1").arg(path), QStringLiteral("Read symbols"), path, 0,
+                           name, [alive, path, registry, generation] {
         const ScannedFile scanned = scanDiskFile(path, registry);
         QCoreApplication *app = QCoreApplication::instance();
         if (app == nullptr)

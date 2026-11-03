@@ -2,7 +2,9 @@
 
 #include "app/BottomPanel.h"
 #include "app/CheckRunner.h"
+#include "app/CompletionSession.h"
 #include "app/CommandRunner.h"
+#include "app/ProcessOrchestrator.h"
 #include "app/ExplorerPanel.h"
 #include "app/FindBar.h"
 #include "app/OpenWith.h"
@@ -37,7 +39,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTextCursor>
-#include <QThreadPool>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -130,17 +132,22 @@ FindBar QToolButton:hover { background: %4; }
 FindBar QListWidget { background: %7; color: %2; border: none; outline: 0; }
 FindBar QListWidget::item { padding: 2px 8px; }
 FindBar QListWidget::item:selected { background: %6; color: %2; }
-OutputPanel, TerminalPanel, ProblemsPanel, BottomPanel { background: %1; }
-OutputPanel QLabel, TerminalPanel QLabel, ProblemsPanel QLabel, BottomPanel QLabel { color: %2; }
+OutputPanel, TerminalPanel, ProblemsPanel, ProcessesPanel, BottomPanel { background: %1; }
+OutputPanel QLabel, TerminalPanel QLabel, ProblemsPanel QLabel, ProcessesPanel QLabel, BottomPanel QLabel { color: %2; }
 OutputPanel QToolButton, TerminalPanel QToolButton, BottomPanel QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px 8px; }
 OutputPanel QToolButton:hover, TerminalPanel QToolButton:hover, BottomPanel QToolButton:hover { background: %4; }
-#outputPage:checked, #problemsPage:checked, #terminalPage:checked { background: %5; }
+#outputPage:checked, #problemsPage:checked, #terminalPage:checked, #processesPage:checked { background: %5; }
 OutputPanel QPlainTextEdit { background: %7; color: %2; }
 ProblemsPanel QTreeWidget { background: %1; color: %2; border: none; outline: 0; }
 ProblemsPanel QTreeWidget::item { padding: 2px 4px; }
 ProblemsPanel QTreeWidget::item:hover { background: %4; }
 ProblemsPanel QTreeWidget::item:selected { background: %6; color: %2; }
 ProblemsPanel QHeaderView::section { background: %1; color: %2; border: none; padding: 4px; }
+ProcessesPanel QTableWidget { background: %1; color: %2; border: none; outline: 0; gridline-color: %3; }
+ProcessesPanel QTableWidget::item { padding: 2px 8px; }
+ProcessesPanel QTableWidget::item:selected { background: %6; color: %2; }
+ProcessesPanel QHeaderView::section { background: %1; color: %2; padding: 4px 8px;
+    border: none; border-right: 1px solid %3; border-bottom: 1px solid %3; }
 OutputPanel QComboBox, TerminalPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
 OutputPanel QComboBox QAbstractItemView, TerminalPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 ExplorerPanel { background: %1; }
@@ -301,13 +308,13 @@ void clearProjectCommands(QMenuBar *bar)
 // Only project commands are checkable for "running". Built-in items such as
 // Explorer and the theme entries are checkable too, and setChecked would
 // fire their toggled handlers.
-void markRunningCommands(QMenu *menu, const CommandRunner *runner)
+void markRunningCommands(QMenu *menu, const QSet<QString> &running)
 {
     for (QAction *action : menu->actions()) {
         if (QMenu *child = action->menu())
-            markRunningCommands(child, runner);
+            markRunningCommands(child, running);
         else if (action->property(kProjectItem).toBool())
-            action->setChecked(runner->isRunning(action->text()));
+            action->setChecked(running.contains(action->text()));
     }
 }
 
@@ -346,8 +353,19 @@ MainWindow::MainWindow(QWidget *parent)
         }
         return directory;
     });
-    m_runner = new CommandRunner(this);
-    m_checks = new CheckRunner(this);
+    m_thread = new QThread(this);
+    m_orchestrator = new ProcessOrchestrator;
+    m_checks = new CheckRunner;
+    m_completion = new CompletionSession;
+    m_runner = new CommandRunner;
+    m_orchestrator->moveToThread(m_thread);
+    m_checks->moveToThread(m_thread);
+    m_completion->moveToThread(m_thread);
+    m_runner->moveToThread(m_thread);
+    m_checks->setOrchestrator(m_orchestrator);
+    m_completion->setOrchestrator(m_orchestrator);
+    m_runner->setOrchestrator(m_orchestrator);
+    m_runner->setUi(this);
     m_runner->setContextProvider([this] { return commandVariables(); });
     m_runner->setEditorInputProvider([this](const QString &name) {
         m_tabs->rememberCommandEditor(name);
@@ -359,13 +377,19 @@ MainWindow::MainWindow(QWidget *parent)
         feed.text = editor->toPlainText();
         return feed;
     });
+    m_tabs->setOrchestrator(m_orchestrator);
+    m_explorer->setOrchestrator(m_orchestrator);
+    m_thread->start();
+    connect(m_orchestrator, &ProcessOrchestrator::recordsChanged, this,
+            [this](const QList<ProcessRecord> &live, const QList<ProcessRecord> &recent) {
+                m_bottom->setProcesses(live, recent);
+            },
+            Qt::QueuedConnection);
     connect(m_tabs, &TabWorkspace::checkRequested, this, &MainWindow::runCheck);
-    connect(m_tabs, &TabWorkspace::checkInvalidated, this, [this](CodeEditor *editor) {
-        if (editor)
-            m_checks->cancel(quintptr(editor));
-    });
+    connect(m_tabs, &TabWorkspace::completionRequested, this, &MainWindow::askCompletion);
     connect(m_tabs, &TabWorkspace::editorClosed, this, [this](quintptr editorId) {
-        m_checks->cancel(editorId);
+        QMetaObject::invokeMethod(m_checks, [this, editorId] { m_checks->cancel(editorId); },
+                                  Qt::QueuedConnection);
         const QString key = m_diagnosticKeys.take(editorId);
         if (!key.isEmpty())
             m_bottom->problems()->removeFile(key);
@@ -381,10 +405,17 @@ MainWindow::MainWindow(QWidget *parent)
         m_bottom->problems()->retarget(previous, key, editor->filePath(), m_tabs->titleFor(editor), editorId);
         m_diagnosticKeys.insert(editorId, key);
     });
-    connect(m_checks, &CheckRunner::completed, this, &MainWindow::applyCheck);
+    connect(m_checks, &CheckRunner::completed, this, &MainWindow::applyCheck, Qt::QueuedConnection);
     connect(m_checks, &CheckRunner::failed, this, [this](quintptr, const QString &message) {
         statusBar()->showMessage(message, 5000);
-    });
+    }, Qt::QueuedConnection);
+    connect(m_completion, &CompletionSession::completed, this, &MainWindow::applyCompletion,
+            Qt::QueuedConnection);
+    connect(m_completion, &CompletionSession::failed, this, [this](const QString &message) {
+        statusBar()->showMessage(message, 5000);
+        if (CodeEditor *editor = m_tabs->currentEditor())
+            editor->showCompletions({});
+    }, Qt::QueuedConnection);
     connect(m_bottom->problems(), &ProblemsPanel::diagnosticActivated, this,
             [this](const QString &path, quintptr editorId, int line, int column) {
                 m_tabs->goToDiagnostic(path, editorId, line, column);
@@ -480,9 +511,34 @@ MainWindow::MainWindow(QWidget *parent)
     QStringList extensions;
     for (const LanguageDefinition &definition : m_registry.definitions())
         extensions.append(definition.extensions);
-    QTimer::singleShot(0, this, [extensions] {
-        QThreadPool::globalInstance()->start([extensions] { registerOpenWith(extensions); });
+    QTimer::singleShot(0, this, [this, extensions] {
+        m_orchestrator->submit(QStringLiteral("associations"), QStringLiteral("File associations"), QString(), 0,
+                               QStringLiteral("registry"), [extensions] { registerOpenWith(extensions); });
     });
+}
+
+MainWindow::~MainWindow()
+{
+    if (m_thread == nullptr)
+        return;
+    QThread *uiThread = QThread::currentThread();
+    QMetaObject::invokeMethod(m_orchestrator, [this, uiThread] {
+        m_runner->stopAll();
+        m_checks->cancelAll();
+        m_completion->stop();
+        m_orchestrator->shutdown();
+        delete m_checks;
+        m_checks = nullptr;
+        delete m_completion;
+        m_completion = nullptr;
+        delete m_runner;
+        m_runner = nullptr;
+        m_orchestrator->moveToThread(uiThread);
+    }, Qt::BlockingQueuedConnection);
+    m_thread->quit();
+    m_thread->wait();
+    delete m_orchestrator;
+    m_orchestrator = nullptr;
 }
 
 // Forces Windows to resend WM_NCCALCSIZE now that this window handles it,
@@ -562,7 +618,8 @@ void MainWindow::startSession(const QStringList &paths)
         finishStartup(paths);
         return;
     }
-    QThreadPool::globalInstance()->start([this, paths] {
+    m_orchestrator->submit(QStringLiteral("session-load"), QStringLiteral("Session"), QString(), 0,
+                           QStringLiteral("session"), [this, paths] {
         const Session session = m_sessionStore.load();
         QMetaObject::invokeMethod(this, [this, session, paths] {
             if (session.tabs.isEmpty()) {
@@ -632,6 +689,7 @@ void MainWindow::buildMenus()
     QMenu *view = m_menuBar->addMenu(QStringLiteral("&View"));
     view->addAction(m_actions.explorer);
     view->addAction(m_actions.terminal);
+    view->addAction(m_actions.processes);
     view->addSeparator();
     view->addAction(m_actions.wordWrap);
     view->addAction(m_actions.lineNumbers);
@@ -709,10 +767,7 @@ void MainWindow::connectActions()
         if (chooseExplorerFolder())
             m_actions.explorer->setChecked(true);
     });
-    connect(m_actions.openWslFolder, &QAction::triggered, this, [this] {
-        if (chooseWslFolder())
-            m_actions.explorer->setChecked(true);
-    });
+    connect(m_actions.openWslFolder, &QAction::triggered, this, &MainWindow::chooseWslFolder);
     connect(m_actions.explorer, &QAction::toggled, this, [this](bool visible) {
         if (visible && m_explorer->rootPath().isEmpty() && !chooseExplorerFolder()) {
             m_actions.explorer->setChecked(false);
@@ -731,6 +786,23 @@ void MainWindow::connectActions()
         else
             m_bottom->hideTerminal();
         m_syncingTerminal = false;
+    });
+    connect(m_actions.processes, &QAction::toggled, this, [this](bool visible) {
+        if (m_syncingProcesses)
+            return;
+        m_syncingProcesses = true;
+        if (visible)
+            m_bottom->showProcesses();
+        else
+            m_bottom->hideProcesses();
+        m_syncingProcesses = false;
+    });
+    connect(m_bottom, &BottomPanel::processesActive, this, [this](bool visible) {
+        if (m_syncingProcesses)
+            return;
+        m_syncingProcesses = true;
+        m_actions.processes->setChecked(visible);
+        m_syncingProcesses = false;
     });
     connect(m_bottom, &BottomPanel::terminalActive, this, [this](bool visible) {
         if (m_syncingTerminal)
@@ -830,22 +902,31 @@ void MainWindow::connectActions()
     });
     connect(m_runner, &CommandRunner::outputReceived, this,
             [this](const QString &name, const QString &text) {
-                if (m_runner->sendsOutputToEditor(name) && m_output->currentName() != name)
+                if (m_editorCommands.contains(name) && m_output->currentName() != name)
                     m_output->showCommand(name);
                 m_output->appendOutput(name, text);
-            });
-    connect(m_runner, &CommandRunner::editorOutput, m_tabs, &TabWorkspace::applyCommandOutput);
+            },
+            Qt::QueuedConnection);
+    connect(m_runner, &CommandRunner::editorOutput, m_tabs, &TabWorkspace::applyCommandOutput,
+            Qt::QueuedConnection);
     connect(m_runner, &CommandRunner::stateChanged, this,
             [this](const QString &name, bool running, int exitCode) {
+                if (running)
+                    m_runningCommands.insert(name);
+                else
+                    m_runningCommands.remove(name);
                 m_output->setState(name, running, exitCode);
-                if (!running && exitCode > 0 && m_runner->sendsOutputToEditor(name))
+                if (!running && exitCode > 0 && m_editorCommands.contains(name))
                     m_output->showCommand(name);
                 for (QAction *action : m_menuBar->actions()) {
                     if (QMenu *menu = action->menu())
-                        markRunningCommands(menu, m_runner);
+                        markRunningCommands(menu, m_runningCommands);
                 }
-            });
-    connect(m_output, &OutputPanel::stopRequested, m_runner, &CommandRunner::stop);
+            },
+            Qt::QueuedConnection);
+    connect(m_output, &OutputPanel::stopRequested, this, [this](const QString &name) {
+        QMetaObject::invokeMethod(m_runner, [this, name] { m_runner->stop(name); }, Qt::QueuedConnection);
+    });
     connect(m_tabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
         if (m_tabs->closeTab(index) && m_tabs->documentCount() == 0)
             m_tabs->newDocument();
@@ -869,13 +950,21 @@ bool MainWindow::chooseExplorerFolder()
     return true;
 }
 
-bool MainWindow::chooseWslFolder()
+void MainWindow::chooseWslFolder()
 {
-    const QStringList names = WslPath::distros();
+    m_orchestrator->submit(QStringLiteral("wsl-distros"), QStringLiteral("WSL distros"), QString(), 0,
+                           QStringLiteral("wsl --list --verbose"), [this] {
+        const QStringList names = WslPath::distros();
+        QMetaObject::invokeMethod(this, [this, names] { offerWslDistros(names); }, Qt::QueuedConnection);
+    }, ProcessLane::Thread);
+}
+
+void MainWindow::offerWslDistros(const QStringList &names)
+{
     if (names.isEmpty()) {
         QMessageBox::warning(this, QCoreApplication::applicationName(),
                              QStringLiteral("WSL is not available."));
-        return false;
+        return;
     }
 
     QString distro = names.first();
@@ -884,22 +973,48 @@ bool MainWindow::chooseWslFolder()
         distro = QInputDialog::getItem(this, QCoreApplication::applicationName(),
                                        QStringLiteral("Distro:"), names, 0, false, &accepted);
         if (!accepted || distro.isEmpty())
-            return false;
+            return;
     }
 
-    const QString home = WslPath::home(distro);
+    m_orchestrator->submit(QStringLiteral("wsl-home"), QStringLiteral("WSL home"), distro, 0, distro,
+                           [this, distro] {
+        const QString home = WslPath::home(distro);
+        QMetaObject::invokeMethod(this, [this, distro, home] { offerWslPath(distro, home); },
+                                  Qt::QueuedConnection);
+    }, ProcessLane::Thread);
+}
+
+void MainWindow::offerWslPath(const QString &distro, const QString &home)
+{
     bool accepted = false;
     QString linuxPath = QInputDialog::getText(this, QCoreApplication::applicationName(),
                                               QStringLiteral("Linux path:"), QLineEdit::Normal,
                                               home.isEmpty() ? QStringLiteral("/") : home, &accepted)
                             .trimmed();
     if (!accepted)
-        return false;
+        return;
     if (linuxPath.isEmpty())
         linuxPath = home.isEmpty() ? QStringLiteral("/") : home;
+    if (linuxPath == QLatin1String("~"))
+        linuxPath = home.isEmpty() ? QStringLiteral("/") : home;
+    else if (linuxPath.startsWith(QLatin1String("~/")))
+        linuxPath = (home.isEmpty() ? QStringLiteral("/") : home) + linuxPath.mid(1);
 
     m_explorer->setRootPath(WslPath::toWindows(distro, linuxPath));
-    return true;
+    m_actions.explorer->setChecked(true);
+}
+
+QString MainWindow::workOwner(QWidget *page) const
+{
+    if (page == nullptr)
+        return m_explorer->rootPath();
+    const QString title = m_tabs->titleFor(page);
+    if (title.isEmpty())
+        return m_explorer->rootPath();
+    const QString path = m_tabs->fileFor(page).path();
+    if (path.isEmpty())
+        return title;
+    return title + QStringLiteral(" — ") + path;
 }
 
 void MainWindow::closeCurrentTab()
@@ -1037,8 +1152,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (m_actions.persistEdits->isChecked()) {
         m_sessionStore.save(m_tabs->captureSession());
         m_bottom->closeSessions();
-        m_runner->stopAll();
-        m_checks->cancelAll();
+        QMetaObject::invokeMethod(m_runner, [this] { m_runner->stopAll(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(m_checks, [this] { m_checks->cancelAll(); }, Qt::QueuedConnection);
         event->accept();
         return;
     }
@@ -1050,8 +1165,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
         }
     }
     m_bottom->closeSessions();
-    m_runner->stopAll();
-    m_checks->cancelAll();
+    QMetaObject::invokeMethod(m_runner, [this] { m_runner->stopAll(); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_checks, [this] { m_checks->cancelAll(); }, Qt::QueuedConnection);
     event->accept();
 }
 
@@ -1121,7 +1236,35 @@ void MainWindow::runCheck(CodeEditor *editor)
     request.variables = variablesFor(editor);
     request.text = text;
     request.revision = editor->documentRevision();
-    m_checks->start(request);
+    const QString key = QStringLiteral("check:%1").arg(request.editorId);
+    m_orchestrator->submit(key, QStringLiteral("Check"), workOwner(editor), 0, request.command,
+                           [checks = m_checks, request] { checks->start(request); }, ProcessLane::Hold);
+}
+
+void MainWindow::askCompletion(CodeEditor *editor)
+{
+    if (!m_completeEnabled || m_completeCommand.isEmpty() || editor == nullptr)
+        return;
+    QString text = editor->toPlainText();
+    text.remove(QLatin1Char('\r'));
+    const int id = ++m_completionId;
+    const int revision = editor->documentRevision();
+    const QString path = editor->filePath();
+    const int line = editor->textCursor().blockNumber() + 1;
+    const int column = editor->textCursor().positionInBlock() + 1;
+    QMetaObject::invokeMethod(m_completion, [session = m_completion, id, revision, path, line, column, text] {
+        session->request(id, revision, path, line, column, text);
+    }, Qt::QueuedConnection);
+}
+
+void MainWindow::applyCompletion(int id, int revision, const QList<CompletionItem> &items)
+{
+    if (id != m_completionId)
+        return;
+    CodeEditor *editor = m_tabs->currentEditor();
+    if (editor == nullptr || editor->documentRevision() != revision)
+        return;
+    editor->showCompletions(items);
 }
 
 void MainWindow::applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans)
@@ -1152,7 +1295,9 @@ void MainWindow::reloadCommands()
         start = m_tabs->fileFor(m_tabs->currentWidget()).path();
 
     const int generation = ++m_commandGeneration;
-    QThreadPool::globalInstance()->start([this, start, generation] {
+    const QString owner = start.isEmpty() ? QString() : start;
+    m_orchestrator->submit(QStringLiteral("project"), QStringLiteral("Project"), owner, 0,
+                           owner.isEmpty() ? QStringLiteral(".crlf") : owner, [this, start, generation] {
         const Project project = projectFor(start);
         QMetaObject::invokeMethod(this, [this, project, generation] {
             if (generation != m_commandGeneration)
@@ -1170,7 +1315,14 @@ void MainWindow::applyProject(const Project &project)
     if (!m_projectFile.isEmpty())
         m_commandWatcher->addPath(m_projectFile);
 
-    m_runner->setProject(project.commands);
+    QMetaObject::invokeMethod(m_runner, [runner = m_runner, commands = project.commands] {
+        runner->setProject(commands);
+    }, Qt::BlockingQueuedConnection);
+    m_editorCommands.clear();
+    for (const ProjectCommand &command : project.commands) {
+        if (command.outputToEditor)
+            m_editorCommands.insert(command.name);
+    }
     const QString groupDirectory =
         project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath();
     m_explorer->setGroups(groupDirectory, project.groups);
@@ -1192,9 +1344,32 @@ void MainWindow::applyProject(const Project &project)
     if (checkChanged)
         m_tabs->setCheckingEnabled(m_checkEnabled);
     if (!m_checkEnabled) {
-        m_checks->cancelAll();
+        QMetaObject::invokeMethod(m_checks, [this] { m_checks->cancelAll(); }, Qt::QueuedConnection);
         m_bottom->problems()->clear();
         m_diagnosticKeys.clear();
+    }
+    const bool completeEnabled = project.complete.enabled && !project.complete.command.isEmpty();
+    const bool completeChanged = completeEnabled != m_completeEnabled || project.complete.command != m_completeCommand
+                                 || project.complete.workingDirectory != m_completeDirectory;
+    m_completeEnabled = completeEnabled;
+    m_completeCommand = project.complete.command;
+    m_completeDirectory = project.complete.workingDirectory;
+    if (completeChanged)
+        m_tabs->setCompletionEnabled(m_completeEnabled);
+    if (!m_completeEnabled) {
+        QMetaObject::invokeMethod(m_completion, [this] { m_completion->stop(); }, Qt::QueuedConnection);
+    } else if (completeChanged) {
+        CommandVariables vars;
+        vars.project = groupDirectory;
+        vars.folder = m_explorer->rootPath();
+        vars.cwd = m_completeDirectory;
+        const QString command = m_completeCommand;
+        const QString directory = m_completeDirectory;
+        m_orchestrator->submit(QStringLiteral("complete"), QStringLiteral("complete"), groupDirectory, 0, command,
+                               [session = m_completion, command, directory, vars] {
+                                   session->start(command, directory, vars);
+                               },
+                               ProcessLane::Hold);
     }
     clearProjectCommands(m_menuBar);
     if (project.commands.isEmpty()) {
@@ -1204,17 +1379,20 @@ void MainWindow::applyProject(const Project &project)
         for (const ProjectCommand &command : project.commands) {
             QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
             action->setCheckable(true);
-            action->setChecked(m_runner->isRunning(command.name));
+            action->setChecked(m_runningCommands.contains(command.name));
             if (!command.key.isEmpty()) {
                 action->setShortcut(command.key);
                 action->setShortcutContext(Qt::WindowShortcut);
             }
-            connect(action, &QAction::triggered, this, [this, name = command.name, toEditor = command.outputToEditor] {
+            connect(action, &QAction::triggered, this, [this, name = command.name, toEditor = command.outputToEditor,
+                                                        commandText = command.command] {
                 if (toEditor && m_tabs->currentEditor() != nullptr)
                     m_output->allowReveal();
                 else
                     m_output->showCommand(name);
-                m_runner->start(name);
+                m_orchestrator->submit(QStringLiteral("command:%1").arg(name), name, workOwner(m_tabs->currentWidget()),
+                                       0, commandText, [runner = m_runner, name] { runner->requestLaunch(name); },
+                                       ProcessLane::Hold);
             });
         }
     }

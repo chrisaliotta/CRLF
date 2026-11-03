@@ -1,6 +1,8 @@
 #include "editor/CodeEditor.h"
 
+#include "app/ProcessOrchestrator.h"
 #include "editor/BlockData.h"
+#include "editor/CompletionPopup.h"
 #include "editor/FoldController.h"
 #include "editor/FoldingLayout.h"
 #include "editor/Gutter.h"
@@ -180,15 +182,17 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     m_foldController = new FoldController(this, m_layout);
     viewport()->setMouseTracking(true);
 
-    m_symbolTimer = new QTimer(this);
-    m_symbolTimer->setSingleShot(true);
-    m_symbolTimer->setInterval(200);
-    connect(m_symbolTimer, &QTimer::timeout, this, &CodeEditor::submitSymbols);
-
     m_checkTimer = new QTimer(this);
     m_checkTimer->setSingleShot(true);
     m_checkTimer->setInterval(500);
     connect(m_checkTimer, &QTimer::timeout, this, &CodeEditor::checkRequested);
+
+    m_completeTimer = new QTimer(this);
+    m_completeTimer->setSingleShot(true);
+    m_completeTimer->setInterval(100);
+    connect(m_completeTimer, &QTimer::timeout, this, &CodeEditor::completionRequested);
+    m_completionPopup = new CompletionPopup(this);
+    connect(m_completionPopup, &CompletionPopup::accepted, this, &CodeEditor::applyCompletion);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
@@ -206,10 +210,8 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
         }
         scheduleOverlayRefresh();
         scheduleSymbolScan();
-        if (m_checking) {
-            emit checkInvalidated();
+        if (m_checking)
             scheduleCheck();
-        }
     });
 
     updateGutterWidth();
@@ -217,8 +219,10 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
 
 CodeEditor::~CodeEditor()
 {
-    m_symbolTimer->stop();
     m_checkTimer->stop();
+    m_completeTimer->stop();
+    if (m_orchestrator != nullptr)
+        m_orchestrator->cancel(QStringLiteral("symbols:%1").arg(quintptr(this)));
     // Drop queued overlay and symbol callbacks before the document goes away.
     disconnect(this, nullptr, this, nullptr);
     if (m_symbolIndex != nullptr) {
@@ -290,6 +294,70 @@ void CodeEditor::setCheckingEnabled(bool enabled)
     m_diagnosticLines.clear();
     m_diagnosticTip.clear();
     scheduleOverlayRefresh();
+}
+
+void CodeEditor::setCompletionEnabled(bool enabled)
+{
+    m_completion = enabled;
+    if (enabled)
+        return;
+    m_completeTimer->stop();
+    hideCompletions();
+}
+
+void CodeEditor::showCompletions(const QList<CompletionItem> &items)
+{
+    if (!m_completion || items.isEmpty()) {
+        hideCompletions();
+        return;
+    }
+    m_completionPopup->setItems(items);
+    placeCompletionPopup();
+    m_completionPopup->show();
+}
+
+void CodeEditor::hideCompletions()
+{
+    if (m_completionPopup != nullptr)
+        m_completionPopup->hide();
+}
+
+void CodeEditor::placeCompletionPopup()
+{
+    const QRect caret = cursorRect();
+    m_completionPopup->setParent(viewport());
+    m_completionPopup->move(caret.left(), caret.bottom());
+    m_completionPopup->adjustSize();
+}
+
+void CodeEditor::applyCompletion(const CompletionItem &item)
+{
+    hideCompletions();
+    QTextBlock block = document()->findBlockByNumber(qMax(0, item.replaceLine - 1));
+    if (!block.isValid())
+        block = textCursor().block();
+    int start = item.replaceColumn > 0 ? item.replaceColumn - 1 : textCursor().positionInBlock();
+    int end = item.replaceEndColumn > 0 ? item.replaceEndColumn - 1 : start;
+    start = qBound(0, start, block.text().size());
+    end = qBound(start, end, block.text().size());
+    QTextCursor cursor(block);
+    cursor.setPosition(block.position() + start);
+    cursor.setPosition(block.position() + end, QTextCursor::KeepAnchor);
+    cursor.insertText(item.insert);
+    setTextCursor(cursor);
+}
+
+void CodeEditor::scheduleCompletion(const QString &text, bool listOpen)
+{
+    if (!m_completion || text.isEmpty())
+        return;
+    const QChar c = text.at(0);
+    const bool trigger = c == QLatin1Char('.') || c == QLatin1Char('>') || c == QLatin1Char(':');
+    const bool ident = c.isLetterOrNumber() || c == QLatin1Char('_');
+    if (trigger || (listOpen && ident))
+        m_completeTimer->start();
+    else if (listOpen)
+        hideCompletions();
 }
 
 void CodeEditor::setDiagnostics(const QList<Diagnostic> &spans)
@@ -494,6 +562,30 @@ void CodeEditor::indentLines(int direction)
 
 void CodeEditor::keyPressEvent(QKeyEvent *event)
 {
+    const bool listOpen = m_completionPopup != nullptr && m_completionPopup->isVisible();
+    if (listOpen) {
+        if (event->key() == Qt::Key_Escape) {
+            hideCompletions();
+            return;
+        }
+        if (event->key() == Qt::Key_Up) {
+            m_completionPopup->moveRow(-1);
+            return;
+        }
+        if (event->key() == Qt::Key_Down) {
+            m_completionPopup->moveRow(1);
+            return;
+        }
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter
+            || (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier)) {
+            m_completionPopup->acceptCurrent();
+            return;
+        }
+    }
+    if (event->key() == Qt::Key_Space && event->modifiers() == Qt::ControlModifier && m_completion) {
+        emit completionRequested();
+        return;
+    }
     const bool tab = event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier;
     const bool backtab = event->key() == Qt::Key_Backtab
                          || (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier);
@@ -506,6 +598,7 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
         return;
     }
     QPlainTextEdit::keyPressEvent(event);
+    scheduleCompletion(event->text(), listOpen);
     if (event->key() == Qt::Key_Control && !event->isAutoRepeat())
         updateSymbolLink(viewport()->mapFromGlobal(QCursor::pos()));
 }
@@ -552,6 +645,7 @@ void CodeEditor::focusOutEvent(QFocusEvent *event)
 {
     QPlainTextEdit::focusOutEvent(event);
     clearSymbolLink();
+    hideCompletions();
 }
 
 int CodeEditor::foldMarkerWidth() const
@@ -741,14 +835,25 @@ void CodeEditor::highlightCurrentLine()
 
 void CodeEditor::scheduleSymbolScan()
 {
-    if (m_symbolIndex != nullptr && m_symbolIndex->isEnabled() && m_definition != nullptr)
-        m_symbolTimer->start();
-}
-
-void CodeEditor::submitSymbols()
-{
-    if (m_symbolIndex != nullptr && m_definition != nullptr)
-        m_symbolIndex->updateBuffer(quintptr(this), m_filePath, toPlainText(), m_definition);
+    if (m_symbolIndex == nullptr || !m_symbolIndex->isEnabled() || m_definition == nullptr
+        || m_orchestrator == nullptr)
+        return;
+    const quintptr id = quintptr(this);
+    const QString path = m_filePath;
+    const LanguageDefinition *language = m_definition;
+    QString owner = m_workOwner;
+    if (owner.isEmpty())
+        owner = path.isEmpty() ? QStringLiteral("Untitled") : path;
+    m_orchestrator->submit(
+        QStringLiteral("symbols:%1").arg(id), QStringLiteral("Symbols"), owner, 200, path,
+        [this, id, path, language] {
+            if (m_symbolIndex == nullptr) {
+                m_orchestrator->releaseBound();
+                return;
+            }
+            m_symbolIndex->updateBuffer(id, path, toPlainText(), language);
+        },
+        ProcessLane::Deliver, this);
 }
 
 void CodeEditor::updateSymbolLink(const QPoint &pos)

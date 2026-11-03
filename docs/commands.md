@@ -247,3 +247,36 @@ An edit clears the marks in that editor and runs the command again once typing h
 `scripts/check.sh` is a Linux example. It reads stdin and picks the tool from the extension: `clang` or `clang++ -fsyntax-only` for C and C++, `csc` or the .NET SDK compiler for `.cs` when one of those is installed, and `node --check` for `.js`, `.mjs`, and `.cjs` when `node` is installed. A missing C# or Node toolchain writes `[]`. Other extensions write `[]`. A command whose working directory is inside a WSL distro runs in that distro, so the script path has to be one that distro can execute. `scripts/check.sh` from the project directory is the form above.
 
 The Problems page at the bottom lists every span from the editors that have been checked. Rows are grouped by directory, then by file name. A file in the project root is under `.`. A buffer that has never been saved is under `(unsaved)`. Activating a row moves the cursor to that span. The page opens when a check finds spans and the strip is hidden. A check that finishes while Output or Terminal is showing updates the list and leaves that page where it is. Closing the strip does not stop checking.
+
+## Completion
+
+`complete` keeps one external process for the project and asks it for completions. Leaving the key out leaves completion off. `"complete": false` does the same. The session is described in [completion.md](completion.md).
+
+```json
+"complete": {
+  "enabled": true,
+  "command": "scripts/complete.sh"
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `enabled` | no | `false` stops the session. The command stays in the file. Missing `complete` means off |
+| `command` | when enabled | The shell command. It stays running and reads one JSON object per line |
+| `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
+
+Each request is one line. `line` and `column` start at 1. `text` is the editor buffer. `revision` is the document revision at the moment the request was sent.
+
+```json
+{"id":1,"revision":4,"path":"/src/main.cpp","line":12,"column":8,"text":""}
+```
+
+The reply is one line. `replaceEndColumn` is the column where the replacement stops, and that column is not included.
+
+```json
+{"id":1,"revision":4,"items":[{"label":"push_back","detail":"void push_back(const T&)","insert":"push_back(","replaceLine":12,"replaceColumn":5,"replaceEndColumn":8}]}
+```
+
+Ctrl+Space asks immediately. `.`, `->`, and `::` ask after a short pause. Typing while the list is open asks again. Enter or Tab inserts the selected row. Escape closes the list.
+
+`scripts/complete.sh` runs `scripts/complete.py`. That program speaks to `clangd` for C and C++, and to OmniSharp or the .NET SDK language server for C#, when those tools are installed. The editor does not speak their protocol. A command whose working directory is inside a WSL distro runs in that distro.

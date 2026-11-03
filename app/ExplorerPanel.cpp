@@ -449,6 +449,11 @@ void ExplorerPanel::setHidden(const QStringList &patterns)
     m_filter->setHidden(patterns);
 }
 
+void ExplorerPanel::setOrchestrator(ProcessOrchestrator *orchestrator)
+{
+    m_model->setOrchestrator(orchestrator);
+}
+
 void ExplorerPanel::setRootPath(const QString &path, bool warnIfMissing)
 {
     if (path.isEmpty())

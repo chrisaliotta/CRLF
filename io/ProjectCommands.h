@@ -105,6 +105,8 @@ struct Project
     // Package and stylesheet links resolved under node_modules on click.
     bool externalNavigation = true;
     CheckSettings check;
+    // Same shape as `check`. One long-lived completion process per project.
+    CheckSettings complete;
     QString error;
 };
 

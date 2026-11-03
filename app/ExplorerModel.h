@@ -6,8 +6,8 @@
 #include <QFileIconProvider>
 #include <QList>
 
-class DirectoryListing;
 class FileIconTheme;
+class ProcessOrchestrator;
 
 // The scoped folder is the model's only top-level node, and its children are
 // the rows the tree shows. Listings are read on a worker thread: QFileSystemModel
@@ -16,13 +16,14 @@ class FileIconTheme;
 class ExplorerModel : public QAbstractItemModel
 {
     Q_OBJECT
-    friend class DirectoryListing;
 
 public:
     enum Role { FilePathRole = Qt::UserRole + 1 };
 
     explicit ExplorerModel(QObject *parent = nullptr);
     ~ExplorerModel() override;
+
+    void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
 
     void setIconTheme(const FileIconTheme *theme);
     // Virtual folders for one directory, usually the folder that holds .crlf.
@@ -114,6 +115,7 @@ private:
     int fileRow(Node *parent, const QString &name) const;
 
     Node *m_root = nullptr;
+    ProcessOrchestrator *m_orchestrator = nullptr;
     const FileIconTheme *m_iconTheme = nullptr;
     QString m_projectDirectory;
     QList<FileGroup> m_groups;

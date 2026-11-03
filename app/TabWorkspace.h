@@ -13,6 +13,7 @@
 #include <QSharedPointer>
 #include <QTabWidget>
 
+class ProcessOrchestrator;
 class QFileSystemWatcher;
 
 class CodeEditor;
@@ -88,6 +89,8 @@ public:
     void setExternalNavigation(bool enabled);
     // `false` stops scheduling checks and clears spans in open editors.
     void setCheckingEnabled(bool enabled);
+    void setCompletionEnabled(bool enabled);
+    void setOrchestrator(ProcessOrchestrator *orchestrator);
     CodeEditor *editorFor(quintptr editorId) const;
     // Focuses the open document and moves its cursor. A path that is not open
     // is left alone; check rows belong to documents that are still open.
@@ -109,7 +112,7 @@ signals:
     // A definition was opened in a file other than the one that was current.
     void fileRevealed(const QString &path);
     void checkRequested(CodeEditor *editor);
-    void checkInvalidated(CodeEditor *editor);
+    void completionRequested(CodeEditor *editor);
     void editorClosed(quintptr editorId);
     void editorRetargeted(CodeEditor *editor);
 
@@ -122,8 +125,11 @@ private:
         bool pinned = false;
     };
 
-    CodeEditor *createEditor(const DocumentFile &file, const QString &text,
+    CodeEditor *createEditor(const DocumentFile &file, const QString &text, const QString &title,
                              const LanguageDefinition *language = nullptr);
+    void noteEditorOwner(CodeEditor *editor);
+    void applyExternalReload(QWidget *page, const DocumentFile &loaded, const QString &clean, bool hex,
+                             const QString &text, const QByteArray &bytes);
     void applyRestoredSession(const QList<SessionTab> &tabs, const QList<DocumentFile> &files,
                               const QStringList &texts, const QList<QByteArray> &bytes,
                               int activeIndex);
@@ -157,6 +163,7 @@ private:
 
     const LanguageRegistry *m_registry;
     SymbolIndex *m_symbols = nullptr;
+    ProcessOrchestrator *m_orchestrator = nullptr;
     const Theme *m_theme;
     // Empty page behind the always-last + tab, which scrolls with the
     // documents like a browser's new-tab button.
@@ -181,6 +188,7 @@ private:
     QHash<QString, QDateTime> m_declinedReload;
     IndentSettings m_indent;
     bool m_checking = false;
+    bool m_completion = false;
     // node_modules is searched from here when the document has no path.
     QString m_symbolRoot;
     // Shared with the lookup worker, which stops once a newer click bumps it.

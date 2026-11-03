@@ -9,6 +9,7 @@ class ExplorerDelegate;
 class ExplorerModel;
 class ExplorerTree;
 class FileIconTheme;
+class ProcessOrchestrator;
 class QLabel;
 class QModelIndex;
 class QStackedWidget;
@@ -31,6 +32,7 @@ public:
     // warnIfMissing is false for the folder restored at startup: a missing
     // saved folder closes the explorer instead of interrupting launch.
     void setRootPath(const QString &path, bool warnIfMissing = true);
+    void setOrchestrator(ProcessOrchestrator *orchestrator);
     void setIconTheme(const FileIconTheme *theme);
     void setGroups(const QString &directory, const QList<FileGroup> &groups);
     // Name patterns from .crlf `hide`. A pattern with * or ? is a wildcard.

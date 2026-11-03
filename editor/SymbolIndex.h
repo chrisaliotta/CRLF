@@ -13,15 +13,18 @@
 
 class LanguageDefinition;
 class LanguageRegistry;
+class ProcessOrchestrator;
 
 // Names defined in open buffers and, when a folder is scoped, in that folder.
-// The map is read on the UI thread. Scans run on the thread pool.
+// The map is read on the UI thread. Scans run on the process orchestrator's pool.
 class SymbolIndex : public QObject
 {
     Q_OBJECT
 
 public:
     explicit SymbolIndex(const LanguageRegistry *registry, QObject *parent = nullptr);
+
+    void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
 
     // Replaces the on-disk index. An empty root drops every file that is not
     // an open buffer. A repeat of the same root and hide list does nothing.
@@ -122,6 +125,7 @@ private:
     void applyDisk(int generation, const QList<DiskFile> &files);
 
     const LanguageRegistry *m_registry;
+    ProcessOrchestrator *m_orchestrator = nullptr;
     bool m_enabled = true;
     bool m_external = true;
     QString m_root;

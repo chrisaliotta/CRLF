@@ -1,7 +1,9 @@
 #include "app/CommandRunner.h"
 
+#include "app/ProcessOrchestrator.h"
 #include "io/WslPath.h"
 
+#include <QMetaObject>
 #include <QProcess>
 
 namespace {
@@ -42,6 +44,7 @@ struct CommandRunner::Running
     // Set while start() is inside a job launch that may be retried, so the
     // failure signal from that attempt is not shown.
     bool suppressFailure = false;
+    int token = 0;
     // Set when the command runs inside a distro. linuxGroup is filled from
     // the CRLF_PGID line bash prints before the command.
     QString distro;
@@ -99,6 +102,22 @@ void freeAttributes(LPPROC_THREAD_ATTRIBUTE_LIST attributes)
     HeapFree(GetProcessHeap(), 0, attributes);
 }
 
+void startGroupKill(QObject *parent, const QString &distro, qint64 group)
+{
+    if (distro.isEmpty() || group <= 0)
+        return;
+    auto *killer = new QProcess(parent);
+    killer->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
+    killer->setArguments({QStringLiteral("-d"), distro, QStringLiteral("--"), QStringLiteral("kill"),
+                          QStringLiteral("--"), QString::number(-group)});
+    QObject::connect(killer, &QProcess::finished, killer, &QObject::deleteLater);
+    QObject::connect(killer, &QProcess::errorOccurred, killer, [killer](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart)
+            killer->deleteLater();
+    });
+    killer->start();
+}
+
 #endif
 
 } // namespace
@@ -111,7 +130,13 @@ CommandRunner::CommandRunner(QObject *parent)
 CommandRunner::~CommandRunner()
 {
     stopAll();
+    const auto processes = findChildren<QProcess *>(Qt::FindDirectChildrenOnly);
+    for (QProcess *process : processes) {
+        if (process->state() != QProcess::NotRunning)
+            process->setParent(nullptr);
+    }
     qDeleteAll(m_running);
+    m_running.clear();
 }
 
 void CommandRunner::setContextProvider(std::function<CommandVariables()> provider)
@@ -122,6 +147,22 @@ void CommandRunner::setContextProvider(std::function<CommandVariables()> provide
 void CommandRunner::setEditorInputProvider(std::function<EditorFeed(const QString &name)> provider)
 {
     m_editorInput = std::move(provider);
+}
+
+void CommandRunner::requestLaunch(const QString &name)
+{
+    const bool toEditor = sendsOutputToEditor(name);
+    QMetaObject::invokeMethod(m_ui, [this, name, toEditor] {
+        CommandVariables vars = m_contextProvider ? m_contextProvider() : CommandVariables{};
+        EditorFeed feed;
+        if (toEditor && m_editorInput)
+            feed = m_editorInput(name);
+        QMetaObject::invokeMethod(this, [this, name, vars, feed] {
+            m_launchVars.insert(name, vars);
+            m_launchFeed.insert(name, feed);
+            start(name);
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
 }
 
 bool CommandRunner::sendsOutputToEditor(const QString &name) const
@@ -160,8 +201,13 @@ bool CommandRunner::isRunning(const QString &name) const
 
 void CommandRunner::start(const QString &name)
 {
-    if (!command(name))
+    if (!command(name)) {
+        if (m_orchestrator != nullptr) {
+            const QString key = QStringLiteral("command:%1").arg(name);
+            m_orchestrator->release(key, m_orchestrator->currentToken(key));
+        }
         return;
+    }
     Running *running = m_running.value(name);
     if (running && running->process->state() != QProcess::NotRunning) {
         running->restart = true;
@@ -217,11 +263,14 @@ void CommandRunner::launch(const QString &name, bool withJob)
                     }
                     const bool restart = done->restart;
                     const bool stopped = done->stopRequested;
+                    const int token = done->token;
                     done->restart = false;
                     done->stopRequested = false;
                     emit stateChanged(name, false, stopped ? -1 : exitCode);
                     if (restart)
-                        launch(name);
+                        requestLaunch(name);
+                    else if (m_orchestrator != nullptr)
+                        m_orchestrator->release(QStringLiteral("command:%1").arg(name), token);
                 });
         connect(running->process, &QProcess::errorOccurred, this,
                 [this, name](QProcess::ProcessError error) {
@@ -233,11 +282,18 @@ void CommandRunner::launch(const QString &name, bool withJob)
                     failed->restart = false;
                     emit outputReceived(name, failed->process->errorString() + QLatin1Char('\n'));
                     emit stateChanged(name, false, -1);
+                    if (m_orchestrator != nullptr)
+                        m_orchestrator->release(QStringLiteral("command:%1").arg(name), failed->token);
                 });
     }
 
     running->stopRequested = false;
     running->restart = false;
+    running->token = 0;
+    if (m_orchestrator != nullptr) {
+        const QString key = QStringLiteral("command:%1").arg(name);
+        running->token = m_orchestrator->currentToken(key);
+    }
     running->distro.clear();
     running->linuxGroup = 0;
     running->groupResolved = false;
@@ -245,15 +301,15 @@ void CommandRunner::launch(const QString &name, bool withJob)
     running->captureEditor = false;
     running->input.clear();
     running->captured.clear();
-    if (spec->outputToEditor && m_editorInput) {
-        const EditorFeed feed = m_editorInput(name);
+    if (spec->outputToEditor) {
+        const EditorFeed feed = m_launchFeed.value(name);
         if (feed.active) {
             running->captureEditor = true;
             running->input = feed.text.toUtf8();
         }
     }
 
-    CommandVariables vars = m_contextProvider ? m_contextProvider() : CommandVariables{};
+    CommandVariables vars = m_launchVars.value(name);
     vars.cwd = spec->workingDirectory;
 #ifdef Q_OS_WIN
     const WslPath::LinuxPath linux = WslPath::toLinux(spec->workingDirectory);
@@ -370,31 +426,13 @@ void CommandRunner::stopTree(Running &running)
 {
     running.stopRequested = true;
 #ifdef Q_OS_WIN
-    if (!running.distro.isEmpty() && running.linuxGroup > 0) {
-        QProcess killer;
-        killer.setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
-        killer.setArguments({QStringLiteral("-d"), running.distro, QStringLiteral("--"),
-                             QStringLiteral("kill"), QStringLiteral("--"),
-                             QString::number(-running.linuxGroup)});
-        killer.start();
-        killer.waitForFinished(3000);
-    }
-    const qint64 pid = running.process->processId();
-    if (pid > 0) {
-        QProcess killer;
-        killer.setProgram(QStringLiteral("taskkill"));
-        killer.setArguments({QStringLiteral("/F"), QStringLiteral("/T"), QStringLiteral("/PID"),
-                             QString::number(pid)});
-        killer.start();
-        killer.waitForFinished(3000);
-    }
+    startGroupKill(this, running.distro, running.linuxGroup);
     if (running.job) {
         CloseHandle(static_cast<HANDLE>(running.job));
         running.job = nullptr;
     }
-#else
-    running.process->terminate();
 #endif
+    running.process->kill();
 }
 
 void CommandRunner::stop(const QString &name)
@@ -412,6 +450,5 @@ void CommandRunner::stopAll()
             continue;
         running->restart = false;
         stopTree(*running);
-        running->process->waitForFinished(2000);
     }
 }

@@ -7,7 +7,7 @@ User-facing behavior is described in [README.md](../README.md) and the `.crlf` k
 ## Goals that drove every decision
 
 1. **Hover never blocks.** Ctrl+hover runs on the UI thread on every mouse move. It may only read memory (hash lookups and one short regex over the current line). No disk access, no scanning.
-2. **Disk work happens off the UI thread**, on `QThreadPool::globalInstance()`, and posts results back.
+2. **Disk work happens off the UI thread**, on the process orchestrator's pool, and posts results back. See [processes.md](processes.md).
 3. **Low memory and CPU.** Index only names and positions, not file contents. Read external files one at a time, with hard caps.
 4. **Data-driven languages.** What counts as a declaration lives in the language JSON files (`resources/languages/*.json`), not in C++ per language. C++ only holds behavior that patterns cannot express (imports, stylesheet keys, Tailwind, external lookup).
 5. **Happy-path code** per the project rules. Validation exists only where input is not deterministic: files on disk, `package.json`, and user documents.
@@ -63,7 +63,7 @@ Workers post results with `QMetaObject::invokeMethod(QCoreApplication::instance(
 
 Posting to `alive.data()` after checking the pointer on the worker is a race: the GUI thread can destroy the index between the check and the call. That caused a SIGSEGV when closing the app under the debugger. The application object outlives the window, so posting to it is always safe, and the `QPointer` check runs on the UI thread where destruction also happens.
 
-Do **not** replace this with `QThreadPool::waitForDone()` at shutdown. It waits for the whole global pool (other features use it) and can deadlock if a task posts back to the UI thread.
+Do **not** replace this with `QThreadPool::waitForDone()` on the UI thread at shutdown. A task that posts back to the UI thread deadlocks if the UI is blocked waiting for the pool. The orchestrator waits for its own pool from the orchestrator thread, and only for tasks that do not need the UI in order to finish.
 
 `CodeEditor::~CodeEditor` disconnects its own queued connections and removes its buffer before its document is destroyed, for the same reason.
 

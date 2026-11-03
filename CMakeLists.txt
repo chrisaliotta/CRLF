@@ -76,6 +76,12 @@ set(APP_SOURCES
     app/CommandRunner.cpp
     app/CheckRunner.h
     app/CheckRunner.cpp
+    app/CompletionSession.h
+    app/CompletionSession.cpp
+    app/ProcessOrchestrator.h
+    app/ProcessOrchestrator.cpp
+    app/ProcessesPanel.h
+    app/ProcessesPanel.cpp
     app/OutputPanel.h
     app/OutputPanel.cpp
     app/ProblemsPanel.h
@@ -95,6 +101,9 @@ set(APP_SOURCES
 set(EDITOR_SOURCES
     editor/CodeEditor.h
     editor/CodeEditor.cpp
+    editor/CompletionItem.h
+    editor/CompletionPopup.h
+    editor/CompletionPopup.cpp
     editor/Diagnostic.h
     editor/Diagnostic.cpp
     editor/FoldingLayout.h
@@ -205,6 +214,12 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/scripts/check.sh"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/check.sh"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/complete.sh"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/complete.sh"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/complete.py"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/complete.py"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -231,6 +246,8 @@ install(CODE "
         -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake\")
 ")
 install(FILES "${CMAKE_SOURCE_DIR}/scripts/check.sh"
+    "${CMAKE_SOURCE_DIR}/scripts/complete.sh"
+    "${CMAKE_SOURCE_DIR}/scripts/complete.py"
     DESTINATION scripts)
 
 qt_generate_deploy_app_script(

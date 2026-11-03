@@ -27,17 +27,19 @@ User-facing behavior is described in [README.md](../README.md) and the `.crlf` k
 
 ```mermaid
 flowchart LR
-  edit[Editor edit] --> debounce[500ms timer]
-  debounce --> runner[CheckRunner]
+  edit[Editor edit] --> debounce[500ms timer on the UI thread]
+  debounce --> submit[submit buffer and revision]
+  submit --> orch[Orchestrator thread]
+  orch --> runner[CheckRunner]
   runner -->|stdin buffer| script[check.sh]
   script -->|JSON array| runner
-  runner --> marks[Wavy underlines]
-  runner --> tree[Problems tree]
+  runner -->|queued result| marks[Wavy underlines]
+  runner -->|queued result| tree[Problems tree]
 ```
 
 ## Why it is not a menu command
 
-`"output": "editor"` replaces the buffer. `CommandRunner` is one long-lived process per command name, and its merged output is a log on the Output page. A check is one short process per editor, killed on the next edit, and its stdout is data. Folding it into the menu runner would mix a side channel with command logs.
+`"output": "editor"` replaces the buffer. `CommandRunner` is one long-lived process per command name, and its merged output is a log on the Output page. A check is one short process per editor, replaced after the buffer has been idle, and its stdout is data. Folding it into the menu runner would mix a side channel with command logs.
 
 `CheckRunner` still starts the process the same way `CommandRunner::launch` does. A normal Windows directory goes through `cmd.exe`. A working directory under `\\wsl.localhost` or `\\wsl$` goes through `wsl.exe` and `bash -lc`, and path variables are Linux paths. The wrapper prints `CRLF_PGID:` so Stop can end the Linux process group; that line is stripped before the JSON is read. Standard input is closed after the buffer is written, so a script that reads until EOF finishes. Channels stay separate: stdout is the array, stderr is the failure text.
 
@@ -59,9 +61,15 @@ The gutter square is painted in `paintGutter` for each visible line a span cover
 
 Hover shows the message with `QToolTip` when the pointer is inside a span and Ctrl is not held. Ctrl+hover stays the definition link.
 
-An edit clears the spans in that handler and queues the overlay refresh. It also cancels the process that was in flight. The timer is 500ms, not the symbol scan's 200ms, because a symbol scan is a memory read and a check starts a process. Each editor has its own timer and its own process, so switching tabs does not cancel another buffer. `QTextDocument::revision()` is recorded when the process starts and compared when it exits, so a result that belongs to an older buffer is dropped.
+An edit clears the spans in that handler and queues the overlay refresh. It restarts the 500ms timer and does not cancel the process that is in flight. The timer stays on the editor, on the UI thread. It does not start a process itself. When 500ms pass with no further edit, the UI submits the buffer and the document revision. If a check for that editor is still running, the orchestrator replaces it: the kill runs on the orchestrator thread and does not wait. The replacement starts from that process's finished handler on the same thread.
 
-The hex view has no text buffer and is not checked. Replacing the buffer from a format command is an edit, so it schedules a check the same way typing does. Closing a tab, or swapping the tab to hex, cancels the process and removes that file's rows.
+The timer is 500ms, not the symbol scan's 200ms, because a symbol scan is a memory read and a check starts a process. Each editor has its own timer and its own process, so switching tabs does not cancel another buffer. `QTextDocument::revision()` is recorded when the check is submitted and compared when the result is applied, so a result that belongs to an older buffer is dropped. The editor also has to still be open.
+
+`setCheckingEnabled(true)` starts the same timer after the text is in the editor, which is the first-load check. An external reload calls `replaceText`, and that edit restarts the same timer. Paste and a format that replaces the buffer do too.
+
+The hex view has no text buffer and is not checked. Closing a tab, or swapping the tab to hex, submits a cancel and removes that file's rows.
+
+Cancellation closes the kill-on-close job, calls `QProcess::kill()`, and starts the WSL process-group kill without waiting for it. None of that runs on the UI thread. See [processes.md](processes.md).
 
 ## Problems
 

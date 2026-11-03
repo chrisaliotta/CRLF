@@ -1,15 +1,16 @@
 #include "app/ExplorerModel.h"
 
 #include "app/FileIconTheme.h"
+#include "app/ProcessOrchestrator.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QMimeData>
+#include <QPointer>
 #include <QRegularExpression>
-#include <QRunnable>
-#include <QThreadPool>
 #include <QUrl>
 
 namespace {
@@ -48,49 +49,6 @@ struct ExplorerModel::Node
     int groupIndex = -1;
     Node *parent = nullptr;
     QList<Node *> children;
-};
-
-class DirectoryListing : public QRunnable
-{
-public:
-    DirectoryListing(ExplorerModel *model, const QString &path, int generation)
-        : m_model(model)
-        , m_path(path)
-        , m_generation(generation)
-    {
-        setAutoDelete(true);
-    }
-
-    void run() override
-    {
-        QDir dir(m_path);
-        const bool ok = dir.exists();
-        QList<ExplorerModel::Entry> entries;
-        if (ok) {
-            const QFileInfoList infos = dir.entryInfoList(
-                QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden,
-                QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
-            entries.reserve(infos.size());
-            for (const QFileInfo &info : infos) {
-                ExplorerModel::Entry entry;
-                entry.name = info.fileName();
-                entry.path = QDir::cleanPath(info.absoluteFilePath());
-                entry.isDir = info.isDir();
-                entries.append(entry);
-            }
-        }
-        const QString path = m_path;
-        const int generation = m_generation;
-        const bool found = ok;
-        QMetaObject::invokeMethod(m_model, [model = m_model, path, generation, found, entries] {
-            model->completeListing(path, generation, found, entries);
-        }, Qt::QueuedConnection);
-    }
-
-private:
-    ExplorerModel *m_model;
-    QString m_path;
-    int m_generation;
 };
 
 ExplorerModel::ExplorerModel(QObject *parent)
@@ -600,7 +558,36 @@ void ExplorerModel::startListing(Node *node)
         node->children.append(placeholder);
         endInsertRows();
     }
-    QThreadPool::globalInstance()->start(new DirectoryListing(this, node->path, node->generation));
+    const QString path = node->path;
+    const int generation = node->generation;
+    QPointer<ExplorerModel> alive(this);
+    m_orchestrator->submit(QStringLiteral("list:%1").arg(path), QStringLiteral("List directory"), path, 0, path,
+                           [alive, path, generation] {
+        QDir dir(path);
+        const bool ok = dir.exists();
+        QList<Entry> entries;
+        if (ok) {
+            const QFileInfoList infos = dir.entryInfoList(
+                QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden,
+                QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
+            entries.reserve(infos.size());
+            for (const QFileInfo &info : infos) {
+                Entry entry;
+                entry.name = info.fileName();
+                entry.path = QDir::cleanPath(info.absoluteFilePath());
+                entry.isDir = info.isDir();
+                entries.append(entry);
+            }
+        }
+        QCoreApplication *app = QCoreApplication::instance();
+        if (app == nullptr)
+            return;
+        QMetaObject::invokeMethod(app, [alive, path, generation, ok, entries] {
+            if (alive.isNull())
+                return;
+            alive->completeListing(path, generation, ok, entries);
+        }, Qt::QueuedConnection);
+    });
 }
 
 void ExplorerModel::completeListing(const QString &path, int generation, bool ok,

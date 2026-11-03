@@ -3,6 +3,7 @@
 #include "app/Actions.h"
 #include "app/FileIconTheme.h"
 #include "editor/Diagnostic.h"
+#include "editor/CompletionItem.h"
 #include "io/CommandVariables.h"
 #include "io/SessionStore.h"
 #include "syntax/LanguageRegistry.h"
@@ -11,20 +12,24 @@
 #include <QHash>
 #include <QList>
 #include <QMainWindow>
+#include <QSet>
 
 class BottomPanel;
 class CheckRunner;
 class CodeEditor;
 class CommandRunner;
+class CompletionSession;
 class ExplorerPanel;
 class FindBar;
 class OutputPanel;
+class ProcessOrchestrator;
 struct Project;
 class QActionGroup;
 class QFileSystemWatcher;
 class QLabel;
 class QMenu;
 class QMenuBar;
+class QThread;
 class TabWorkspace;
 class TitleBar;
 
@@ -34,6 +39,7 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow() override;
 
     // Restores the persisted session (when enabled), opens any command-line
     // paths on top, and guarantees at least one tab.
@@ -55,7 +61,10 @@ private:
     void openFileDialog();
     // Returns false when the user cancels the folder picker.
     bool chooseExplorerFolder();
-    bool chooseWslFolder();
+    void chooseWslFolder();
+    void offerWslDistros(const QStringList &names);
+    void offerWslPath(const QString &distro, const QString &home);
+    QString workOwner(QWidget *page) const;
     void closeCurrentTab();
     void gotoLine();
     void applyTheme(const Theme *theme);
@@ -74,6 +83,8 @@ private:
     CommandVariables variablesFor(QWidget *page) const;
     void runCheck(CodeEditor *editor);
     void applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans);
+    void askCompletion(CodeEditor *editor);
+    void applyCompletion(int id, int revision, const QList<CompletionItem> &items);
     QString diagnosticKey(const CodeEditor *editor) const;
 
     LanguageRegistry m_registry;
@@ -96,11 +107,21 @@ private:
     BottomPanel *m_bottom = nullptr;
     OutputPanel *m_output = nullptr;
     bool m_syncingTerminal = false;
+    bool m_syncingProcesses = false;
     CommandRunner *m_runner = nullptr;
     CheckRunner *m_checks = nullptr;
+    CompletionSession *m_completion = nullptr;
+    ProcessOrchestrator *m_orchestrator = nullptr;
+    QThread *m_thread = nullptr;
+    QSet<QString> m_runningCommands;
+    QSet<QString> m_editorCommands;
     bool m_checkEnabled = false;
     QString m_checkCommand;
     QString m_checkDirectory;
+    bool m_completeEnabled = false;
+    QString m_completeCommand;
+    QString m_completeDirectory;
+    int m_completionId = 0;
     QHash<quintptr, QString> m_diagnosticKeys;
     QFileSystemWatcher *m_commandWatcher = nullptr;
     QString m_projectFile;

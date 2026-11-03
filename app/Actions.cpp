@@ -35,6 +35,8 @@ Actions::Actions(QObject *parent)
     explorer->setCheckable(true);
     terminal = make(QStringLiteral("&Terminal"), QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft));
     terminal->setCheckable(true);
+    processes = make(QStringLiteral("&Processes"), QKeySequence());
+    processes->setCheckable(true);
     wordWrap = make(QStringLiteral("&Word Wrap"), QKeySequence());
     wordWrap->setCheckable(true);
     lineNumbers = make(QStringLiteral("&Line Numbers"), QKeySequence());
