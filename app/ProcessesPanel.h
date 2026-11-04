@@ -5,6 +5,7 @@
 #include <QWidget>
 
 class QLabel;
+class QPlainTextEdit;
 class QTableWidget;
 
 // Live tasks, then the last 20 that finished or were cancelled.
@@ -21,4 +22,9 @@ public:
 private:
     QTableWidget *m_live = nullptr;
     QTableWidget *m_recent = nullptr;
+    QPlainTextEdit *m_log = nullptr;
+    QList<ProcessRecord> m_liveRecords;
+    QList<ProcessRecord> m_recentRecords;
+    const QList<ProcessRecord> *m_shown = nullptr;
+    int m_shownRow = -1;
 };

@@ -2,6 +2,7 @@
 
 #include <QSharedPointer>
 
+#include "app/ProcessesPanel.h"
 #include "app/DocumentTabBar.h"
 #include "app/ProcessOrchestrator.h"
 #include "editor/CodeEditor.h"
@@ -100,6 +101,18 @@ TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme,
         });
     });
 
+    connect(bar, &QTabBar::tabMoved, this, [this](int, int) {
+        if (m_processes == nullptr || m_adjustingTabs)
+            return;
+        const int want = count() - 2;
+        const int have = indexOf(m_processes);
+        if (have == want)
+            return;
+        m_adjustingTabs = true;
+        tabBar()->moveTab(have, want);
+        m_adjustingTabs = false;
+    });
+
     connect(this, &QTabWidget::currentChanged, this, [this](int index) {
         // Wheel or keyboard navigation can still select +; step back onto
         // the last document. Clicks never select it (see DocumentTabBar).
@@ -107,6 +120,7 @@ TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme,
             setCurrentIndex(index - 1);
             return;
         }
+        emit processesCurrent(widget(index) == m_processes);
         for (auto it = m_pages.keyBegin(); it != m_pages.keyEnd(); ++it)
             refreshTabTitle(*it);
         updateCloseButtons();
@@ -116,7 +130,7 @@ TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme,
 
 int TabWorkspace::documentCount() const
 {
-    return count() - 1;
+    return m_pages.size();
 }
 
 CodeEditor *TabWorkspace::currentEditor() const
@@ -131,12 +145,20 @@ HexView *TabWorkspace::currentHexView() const
 
 const DocumentFile &TabWorkspace::fileFor(QWidget *page) const
 {
-    return m_pages.constFind(page)->file;
+    const auto it = m_pages.constFind(page);
+    if (it == m_pages.cend()) {
+        static const DocumentFile empty;
+        return empty;
+    }
+    return it->file;
 }
 
 QString TabWorkspace::titleFor(QWidget *page) const
 {
-    return m_pages.constFind(page)->title;
+    if (page == m_processes)
+        return QStringLiteral("Processes");
+    const auto it = m_pages.constFind(page);
+    return it == m_pages.cend() ? QString() : it->title;
 }
 
 void TabWorkspace::newDocument()
@@ -214,6 +236,35 @@ void TabWorkspace::setOrchestrator(ProcessOrchestrator *orchestrator)
     }
 }
 
+void TabWorkspace::showProcesses()
+{
+    if (m_processes != nullptr) {
+        setCurrentWidget(m_processes);
+        return;
+    }
+    m_processes = new ProcessesPanel(this);
+    const int index = count() - 1;
+    insertTab(index, m_processes, QStringLiteral("Processes"));
+    auto *close = new QToolButton(this);
+    close->setObjectName(QStringLiteral("tabCloseButton"));
+    close->setText(QStringLiteral("\u2715"));
+    close->setToolTip(QStringLiteral("Close Tab"));
+    close->setFocusPolicy(Qt::NoFocus);
+    close->setFixedSize(18, 18);
+    connect(close, &QToolButton::clicked, this, [this] { closeProcesses(); });
+    tabBar()->setTabButton(index, QTabBar::RightSide, close);
+    setCurrentWidget(m_processes);
+}
+
+void TabWorkspace::closeProcesses()
+{
+    if (m_processes == nullptr)
+        return;
+    const int index = indexOf(m_processes);
+    if (index >= 0)
+        closeTab(index);
+}
+
 CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &text, const QString &title,
                                         const LanguageDefinition *language)
 {
@@ -239,6 +290,7 @@ CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &
 
     connect(editor, &CodeEditor::checkRequested, this, [this, editor] { emit checkRequested(editor); });
     connect(editor, &CodeEditor::completionRequested, this, [this, editor] { emit completionRequested(editor); });
+    connect(editor, &CodeEditor::signatureRequested, this, [this, editor] { emit signatureRequested(editor); });
     connect(editor, &CodeEditor::filePathChanged, this, [this, editor] { emit editorRetargeted(editor); });
     connect(editor->document(), &QTextDocument::modificationChanged, this,
             [this, editor] { refreshTabTitle(editor); });
@@ -692,6 +744,8 @@ void TabWorkspace::writePage(QWidget *page)
 bool TabWorkspace::saveCurrent()
 {
     QWidget *page = currentWidget();
+    if (page == m_processes)
+        return true;
     if (m_pages[page].file.path().isEmpty())
         return saveCurrentAs(m_saveDirectory);
     writePage(page);
@@ -704,6 +758,8 @@ bool TabWorkspace::saveCurrent()
 bool TabWorkspace::saveCurrentAs(const QString &directory)
 {
     QWidget *page = currentWidget();
+    if (page == m_processes || page == m_newTabPage)
+        return false;
     const QString existing = m_pages[page].file.path();
     QString suggested = existing;
     if (!directory.isEmpty()) {
@@ -739,6 +795,13 @@ bool TabWorkspace::saveCurrentAs(const QString &directory)
 bool TabWorkspace::closeTab(int index)
 {
     QWidget *page = widget(index);
+    if (page == m_processes) {
+        removeTab(index);
+        m_processes->deleteLater();
+        m_processes = nullptr;
+        emit processesCurrent(false);
+        return true;
+    }
     if (isPageModified(page)) {
         setCurrentIndex(index);
         const auto choice = QMessageBox::question(
@@ -769,6 +832,8 @@ bool TabWorkspace::closeTab(int index)
 void TabWorkspace::setCurrentHexMode(bool hex)
 {
     QWidget *page = currentWidget();
+    if (page == m_processes || page == m_newTabPage)
+        return;
     const int index = currentIndex();
     const bool modified = isPageModified(page);
     Page entry = m_pages.take(page);
@@ -992,6 +1057,8 @@ void TabWorkspace::setLineNumbersVisible(bool visible)
 
 void TabWorkspace::refreshTabTitle(QWidget *page)
 {
+    if (page == m_processes || !m_pages.contains(page))
+        return;
     Page &entry = m_pages[page];
     if (entry.titleLabel == nullptr)
         return;
@@ -1030,6 +1097,15 @@ void TabWorkspace::showTabMenu(const QPoint &pos)
     const int index = tabBar()->tabAt(pos);
     if (index < 0 || widget(index) == m_newTabPage)
         return;
+    if (widget(index) == m_processes) {
+        QMenu menu(this);
+        menu.addAction(QStringLiteral("Close"), this, [this, index] {
+            if (closeTab(index) && documentCount() == 0)
+                newDocument();
+        });
+        menu.exec(tabBar()->mapToGlobal(pos));
+        return;
+    }
     const bool pinned = m_pages[widget(index)].pinned;
     QMenu menu(this);
     menu.addAction(pinned ? QStringLiteral("Unpin") : QStringLiteral("Pin"), this, [this, index, pinned] {

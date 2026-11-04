@@ -4,4 +4,5 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+export PYTHONUNBUFFERED=1
 exec python3 "$here/complete.py"

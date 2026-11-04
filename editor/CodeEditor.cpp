@@ -17,6 +17,7 @@
 #include <QFocusEvent>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QTimer>
 #include <QPainter>
@@ -190,13 +191,22 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     m_completeTimer = new QTimer(this);
     m_completeTimer->setSingleShot(true);
     m_completeTimer->setInterval(100);
-    connect(m_completeTimer, &QTimer::timeout, this, &CodeEditor::completionRequested);
+    connect(m_completeTimer, &QTimer::timeout, this, [this] {
+        if (m_wantSignature)
+            emit signatureRequested();
+        else
+            emit completionRequested();
+    });
     m_completionPopup = new CompletionPopup(this);
     connect(m_completionPopup, &CompletionPopup::accepted, this, &CodeEditor::applyCompletion);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
-    connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::scheduleOverlayRefresh);
+    connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+        scheduleOverlayRefresh();
+        if (m_signature != nullptr && m_signature->isVisible() && !insideArguments())
+            hideSignature();
+    });
     connect(document(), &QTextDocument::contentsChange, this, [this](int, int, int) {
         // The link cursor would be applied from inside the edit. Drop the
         // flag here and let the deferred overlay refresh paint without it.
@@ -303,6 +313,7 @@ void CodeEditor::setCompletionEnabled(bool enabled)
         return;
     m_completeTimer->stop();
     hideCompletions();
+    hideSignature();
 }
 
 void CodeEditor::showCompletions(const QList<CompletionItem> &items)
@@ -314,6 +325,9 @@ void CodeEditor::showCompletions(const QList<CompletionItem> &items)
     m_completionPopup->setItems(items);
     placeCompletionPopup();
     m_completionPopup->show();
+    m_completionPopup->raise();
+    if (m_signature != nullptr && m_signature->isVisible())
+        placeSignature();
 }
 
 void CodeEditor::hideCompletions()
@@ -345,6 +359,83 @@ void CodeEditor::applyCompletion(const CompletionItem &item)
     cursor.setPosition(block.position() + end, QTextCursor::KeepAnchor);
     cursor.insertText(item.insert);
     setTextCursor(cursor);
+    if (insideArguments()) {
+        m_wantSignature = true;
+        m_completeTimer->start();
+    }
+}
+
+void CodeEditor::showSignature(const QString &label, const QString &parameter)
+{
+    if (!m_completion || label.isEmpty()) {
+        hideSignature();
+        return;
+    }
+    if (m_signature == nullptr) {
+        m_signature = new QLabel(viewport());
+        m_signature->setTextFormat(Qt::RichText);
+        m_signature->setContentsMargins(6, 2, 6, 2);
+    }
+    m_signature->setAutoFillBackground(true);
+    const QColor accent = m_theme != nullptr
+                              ? m_theme->tokenFormat(TokenRole::Function).foreground().color()
+                              : palette().color(QPalette::Text);
+    if (m_theme != nullptr) {
+        QPalette pal = m_signature->palette();
+        pal.setColor(QPalette::Window, m_theme->background);
+        pal.setColor(QPalette::WindowText, m_theme->foreground);
+        m_signature->setPalette(pal);
+        m_signature->setStyleSheet(QStringLiteral("QLabel { border: 1px solid %1; }").arg(accent.name()));
+    }
+    QString html = label.toHtmlEscaped();
+    if (!parameter.isEmpty()) {
+        const int at = label.indexOf(parameter);
+        if (at >= 0) {
+            html = label.left(at).toHtmlEscaped()
+                   + QStringLiteral("<span style=\"color:%1\">").arg(accent.name())
+                   + parameter.toHtmlEscaped() + QStringLiteral("</span>")
+                   + label.mid(at + parameter.size()).toHtmlEscaped();
+        }
+    }
+    m_signature->setText(html);
+    m_signature->adjustSize();
+    placeSignature();
+    m_signature->show();
+}
+
+void CodeEditor::hideSignature()
+{
+    if (m_signature != nullptr)
+        m_signature->hide();
+}
+
+void CodeEditor::placeSignature()
+{
+    if (m_signature == nullptr)
+        return;
+    m_signature->setParent(viewport());
+    const QRect caret = cursorRect();
+    int y = qMax(0, caret.top() - m_signature->height() - 4);
+    if (m_completionPopup != nullptr && m_completionPopup->isVisible())
+        y = qMax(0, m_completionPopup->y() - m_signature->height() - 4);
+    m_signature->move(caret.left(), y);
+}
+
+bool CodeEditor::insideArguments() const
+{
+    const QString line = textCursor().block().text();
+    int depth = 0;
+    for (int i = textCursor().positionInBlock() - 1; i >= 0; --i) {
+        const QChar c = line.at(i);
+        if (c == QLatin1Char(')'))
+            ++depth;
+        else if (c == QLatin1Char('(')) {
+            if (depth == 0)
+                return true;
+            --depth;
+        }
+    }
+    return false;
 }
 
 void CodeEditor::scheduleCompletion(const QString &text, bool listOpen)
@@ -352,11 +443,24 @@ void CodeEditor::scheduleCompletion(const QString &text, bool listOpen)
     if (!m_completion || text.isEmpty())
         return;
     const QChar c = text.at(0);
-    const bool trigger = c == QLatin1Char('.') || c == QLatin1Char('>') || c == QLatin1Char(':');
+    const bool member = c == QLatin1Char('.') || c == QLatin1Char('>') || c == QLatin1Char(':');
     const bool ident = c.isLetterOrNumber() || c == QLatin1Char('_');
-    if (trigger || (listOpen && ident))
+    // Member access asks for names. A call asks for the signature on every
+    // key while the caret stays inside the parentheses, so the hint is not
+    // cleared by the argument text.
+    if (member || (listOpen && ident)) {
+        m_wantSignature = false;
         m_completeTimer->start();
-    else if (listOpen)
+        return;
+    }
+    if (insideArguments()) {
+        m_wantSignature = true;
+        m_completeTimer->start();
+        return;
+    }
+    m_wantSignature = false;
+    hideSignature();
+    if (listOpen)
         hideCompletions();
 }
 
@@ -646,6 +750,7 @@ void CodeEditor::focusOutEvent(QFocusEvent *event)
     QPlainTextEdit::focusOutEvent(event);
     clearSymbolLink();
     hideCompletions();
+    hideSignature();
 }
 
 int CodeEditor::foldMarkerWidth() const

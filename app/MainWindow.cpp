@@ -9,6 +9,7 @@
 #include "app/FindBar.h"
 #include "app/OpenWith.h"
 #include "app/OutputPanel.h"
+#include "app/ProcessesPanel.h"
 #include "app/ProblemsPanel.h"
 #include "app/TabWorkspace.h"
 #include "app/TemplateDialog.h"
@@ -148,6 +149,7 @@ ProcessesPanel QTableWidget::item { padding: 2px 8px; }
 ProcessesPanel QTableWidget::item:selected { background: %6; color: %2; }
 ProcessesPanel QHeaderView::section { background: %1; color: %2; padding: 4px 8px;
     border: none; border-right: 1px solid %3; border-bottom: 1px solid %3; }
+ProcessesPanel QPlainTextEdit { background: %7; color: %2; border: none; }
 OutputPanel QComboBox, TerminalPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
 OutputPanel QComboBox QAbstractItemView, TerminalPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 ExplorerPanel { background: %1; }
@@ -382,11 +384,15 @@ MainWindow::MainWindow(QWidget *parent)
     m_thread->start();
     connect(m_orchestrator, &ProcessOrchestrator::recordsChanged, this,
             [this](const QList<ProcessRecord> &live, const QList<ProcessRecord> &recent) {
-                m_bottom->setProcesses(live, recent);
+                m_liveProcesses = live;
+                m_recentProcesses = recent;
+                if (ProcessesPanel *panel = m_tabs->processes())
+                    panel->setRecords(live, recent);
             },
             Qt::QueuedConnection);
     connect(m_tabs, &TabWorkspace::checkRequested, this, &MainWindow::runCheck);
     connect(m_tabs, &TabWorkspace::completionRequested, this, &MainWindow::askCompletion);
+    connect(m_tabs, &TabWorkspace::signatureRequested, this, &MainWindow::askSignature);
     connect(m_tabs, &TabWorkspace::editorClosed, this, [this](quintptr editorId) {
         QMetaObject::invokeMethod(m_checks, [this, editorId] { m_checks->cancel(editorId); },
                                   Qt::QueuedConnection);
@@ -410,6 +416,8 @@ MainWindow::MainWindow(QWidget *parent)
         statusBar()->showMessage(message, 5000);
     }, Qt::QueuedConnection);
     connect(m_completion, &CompletionSession::completed, this, &MainWindow::applyCompletion,
+            Qt::QueuedConnection);
+    connect(m_completion, &CompletionSession::signatureReady, this, &MainWindow::applySignature,
             Qt::QueuedConnection);
     connect(m_completion, &CompletionSession::failed, this, [this](const QString &message) {
         statusBar()->showMessage(message, 5000);
@@ -791,13 +799,16 @@ void MainWindow::connectActions()
         if (m_syncingProcesses)
             return;
         m_syncingProcesses = true;
-        if (visible)
-            m_bottom->showProcesses();
-        else
-            m_bottom->hideProcesses();
+        if (visible) {
+            m_tabs->showProcesses();
+            if (ProcessesPanel *panel = m_tabs->processes())
+                panel->setRecords(m_liveProcesses, m_recentProcesses);
+        } else {
+            m_tabs->closeProcesses();
+        }
         m_syncingProcesses = false;
     });
-    connect(m_bottom, &BottomPanel::processesActive, this, [this](bool visible) {
+    connect(m_tabs, &TabWorkspace::processesCurrent, this, [this](bool visible) {
         if (m_syncingProcesses)
             return;
         m_syncingProcesses = true;
@@ -1107,6 +1118,14 @@ void MainWindow::applyTheme(const Theme *theme)
 
 void MainWindow::refreshStatus()
 {
+    if (m_tabs->isProcesses(m_tabs->currentWidget())) {
+        setWindowTitle(QStringLiteral("Processes - %1").arg(QCoreApplication::applicationName()));
+        m_actions.hexMode->setChecked(false);
+        m_actions.byteColumns->setEnabled(false);
+        m_actions.setTextEditingEnabled(false);
+        m_languageGroup->setEnabled(false);
+        return;
+    }
     if (m_tabs->documentCount() == 0) {
         setWindowTitle(QCoreApplication::applicationName());
         return;
@@ -1253,7 +1272,23 @@ void MainWindow::askCompletion(CodeEditor *editor)
     const int line = editor->textCursor().blockNumber() + 1;
     const int column = editor->textCursor().positionInBlock() + 1;
     QMetaObject::invokeMethod(m_completion, [session = m_completion, id, revision, path, line, column, text] {
-        session->request(id, revision, path, line, column, text);
+        session->request(id, revision, path, line, column, text, QStringLiteral("completion"));
+    }, Qt::QueuedConnection);
+}
+
+void MainWindow::askSignature(CodeEditor *editor)
+{
+    if (!m_completeEnabled || m_completeCommand.isEmpty() || editor == nullptr)
+        return;
+    QString text = editor->toPlainText();
+    text.remove(QLatin1Char('\r'));
+    const int id = ++m_completionId;
+    const int revision = editor->documentRevision();
+    const QString path = editor->filePath();
+    const int line = editor->textCursor().blockNumber() + 1;
+    const int column = editor->textCursor().positionInBlock() + 1;
+    QMetaObject::invokeMethod(m_completion, [session = m_completion, id, revision, path, line, column, text] {
+        session->request(id, revision, path, line, column, text, QStringLiteral("signature"));
     }, Qt::QueuedConnection);
 }
 
@@ -1265,6 +1300,16 @@ void MainWindow::applyCompletion(int id, int revision, const QList<CompletionIte
     if (editor == nullptr || editor->documentRevision() != revision)
         return;
     editor->showCompletions(items);
+}
+
+void MainWindow::applySignature(int id, int revision, const QString &label, const QString &parameter)
+{
+    if (id != m_completionId)
+        return;
+    CodeEditor *editor = m_tabs->currentEditor();
+    if (editor == nullptr || editor->documentRevision() != revision)
+        return;
+    editor->showSignature(label, parameter);
 }
 
 void MainWindow::applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans)
@@ -1365,7 +1410,7 @@ void MainWindow::applyProject(const Project &project)
         vars.cwd = m_completeDirectory;
         const QString command = m_completeCommand;
         const QString directory = m_completeDirectory;
-        m_orchestrator->submit(QStringLiteral("complete"), QStringLiteral("complete"), groupDirectory, 0, command,
+        m_orchestrator->submit(QStringLiteral("complete"), QStringLiteral("autocomplete"), groupDirectory, 0, command,
                                [session = m_completion, command, directory, vars] {
                                    session->start(command, directory, vars);
                                },

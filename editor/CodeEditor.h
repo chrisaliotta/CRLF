@@ -50,6 +50,7 @@ public:
     void setCheckingEnabled(bool enabled);
     void setCompletionEnabled(bool enabled);
     void showCompletions(const QList<CompletionItem> &items);
+    void showSignature(const QString &label, const QString &parameter);
     void setDiagnostics(const QList<Diagnostic> &spans);
     int documentRevision() const;
     // 1-based. Unfolds a region that hides the line, then centers it.
@@ -88,6 +89,7 @@ signals:
     void checkRequested();
     // Ctrl+Space, a trigger character, or another character while the list is open.
     void completionRequested();
+    void signatureRequested();
     void filePathChanged();
 
 protected:
@@ -114,6 +116,9 @@ private:
     void scheduleCheck();
     void scheduleCompletion(const QString &text, bool listOpen);
     void hideCompletions();
+    void hideSignature();
+    bool insideArguments() const;
+    void placeSignature();
     void applyCompletion(const CompletionItem &item);
     void placeCompletionPopup();
     bool diagnosticRange(const Diagnostic &span, int *start, int *end) const;
@@ -139,7 +144,9 @@ private:
     class QTimer *m_checkTimer = nullptr;
     class QTimer *m_completeTimer = nullptr;
     class CompletionPopup *m_completionPopup = nullptr;
+    class QLabel *m_signature = nullptr;
     bool m_completion = false;
+    bool m_wantSignature = false;
     QString m_filePath;
     QString m_workOwner;
     bool m_checking = false;

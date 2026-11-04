@@ -20,8 +20,11 @@ struct ProcessRecord
     // Milliseconds left on a Sleep debounce. Zero while Running.
     int timerMs = 0;
     // "Sleep" while a debounce timer is waiting, "Running" after it fires.
+    // A finished row is "Finished" or "Cancelled".
     QString status;
     QString detail;
+    // Standard error and other log lines the script wrote. Capped.
+    QString log;
 };
 
 Q_DECLARE_METATYPE(ProcessRecord)
@@ -58,6 +61,10 @@ public:
     // The token of the record, read from this object's thread.
     int currentToken(const QString &key) const;
 
+    // Appends script log text (standard error) to the live record. Queues
+    // onto this object's thread.
+    void appendLog(const QString &key, const QString &text);
+
     // Called from a Deliver function, on the UI thread. Runs `work` on the pool
     // under the deliver's token.
     void runOnPool(const QString &key, std::function<void()> work);
@@ -81,6 +88,7 @@ private:
     void begin(Task *task);
     void startPool(Task *task, int token, const std::function<void()> &work);
     void removeTask(const QString &key, const QString &outcome);
+    void appendLogOnThread(const QString &key, const QString &text);
     void publish();
 
     QThreadPool *m_pool = nullptr;

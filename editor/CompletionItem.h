@@ -10,6 +10,7 @@ struct CompletionItem
 {
     QString label;
     QString detail;
+    QString documentation;
     QString insert;
     int replaceLine = 0;
     int replaceColumn = 0;

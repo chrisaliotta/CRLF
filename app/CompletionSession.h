@@ -23,17 +23,20 @@ public:
 
     // Replaces a session already running for a different command.
     void start(const QString &command, const QString &workingDirectory, const CommandVariables &variables);
-    void request(int id, int revision, const QString &path, int line, int column, const QString &text);
+    void request(int id, int revision, const QString &path, int line, int column, const QString &text,
+                 const QString &kind);
     void stop();
 
 signals:
     void completed(int id, int revision, const QList<CompletionItem> &items);
+    void signatureReady(int id, int revision, const QString &label, const QString &parameter);
     void failed(const QString &message);
 
 private:
     void launch(bool withJob = true);
     void stopTree();
-    void writeRequest(int id, int revision, const QString &path, int line, int column, const QString &text);
+    void writeRequest(int id, int revision, const QString &path, int line, int column, const QString &text,
+                      const QString &kind);
     void absorbStdout(const QByteArray &bytes);
     void takeLine(const QByteArray &line);
 

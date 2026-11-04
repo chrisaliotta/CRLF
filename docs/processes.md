@@ -28,7 +28,7 @@ flowchart LR
 
 `submit` takes a key, a name, an owner (tab title and path, or a folder), a debounce interval, a detail string, and the function to run. The record is `Sleep` while the debounce timer is waiting and `Running` while the pool task or child process is in flight. Completion or cancellation removes it.
 
-The Processes page receives a copy of the records. It never reads the worker's memory. `View > Processes` is the only way to open the page. Closing the strip does not stop the work.
+The Processes page receives a copy of the records. It never reads the worker's memory. View > Processes opens that view as one editor tab. Choosing it again focuses the same tab. Closing the tab does not stop the work. Selecting a row shows that task's log. A script writes the log on standard error; standard output stays the protocol (the check array, or one completion reply per line).
 
 Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
 

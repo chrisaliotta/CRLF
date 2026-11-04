@@ -2,6 +2,7 @@
 
 #include <QHeaderView>
 #include <QLabel>
+#include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -59,18 +60,89 @@ ProcessesPanel::ProcessesPanel(QWidget *parent)
     m_recent = new QTableWidget(this);
     configureTable(m_live);
     configureTable(m_recent);
+    m_log = new QPlainTextEdit(this);
+    m_log->setObjectName(QStringLiteral("processLog"));
+    m_log->setReadOnly(true);
+    m_log->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    m_log->setPlaceholderText(QStringLiteral("Script log. Select a row. Standard error from the script is written here."));
+    auto *logLabel = new QLabel(QStringLiteral("Log"), this);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 6, 8, 6);
     layout->setSpacing(4);
     layout->addWidget(liveLabel);
-    layout->addWidget(m_live, 1);
+    layout->addWidget(m_live, 2);
     layout->addWidget(recentLabel);
-    layout->addWidget(m_recent, 1);
+    layout->addWidget(m_recent, 2);
+    layout->addWidget(logLabel);
+    layout->addWidget(m_log, 3);
+
+    const auto showRow = [this](QTableWidget *table, const QList<ProcessRecord> *records, QTableWidget *other) {
+        other->clearSelection();
+        const int row = table->currentRow();
+        if (row < 0 || row >= records->size()) {
+            m_log->clear();
+            return;
+        }
+        m_shown = records;
+        m_shownRow = row;
+        m_log->setPlainText(records->at(row).log);
+        m_log->moveCursor(QTextCursor::End);
+    };
+    connect(m_live, &QTableWidget::currentCellChanged, this, [this, showRow](int, int, int, int) {
+        showRow(m_live, &m_liveRecords, m_recent);
+    });
+    connect(m_recent, &QTableWidget::currentCellChanged, this, [this, showRow](int, int, int, int) {
+        showRow(m_recent, &m_recentRecords, m_live);
+    });
 }
 
 void ProcessesPanel::setRecords(const QList<ProcessRecord> &live, const QList<ProcessRecord> &recent)
 {
-    fill(m_live, live, true);
-    fill(m_recent, recent, false);
+    const bool liveShown = m_shown == &m_liveRecords;
+    const int shownRow = m_shownRow;
+    QString shownName;
+    QString shownOwner;
+    QString shownStatus;
+    const QList<ProcessRecord> &previous = liveShown ? m_liveRecords : m_recentRecords;
+    if (shownRow >= 0 && shownRow < previous.size()) {
+        shownName = previous.at(shownRow).name;
+        shownOwner = previous.at(shownRow).owner;
+        shownStatus = previous.at(shownRow).status;
+    }
+
+    m_liveRecords = live;
+    m_recentRecords = recent;
+    fill(m_live, m_liveRecords, true);
+    fill(m_recent, m_recentRecords, false);
+
+    const auto reselect = [this](QTableWidget *table, const QList<ProcessRecord> &records, const QString &name,
+                                 const QString &owner, const QString &status) {
+        for (int row = 0; row < records.size(); ++row) {
+            const ProcessRecord &record = records.at(row);
+            if (record.name == name && record.owner == owner && record.status == status) {
+                table->setCurrentCell(row, 0);
+                return true;
+            }
+        }
+        return false;
+    };
+    if (!shownName.isEmpty()
+        && (reselect(m_live, m_liveRecords, shownName, shownOwner, shownStatus)
+            || reselect(m_recent, m_recentRecords, shownName, shownOwner, shownStatus))) {
+        const int liveRow = m_live->currentRow();
+        const int recentRow = m_recent->currentRow();
+        if (liveRow >= 0 && liveRow < m_liveRecords.size())
+            m_log->setPlainText(m_liveRecords.at(liveRow).log);
+        else if (recentRow >= 0 && recentRow < m_recentRecords.size())
+            m_log->setPlainText(m_recentRecords.at(recentRow).log);
+        m_log->moveCursor(QTextCursor::End);
+        return;
+    }
+    if (!m_liveRecords.isEmpty())
+        m_live->setCurrentCell(0, 0);
+    else if (!m_recentRecords.isEmpty())
+        m_recent->setCurrentCell(0, 0);
+    else
+        m_log->clear();
 }

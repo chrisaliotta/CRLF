@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Types.h"
+#include "app/ProcessesPanel.h"
 #include "editor/SymbolLocation.h"
 #include "io/DocumentFile.h"
 #include "io/ProjectCommands.h"
@@ -20,6 +21,7 @@ class CodeEditor;
 class HexView;
 class LanguageDefinition;
 class LanguageRegistry;
+class ProcessesPanel;
 class QLabel;
 class QToolButton;
 class SymbolIndex;
@@ -91,6 +93,12 @@ public:
     void setCheckingEnabled(bool enabled);
     void setCompletionEnabled(bool enabled);
     void setOrchestrator(ProcessOrchestrator *orchestrator);
+    // Focuses the Processes tab, creating it when it is closed. Only one exists.
+    void showProcesses();
+    void closeProcesses();
+    bool processesOpen() const { return m_processes != nullptr; }
+    bool isProcesses(QWidget *page) const { return page != nullptr && page == m_processes; }
+    ProcessesPanel *processes() const { return m_processes; }
     CodeEditor *editorFor(quintptr editorId) const;
     // Focuses the open document and moves its cursor. A path that is not open
     // is left alone; check rows belong to documents that are still open.
@@ -113,8 +121,10 @@ signals:
     void fileRevealed(const QString &path);
     void checkRequested(CodeEditor *editor);
     void completionRequested(CodeEditor *editor);
+    void signatureRequested(CodeEditor *editor);
     void editorClosed(quintptr editorId);
     void editorRetargeted(CodeEditor *editor);
+    void processesCurrent(bool current);
 
 private:
     struct Page {
@@ -164,6 +174,8 @@ private:
     const LanguageRegistry *m_registry;
     SymbolIndex *m_symbols = nullptr;
     ProcessOrchestrator *m_orchestrator = nullptr;
+    ProcessesPanel *m_processes = nullptr;
+    bool m_adjustingTabs = false;
     const Theme *m_theme;
     // Empty page behind the always-last + tab, which scrolls with the
     // documents like a browser's new-tab button.

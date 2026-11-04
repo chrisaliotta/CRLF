@@ -117,13 +117,13 @@ void CompletionSession::start(const QString &command, const QString &workingDire
 }
 
 void CompletionSession::request(int id, int revision, const QString &path, int line, int column,
-                                const QString &text)
+                                const QString &text, const QString &kind)
 {
     if (m_process == nullptr || m_process->state() == QProcess::NotRunning) {
         emit failed(QStringLiteral("Completion is not running."));
         return;
     }
-    writeRequest(id, revision, path, line, column, text);
+    writeRequest(id, revision, path, line, column, text, kind);
 }
 
 void CompletionSession::stop()
@@ -142,9 +142,10 @@ void CompletionSession::launch(bool withJob)
             absorbStdout(m_process->readAllStandardOutput());
         });
         connect(m_process, &QProcess::readyReadStandardError, this, [this] {
-            const QString text = QString::fromUtf8(m_process->readAllStandardError()).trimmed();
-            if (!text.isEmpty())
-                emit failed(text);
+            const QByteArray bytes = m_process->readAllStandardError();
+            if (bytes.isEmpty() || m_orchestrator == nullptr)
+                return;
+            m_orchestrator->appendLog(QStringLiteral("complete"), QString::fromUtf8(bytes));
         });
         connect(m_process, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
             absorbStdout(m_process->readAllStandardOutput());
@@ -231,12 +232,23 @@ void CompletionSession::launch(bool withJob)
 }
 
 void CompletionSession::writeRequest(int id, int revision, const QString &path, int line, int column,
-                                     const QString &text)
+                                     const QString &text, const QString &kind)
 {
+    QString filePath = path;
+#ifdef Q_OS_WIN
+    const WslPath::LinuxPath linux = WslPath::toLinux(path);
+    if (linux.valid())
+        filePath = linux.path;
+#endif
     QJsonObject obj;
     obj.insert(QLatin1String("id"), id);
     obj.insert(QLatin1String("revision"), revision);
-    obj.insert(QLatin1String("path"), path);
+    obj.insert(QLatin1String("path"), filePath);
+    obj.insert(QLatin1String("line"), line);
+    obj.insert(QLatin1String("column"), column);
+    obj.insert(QLatin1String("text"), text);
+    if (!kind.isEmpty())
+        obj.insert(QLatin1String("kind"), kind);
     obj.insert(QLatin1String("line"), line);
     obj.insert(QLatin1String("column"), column);
     obj.insert(QLatin1String("text"), text);
@@ -286,6 +298,26 @@ void CompletionSession::takeLine(const QByteArray &line)
         emit failed(error);
         return;
     }
+    const int id = obj.value(QLatin1String("id")).toInt();
+    const int revision = obj.value(QLatin1String("revision")).toInt();
+    if (obj.contains(QLatin1String("signatures"))) {
+        const QJsonArray signatures = obj.value(QLatin1String("signatures")).toArray();
+        int which = obj.value(QLatin1String("activeSignature")).toInt();
+        if (which < 0 || which >= signatures.size())
+            which = 0;
+        QString label;
+        QString parameter;
+        if (!signatures.isEmpty()) {
+            const QJsonObject signature = signatures.at(which).toObject();
+            label = signature.value(QLatin1String("label")).toString();
+            const QJsonArray parameters = signature.value(QLatin1String("parameters")).toArray();
+            const int active = signature.value(QLatin1String("active")).toInt();
+            if (active >= 0 && active < parameters.size())
+                parameter = parameters.at(active).toString();
+        }
+        emit signatureReady(id, revision, label, parameter);
+        return;
+    }
     QList<CompletionItem> items;
     for (const QJsonValue &value : obj.value(QLatin1String("items")).toArray()) {
         const QJsonObject item = value.toObject();
@@ -294,6 +326,7 @@ void CompletionSession::takeLine(const QByteArray &line)
         if (row.label.isEmpty())
             continue;
         row.detail = item.value(QLatin1String("detail")).toString();
+        row.documentation = item.value(QLatin1String("documentation")).toString();
         row.insert = item.value(QLatin1String("insert")).toString();
         if (row.insert.isEmpty())
             row.insert = row.label;
@@ -302,7 +335,7 @@ void CompletionSession::takeLine(const QByteArray &line)
         row.replaceEndColumn = item.value(QLatin1String("replaceEndColumn")).toInt();
         items.append(row);
     }
-    emit completed(obj.value(QLatin1String("id")).toInt(), obj.value(QLatin1String("revision")).toInt(), items);
+    emit completed(id, revision, items);
 }
 
 void CompletionSession::stopTree()

@@ -2,8 +2,9 @@
 
 #include "app/Actions.h"
 #include "app/FileIconTheme.h"
-#include "editor/Diagnostic.h"
+#include "app/ProcessOrchestrator.h"
 #include "editor/CompletionItem.h"
+#include "editor/Diagnostic.h"
 #include "io/CommandVariables.h"
 #include "io/SessionStore.h"
 #include "syntax/LanguageRegistry.h"
@@ -84,7 +85,9 @@ private:
     void runCheck(CodeEditor *editor);
     void applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans);
     void askCompletion(CodeEditor *editor);
+    void askSignature(CodeEditor *editor);
     void applyCompletion(int id, int revision, const QList<CompletionItem> &items);
+    void applySignature(int id, int revision, const QString &label, const QString &parameter);
     QString diagnosticKey(const CodeEditor *editor) const;
 
     LanguageRegistry m_registry;
@@ -122,6 +125,8 @@ private:
     QString m_completeCommand;
     QString m_completeDirectory;
     int m_completionId = 0;
+    QList<ProcessRecord> m_liveProcesses;
+    QList<ProcessRecord> m_recentProcesses;
     QHash<quintptr, QString> m_diagnosticKeys;
     QFileSystemWatcher *m_commandWatcher = nullptr;
     QString m_projectFile;

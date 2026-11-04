@@ -2,7 +2,6 @@
 
 #include "app/OutputPanel.h"
 #include "app/ProblemsPanel.h"
-#include "app/ProcessesPanel.h"
 #include "app/TerminalPanel.h"
 
 #include <QHBoxLayout>
@@ -31,11 +30,6 @@ BottomPanel::BottomPanel(QWidget *parent)
     m_terminalPage->setText(QStringLiteral("Terminal"));
     m_terminalPage->setCheckable(true);
     m_terminalPage->setAutoRaise(true);
-    m_processesPage = new QToolButton(this);
-    m_processesPage->setObjectName(QStringLiteral("processesPage"));
-    m_processesPage->setText(QStringLiteral("Processes"));
-    m_processesPage->setCheckable(true);
-    m_processesPage->setAutoRaise(true);
     auto *closeButton = new QToolButton(this);
     closeButton->setText(QStringLiteral("\u2715"));
     closeButton->setToolTip(QStringLiteral("Close"));
@@ -44,12 +38,10 @@ BottomPanel::BottomPanel(QWidget *parent)
     m_output = new OutputPanel(this);
     m_problems = new ProblemsPanel(this);
     m_terminal = new TerminalPanel(this);
-    m_processes = new ProcessesPanel(this);
     m_stack = new QStackedWidget(this);
     m_stack->addWidget(m_output);
     m_stack->addWidget(m_problems);
     m_stack->addWidget(m_terminal);
-    m_stack->addWidget(m_processes);
 
     auto *header = new QHBoxLayout;
     header->setContentsMargins(6, 4, 6, 4);
@@ -57,7 +49,6 @@ BottomPanel::BottomPanel(QWidget *parent)
     header->addWidget(m_outputPage);
     header->addWidget(m_problemsPage);
     header->addWidget(m_terminalPage);
-    header->addWidget(m_processesPage);
     header->addStretch(1);
     header->addWidget(closeButton);
 
@@ -70,7 +61,6 @@ BottomPanel::BottomPanel(QWidget *parent)
     connect(m_outputPage, &QToolButton::clicked, this, &BottomPanel::presentOutput);
     connect(m_problemsPage, &QToolButton::clicked, this, &BottomPanel::showProblems);
     connect(m_terminalPage, &QToolButton::clicked, this, &BottomPanel::showTerminal);
-    connect(m_processesPage, &QToolButton::clicked, this, &BottomPanel::showProcesses);
     connect(m_problems, &ProblemsPanel::spansChanged, this, &BottomPanel::refreshProblemCount);
     connect(m_problems, &ProblemsPanel::showRequested, this, &BottomPanel::revealProblems);
     connect(closeButton, &QToolButton::clicked, this, &BottomPanel::dismiss);
@@ -105,7 +95,6 @@ void BottomPanel::showTerminal()
     show();
     m_terminal->focusCurrent();
     emit terminalActive(true);
-    emit processesActive(false);
     if (wasHidden)
         emit opened();
 }
@@ -114,29 +103,6 @@ void BottomPanel::hideTerminal()
 {
     if (m_stack->currentWidget() == m_terminal)
         hide();
-}
-
-void BottomPanel::showProcesses()
-{
-    m_stack->setCurrentWidget(m_processes);
-    setPageChecked(m_processesPage);
-    const bool wasHidden = !isVisible();
-    show();
-    emit terminalActive(false);
-    emit processesActive(true);
-    if (wasHidden)
-        emit opened();
-}
-
-void BottomPanel::hideProcesses()
-{
-    if (m_stack->currentWidget() == m_processes)
-        hide();
-}
-
-void BottomPanel::setProcesses(const QList<ProcessRecord> &live, const QList<ProcessRecord> &recent)
-{
-    m_processes->setRecords(live, recent);
 }
 
 void BottomPanel::closeSessions()
@@ -151,7 +117,6 @@ void BottomPanel::presentOutput()
     const bool wasHidden = !isVisible();
     show();
     emit terminalActive(false);
-    emit processesActive(false);
     if (wasHidden)
         emit opened();
 }
@@ -163,7 +128,6 @@ void BottomPanel::showProblems()
     const bool wasHidden = !isVisible();
     show();
     emit terminalActive(false);
-    emit processesActive(false);
     if (wasHidden)
         emit opened();
 }
@@ -196,7 +160,6 @@ void BottomPanel::dismiss()
     m_output->suppress();
     hide();
     emit terminalActive(false);
-    emit processesActive(false);
 }
 
 void BottomPanel::setPageChecked(QToolButton *active)
@@ -204,13 +167,10 @@ void BottomPanel::setPageChecked(QToolButton *active)
     m_outputPage->blockSignals(true);
     m_problemsPage->blockSignals(true);
     m_terminalPage->blockSignals(true);
-    m_processesPage->blockSignals(true);
     m_outputPage->setChecked(active == m_outputPage);
     m_problemsPage->setChecked(active == m_problemsPage);
     m_terminalPage->setChecked(active == m_terminalPage);
-    m_processesPage->setChecked(active == m_processesPage);
     m_outputPage->blockSignals(false);
     m_problemsPage->blockSignals(false);
     m_terminalPage->blockSignals(false);
-    m_processesPage->blockSignals(false);
 }

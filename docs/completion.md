@@ -14,11 +14,15 @@ The editor writes one JSON object per line and reads one JSON object per line. `
 
 `CompletionSession` is moved onto the orchestrator thread with `CheckRunner`. `QProcess` is created there. `start`, `request`, and `stop` are queued from the UI thread and return. The reply signal is queued back, and `MainWindow::applyCompletion` is the only place that fills the popup.
 
-The 100ms timer stays on the editor. Ctrl+Space emits immediately. `.`, `->`, and `::` start the timer. Identifier characters restart it only while the list is open. The timer does not kill or start a process. It asks `MainWindow` to queue a request.
+The 100ms timer stays on the editor. Ctrl+Space asks for names. `.`, `->`, and `::` start the timer for names. While the caret is inside parentheses, the same timer asks for the signature instead, and the list stays closed. The timer does not kill or start a process. It asks `MainWindow` to queue a request.
 
-The request carries the buffer. A tool that opened `${file}` would complete the saved copy and miss unsaved edits. `revision` is `QTextDocument::revision()` at send time. A reply whose id or revision is older than the buffer is dropped.
+A completion item carries `documentation`, the summary text from the server. The list row is the label and `detail`. The selected row shows `documentation` under the list.
 
-The session is one `Hold` record named `complete` on the Processes page. It stays until the command is turned off, the project changes, or the process exits. Stopping it closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait.
+A signature request sets `"kind": "signature"`. The reply is `signatures`, each with `label`, `parameters`, and `active`. The editor draws the active signature above the caret and colors `parameters[active]` with the theme's function color. An empty `signatures` array hides the hint. Choosing a completion that leaves the caret inside `()` asks for the signature of that call.
+
+The request carries the buffer. A tool that opened `${file}` would complete the saved copy and miss unsaved edits. When the session is running in a WSL distro, a `\\wsl.localhost` path is sent as the Linux path (`/home/...`), because the language server is a Linux process and cannot open the Windows UNC path. `revision` is `QTextDocument::revision()` at send time. A reply whose id or revision is older than the buffer is dropped.
+
+The session is one `Hold` record shown as `autocomplete` on the Processes page. It stays until the command is turned off, the project changes, or the process exits. Stopping it closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait.
 
 ## The script
 

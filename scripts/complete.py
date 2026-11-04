@@ -31,10 +31,22 @@ CPP = {
 }
 
 
+def linux_path(path):
+    """A distro path for a server that is running inside WSL."""
+    text = path.replace("\\", "/")
+    lowered = text.lower()
+    for prefix in ("//wsl.localhost/", "//wsl$/"):
+        if lowered.startswith(prefix):
+            rest = text[len(prefix):]
+            slash = rest.find("/")
+            return "/" if slash < 0 else rest[slash:]
+    return path
+
+
 def uri_for(path):
     if not path:
         return "untitled:buffer"
-    text = path.replace("\\", "/")
+    text = linux_path(path).replace("\\", "/")
     if text.startswith("/"):
         return "file://" + text
     return "file:///" + text
@@ -74,10 +86,13 @@ class Server:
         self.lock = threading.Lock()
         self.ready = threading.Condition(self.lock)
         threading.Thread(target=self._read, daemon=True).start()
+        root = uri_for(os.getcwd())
         self.request(
             "initialize",
             {
                 "processId": os.getpid(),
+                "rootUri": root,
+                "workspaceFolders": [{"uri": root, "name": os.path.basename(os.getcwd()) or "project"}],
                 "capabilities": {"textDocument": {"completion": {"completionItem": {}}}},
             },
         )
@@ -144,6 +159,7 @@ class Server:
         )
         rows = result.get("items", []) if isinstance(result, dict) else result or []
         items = []
+        resolved_count = 0
         for row in rows[:40]:
             insert = row.get("insertText") or row.get("label") or ""
             edit = row.get("textEdit") or {}
@@ -158,10 +174,20 @@ class Server:
                 replace_end = end["character"] + 1
             else:
                 replace_line, replace_column, replace_end = word_range(text, line, column)
+            details = row.get("labelDetails") or {}
+            detail = row.get("detail") or details.get("detail") or details.get("description") or ""
+            summary = documentation(row.get("documentation"))
+            if not detail and not summary and resolved_count < 8:
+                resolved_count += 1
+                resolved = self.resolve(row)
+                details = resolved.get("labelDetails") or {}
+                detail = resolved.get("detail") or details.get("detail") or details.get("description") or ""
+                summary = documentation(resolved.get("documentation")) or summary
             items.append(
                 {
                     "label": row.get("label") or insert,
-                    "detail": row.get("detail") or "",
+                    "detail": detail,
+                    "documentation": summary,
                     "insert": insert,
                     "replaceLine": replace_line,
                     "replaceColumn": replace_column,
@@ -169,6 +195,48 @@ class Server:
                 }
             )
         return items
+
+    def resolve(self, item):
+        try:
+            return self.request("completionItem/resolve", item) or item
+        except Exception:
+            return item
+
+    def signature(self, path, language, text, line, column):
+        uri = self.sync(path, language, text)
+        result = self.request(
+            "textDocument/signatureHelp",
+            {
+                "textDocument": {"uri": uri},
+                "position": {"line": max(0, line - 1), "character": max(0, column - 1)},
+            },
+        ) or {}
+        rows = result.get("signatures") or []
+        active_signature = result.get("activeSignature") or 0
+        if active_signature >= len(rows):
+            active_signature = 0
+        signatures = []
+        for index, row in enumerate(rows[:8]):
+            parameters = []
+            for param in row.get("parameters") or []:
+                label = param.get("label")
+                if isinstance(label, str):
+                    parameters.append(label)
+                elif isinstance(label, list) and len(label) == 2:
+                    parameters.append((row.get("label") or "")[label[0]:label[1]])
+            active = 0
+            if index == active_signature:
+                active = row.get("activeParameter", result.get("activeParameter") or 0)
+            signatures.append({"label": row.get("label") or "", "parameters": parameters, "active": active})
+        return {"signatures": signatures, "activeSignature": active_signature}
+
+
+def documentation(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return value.get("value") or ""
+    return ""
 
 
 def word_range(text, line, column):
@@ -201,11 +269,16 @@ def roslyn_argv():
     return None
 
 
+def log(message):
+    print(message, file=sys.stderr, flush=True)
+
+
 def reply(payload):
     print(json.dumps(payload), flush=True)
 
 
 def main():
+    log("completion session ready")
     servers = {}
     missing = set()
     for line in sys.stdin:
@@ -230,10 +303,15 @@ def main():
             language = "csharp"
             argv = roslyn_argv()
             error = "No C# language server found"
+        kind = request.get("kind") or "completion"
         if key is None:
-            reply({"id": number, "revision": revision, "items": []})
+            if kind == "signature":
+                reply({"id": number, "revision": revision, "signatures": []})
+            else:
+                reply({"id": number, "revision": revision, "items": []})
             continue
         if argv is None:
+            log(error)
             if key not in missing:
                 missing.add(key)
                 reply({"id": number, "revision": revision, "error": error})
@@ -241,8 +319,31 @@ def main():
                 reply({"id": number, "revision": revision, "items": []})
             continue
         if key not in servers:
-            servers[key] = Server(argv)
-        items = servers[key].complete(path, language, request.get("text") or "", request.get("line") or 1, request.get("column") or 1)
+            log("starting " + " ".join(argv))
+            try:
+                servers[key] = Server(argv)
+            except Exception as exc:
+                log("server failed: " + str(exc))
+                reply({"id": number, "revision": revision, "error": str(exc)})
+                continue
+        log("%s %s %s:%s" % (kind, linux_path(path) or "(unsaved)", request.get("line"), request.get("column")))
+        try:
+            if kind == "signature":
+                payload = servers[key].signature(
+                    path, language, request.get("text") or "", request.get("line") or 1, request.get("column") or 1
+                )
+                payload["id"] = number
+                payload["revision"] = revision
+                reply(payload)
+                continue
+            items = servers[key].complete(
+                path, language, request.get("text") or "", request.get("line") or 1, request.get("column") or 1
+            )
+        except Exception as exc:
+            log("complete failed: " + str(exc))
+            reply({"id": number, "revision": revision, "error": str(exc)})
+            continue
+        log("%d items" % len(items))
         reply({"id": number, "revision": revision, "items": items})
 
 

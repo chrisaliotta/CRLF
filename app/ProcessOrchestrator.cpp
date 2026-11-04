@@ -30,6 +30,7 @@ struct ProcessOrchestrator::Task
     QString name;
     QString owner;
     QString detail;
+    QString log;
     std::function<void()> work;
     ProcessLane lane = ProcessLane::Pool;
     QPointer<QObject> deliverTo;
@@ -95,6 +96,30 @@ void ProcessOrchestrator::release(const QString &key, int token)
 int ProcessOrchestrator::currentToken(const QString &key) const
 {
     return m_tokens.value(key);
+}
+
+void ProcessOrchestrator::appendLog(const QString &key, const QString &text)
+{
+    if (text.isEmpty())
+        return;
+    if (QThread::currentThread() == thread()) {
+        appendLogOnThread(key, text);
+        return;
+    }
+    QMetaObject::invokeMethod(this, [this, key, text] { appendLogOnThread(key, text); },
+                              Qt::QueuedConnection);
+}
+
+void ProcessOrchestrator::appendLogOnThread(const QString &key, const QString &text)
+{
+    Task *task = m_tasks.value(key);
+    if (task == nullptr)
+        return;
+    task->log.append(text);
+    const int maxChars = 12000;
+    if (task->log.size() > maxChars)
+        task->log = task->log.right(maxChars);
+    publish();
 }
 
 void ProcessOrchestrator::runOnPool(const QString &key, std::function<void()> work)
@@ -257,6 +282,7 @@ void ProcessOrchestrator::removeTask(const QString &key, const QString &outcome)
     record.name = task->name;
     record.owner = task->owner;
     record.detail = task->detail;
+    record.log = task->log;
     record.status = outcome;
     m_recent.prepend(record);
     while (m_recent.size() > 20)
@@ -286,6 +312,7 @@ void ProcessOrchestrator::publish()
         record.name = task->name;
         record.owner = task->owner;
         record.detail = task->detail;
+        record.log = task->log;
         if (task->sleeping) {
             sleeping = true;
             record.status = QStringLiteral("Sleep");

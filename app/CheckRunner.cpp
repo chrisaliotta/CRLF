@@ -181,14 +181,20 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
             Running *running = m_running.value(editorId);
             if (!running)
                 return;
-            running->errors += running->process->readAllStandardError();
+            const QByteArray bytes = running->process->readAllStandardError();
+            running->errors += bytes;
+            if (m_orchestrator != nullptr && !bytes.isEmpty())
+                m_orchestrator->appendLog(QStringLiteral("check:%1").arg(editorId), QString::fromUtf8(bytes));
         });
         connect(running->process, &QProcess::finished, this, [this, editorId](int exitCode, QProcess::ExitStatus status) {
             Running *done = m_running.value(editorId);
             if (!done)
                 return;
             absorbStdout(*done, done->process->readAllStandardOutput());
-            done->errors += done->process->readAllStandardError();
+            const QByteArray tail = done->process->readAllStandardError();
+            done->errors += tail;
+            if (m_orchestrator != nullptr && !tail.isEmpty())
+                m_orchestrator->appendLog(QStringLiteral("check:%1").arg(editorId), QString::fromUtf8(tail));
             if (!done->distro.isEmpty() && !done->groupResolved && !done->pendingOutput.isEmpty()) {
                 const QByteArray first = done->pendingOutput;
                 done->pendingOutput.clear();
