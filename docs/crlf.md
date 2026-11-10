@@ -2,7 +2,7 @@
 
 `.crlf` is the project file. One file is in use at a time. It is JSON. The parser in `io/ProjectCommands.cpp` is the list of keys that do anything. A key that is not in that list is kept when the file is rewritten and is otherwise ignored.
 
-Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [completion.md](completion.md). Definition links are in [navigation.md](navigation.md).
+Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md).
 
 ## Which file is in use
 
@@ -24,7 +24,7 @@ A bare array is a list of commands and nothing else.
 ]
 ```
 
-An object is the full file. `commands` is the same list. Every other key below is read only from the object. Putting `indent`, `hide`, `check`, or `complete` next to a bare array does not parse: a bare array has no place to put them.
+An object is the full file. `commands` is the same list. Every other key below is read only from the object. Putting `indent`, `hide`, `syntax`, or `autocomplete` next to a bare array does not parse: a bare array has no place to put them.
 
 ```json
 {
@@ -35,8 +35,8 @@ An object is the full file. `commands` is the same list. Every other key below i
   "indent": {},
   "navigation": true,
   "externalNavigation": true,
-  "check": {},
-  "complete": {}
+  "syntax": {},
+  "autocomplete": {}
 }
 ```
 
@@ -77,7 +77,7 @@ Each entry needs `name` and `command`. An entry missing either is skipped. A sec
 
 Format replaces the focused editor and does not write the file. Build runs in the `build` directory under the `.crlf` folder and sits on Tools, then Build. F5 starts it. A second `"key": "F5"` later in the file is ignored.
 
-`${name}` matches letters only, as in `${file}`. `${file-name}` is not a variable. A name this program does not know is left in the string for the shell. The names are listed in [commands.md](commands.md). `${buffer}` and `${terminal}` are paths to files written for that launch: the focused editor's text, including unsaved edits, and the current terminal's plain text. The same substitution is used for `check` and `complete`.
+`${name}` matches letters only, as in `${file}`. `${file-name}` is not a variable. A name this program does not know is left in the string for the shell. The names are listed in [commands.md](commands.md). `${buffer}` and `${terminal}` are paths to files written for that launch: the focused editor's text, including unsaved edits, and the current terminal's plain text. The same substitution is used for `syntax` and `autocomplete`.
 
 On Windows, a working directory under `\\wsl.localhost` or `\\wsl$` runs the command through `wsl.exe` in that distro. Path variables that point into a distro are Linux paths. Any other Windows directory runs through `cmd.exe /d /s /c`.
 
@@ -197,9 +197,9 @@ Both keys are read only from the object form. A bare array leaves both on.
 
 Ctrl+click still opens a definition in the project. A name imported from a package stays plain text and is not read from `node_modules`.
 
-## Check and completion
+## Syntax and autocomplete
 
-`check` and `complete` use the same object. Leaving the key out leaves that feature off. `false` does the same.
+`syntax` and `autocomplete` use the same object. Leaving the key out leaves that feature off. `false` does the same.
 
 | Field | Meaning |
 |---|---|
@@ -207,29 +207,29 @@ Ctrl+click still opens a definition in the project. A name imported from a packa
 | `command` | Shell command. Required in practice: an enabled entry with an empty command does not start |
 | `cwd` | Working directory, relative to the `.crlf` directory. The default is that directory |
 
-`"check": true` sets `enabled` and leaves `command` empty, so no check runs. The same is true for `complete`. The command has to be in the object, with `enabled` set to `true`.
+`"syntax": true` sets `enabled` and leaves `command` empty, so no check runs. The same is true for `autocomplete`. The command has to be in the object, with `enabled` set to `true`.
 
 ```json
-"check": {
+"syntax": {
   "enabled": true,
-  "command": "./scripts/check.sh \"${file}\"",
+  "command": "./scripts/syntax.sh \"${file}\"",
   "cwd": "."
 },
-"complete": {
+"autocomplete": {
   "enabled": true,
-  "command": "./scripts/complete.sh"
+  "command": "./scripts/autocomplete.sh"
 }
 ```
 
-`check` reads the editor buffer on standard input and writes a JSON array of spans. `complete` stays running and speaks one JSON object per line. A working directory inside a WSL distro runs the command in that distro, so `./scripts/check.sh` has to be a path that distro can execute. The contracts are in [diagnostics.md](diagnostics.md) and [completion.md](completion.md).
+`syntax` reads the editor buffer on standard input and writes a JSON array of spans. `autocomplete` stays running and speaks one JSON object per line. A working directory inside a WSL distro runs the command in that distro, so `./scripts/syntax.sh` has to be a path that distro can execute. The contracts are in [diagnostics.md](diagnostics.md) and [autocomplete.md](autocomplete.md).
 
 The Processes page shows a check as its own task and the completion session as `autocomplete`.
 
 These two do not start a process:
 
 ```json
-"check": true,
-"complete": { "command": "./scripts/complete.sh" }
+"syntax": true,
+"autocomplete": { "command": "./scripts/autocomplete.sh" }
 ```
 
 The first sets `enabled` and leaves `command` empty. The second has a command and leaves `enabled` off.
@@ -281,13 +281,13 @@ One object that uses every key. Paths are relative to the directory that contain
   },
   "navigation": true,
   "externalNavigation": true,
-  "check": {
+  "syntax": {
     "enabled": true,
-    "command": "./scripts/check.sh \"${file}\""
+    "command": "./scripts/syntax.sh \"${file}\""
   },
-  "complete": {
+  "autocomplete": {
     "enabled": true,
-    "command": "./scripts/complete.sh"
+    "command": "./scripts/autocomplete.sh"
   }
 }
 ```

@@ -6,13 +6,13 @@ User-facing behavior is in [commands.md](commands.md). Threading is in [processe
 
 ## Why a session
 
-A check is one process per buffer: standard input is the text, standard output is a JSON array, and the process exits. `clangd` and the C# language server spend their time building an index and a preamble. Starting one for every keystroke would not complete in time. `complete` in `.crlf` is the same kind of command string as `check`, and the process stays up for the project.
+A check is one process per buffer: standard input is the text, standard output is a JSON array, and the process exits. `clangd` and the C# language server spend their time building an index and a preamble. Starting one for every keystroke would not complete in time. `autocomplete` in `.crlf` is the same kind of command string as `syntax`, and the process stays up for the project.
 
-The editor writes one JSON object per line and reads one JSON object per line. `scripts/complete.py` is the only place that speaks LSP. Adding a language means adding one entry to that script's provider list. The popup, the document, and the orchestrator stay as they are.
+The editor writes one JSON object per line and reads one JSON object per line. `scripts/autocomplete.py` is the only place that speaks LSP. Adding a language means adding one entry to that script's provider list. The popup, the document, and the orchestrator stay as they are.
 
 ## Where it runs
 
-`CompletionSession` is moved onto the orchestrator thread with `CheckRunner`. `QProcess` is created there. `start`, `request`, and `stop` are queued from the UI thread and return. Every request is one `CompletionRequest`, built by `MainWindow::sendCompletion` from the editor's path, caret, revision, and buffer. The reply signals are queued back, and `MainWindow::applyCompletion` is the only place that fills the popup.
+`CompletionSession` is moved onto the orchestrator thread with `SyntaxRunner`. `QProcess` is created there. `start`, `request`, and `stop` are queued from the UI thread and return. Every request is one `CompletionRequest`, built by `MainWindow::sendCompletion` from the editor's path, caret, revision, and buffer. The reply signals are queued back, and `MainWindow::applyCompletion` is the only place that fills the popup.
 
 The request carries the buffer. A tool that opened `${file}` would complete the saved copy and miss unsaved edits. A `resolve` does not carry it, because it names a row of a list the script already has. When the session is running in a WSL distro, a `\\wsl.localhost` path is sent as the Linux path (`/home/...`), because the language server is a Linux process and cannot open the Windows UNC path. The session remembers which editor path each of those was, so a reply about `/home/...` is delivered under the path the editor uses. `revision` is `QTextDocument::revision()` at send time. A reply whose id or revision is older than the buffer is dropped. Lists, signatures, and documentation each count their own ids, so asking for one does not cancel another. Switching tabs drops whatever is still on its way.
 
@@ -120,13 +120,13 @@ A signature request sets `"kind": "signature"`. The reply is `signatures`, each 
 
 ## The script
 
-`scripts/complete.sh` execs `python3` on `scripts/complete.py`.
+`scripts/autocomplete.sh` execs `python3` on `scripts/autocomplete.py`.
 
 **Providers.** `main()` parses each line and looks the file's extension up in a list of providers. A provider returns a route: the server's key, its command line, its working directory, the language id, and the label shown in states. C and C++ use one `clangd` for the working directory, through `single_server`. A language with one server for the whole project is one more `single_server` line. C# has its own provider, because it keeps one server per project. An extension with no provider is `unsupported`. A provider whose program is not on `PATH` is `missing`. Neither stops completion for the others.
 
 **C# projects.** The editor does not look for a C# project. The script does, once, when the session starts. It walks the completion working directory and remembers every `.csproj`, skipping `bin`, `obj`, `.git`, `node_modules`, and `.vs`. A file belongs to the project whose directory is the longest prefix of its path. A file opened from outside that directory still belongs to a project when a parent directory contains a `.csproj`. Each project gets its own server, started on the first request for one of its files and kept for the rest of the session. C# uses `OmniSharp -lsp` when that is on `PATH`, otherwise `Microsoft.CodeAnalysis.LanguageServer.dll` from the newest .NET SDK. OmniSharp is started with `-s` pointing at that project's directory, which is the path it accepts, so a sibling project is not loaded. A `ProjectReference` is still loaded by the server that owns the referencing project.
 
-A `.cs` file that belongs to no project uses one shared server with no solution. Those loose files see each other and do not join a project server. The Processes log shows `using /src/App/App.csproj` or `loose file` while that server is starting. Reload on the `autocomplete` row starts `complete.py` again, so an edit to it takes effect without reopening the project. OmniSharp asks the client for configuration and progress tokens before it finishes loading a project. The script answers those, and it copies OmniSharp's own log into the Processes log.
+A `.cs` file that belongs to no project uses one shared server with no solution. Those loose files see each other and do not join a project server. The Processes log shows `using /src/App/App.csproj` or `loose file` while that server is starting. Reload on the `autocomplete` row starts `autocomplete.py` again, so an edit to it takes effect without reopening the project. OmniSharp asks the client for configuration and progress tokens before it finishes loading a project. The script answers those, and it copies OmniSharp's own log into the Processes log.
 
 `compile_commands.json` stays the C and C++ server's concern.
 
@@ -142,4 +142,4 @@ A `.cs` file that belongs to no project uses one shared server with no solution.
 
 **One timing line.** Each handled request logs once: `completion test.cs 8:16: 18 items in 140ms`.
 
-**Quieter OmniSharp.** `window/logMessage` is logged only for errors and warnings. `--verbose`, or `CRLF_COMPLETE_VERBOSE=1`, keeps information messages too and starts OmniSharp at `-l Information` instead of `-l Error`. `scripts/complete.sh` forwards its arguments, so the command in `.crlf` can be `scripts/complete.sh --verbose`.
+**Quieter OmniSharp.** `window/logMessage` is logged only for errors and warnings. `--verbose`, or `CRLF_AUTOCOMPLETE_VERBOSE=1`, keeps information messages too and starts OmniSharp at `-l Information` instead of `-l Error`. `scripts/autocomplete.sh` forwards its arguments, so the command in `.crlf` can be `scripts/autocomplete.sh --verbose`.

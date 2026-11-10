@@ -62,10 +62,12 @@ struct ProjectIcons
     QList<IconRule> rules;
 };
 
-// An external checker. See docs/diagnostics.md. `enabled` is false when the
-// .crlf file has no `check` key. `command` is expanded when a check starts.
-// `workingDirectory` is absolute: the .crlf directory, or its `cwd`.
-struct CheckSettings
+// An external program the project runs without being chosen from a menu: the
+// syntax checker (docs/diagnostics.md) or the autocomplete session
+// (docs/autocomplete.md). `enabled` is false when the .crlf file has no key
+// for it. `command` is expanded when the program starts. `workingDirectory`
+// is absolute: the .crlf directory, or its `cwd`.
+struct ServiceSettings
 {
     bool enabled = false;
     QString command;
@@ -107,9 +109,10 @@ struct Project
     bool navigation = true;
     // Package and stylesheet links resolved under node_modules on click.
     bool externalNavigation = true;
-    CheckSettings check;
-    // Same shape as `check`. One long-lived completion process per project.
-    CheckSettings complete;
+    // One short syntax check per editor.
+    ServiceSettings syntax;
+    // One long-lived completion process per project.
+    ServiceSettings autocomplete;
     // Keeps every line of a process log. False keeps the last 2,000.
     bool unlimitedLog = false;
     QString error;

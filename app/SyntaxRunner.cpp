@@ -1,4 +1,4 @@
-#include "app/CheckRunner.h"
+#include "app/SyntaxRunner.h"
 
 #include "app/ProcessOrchestrator.h"
 #include "io/WslPath.h"
@@ -30,14 +30,14 @@ QString decoded(const QByteArray &bytes, bool utf8)
 #include <windows.h>
 #endif
 
-struct CheckRunner::Running
+struct SyntaxRunner::Running
 {
     QProcess *process = nullptr;
     void *job = nullptr;
     bool stopRequested = false;
     bool discard = false;
     bool hasPending = false;
-    CheckRequest pending;
+    SyntaxRequest pending;
     bool suppressFailure = false;
     int token = 0;
     QString distro;
@@ -47,7 +47,7 @@ struct CheckRunner::Running
     QByteArray input;
     QByteArray captured;
     QByteArray errors;
-    CheckRequest request;
+    SyntaxRequest request;
 };
 
 namespace {
@@ -111,12 +111,12 @@ void startGroupKill(QObject *parent, const QString &distro, qint64 group)
 
 } // namespace
 
-CheckRunner::CheckRunner(QObject *parent)
+SyntaxRunner::SyntaxRunner(QObject *parent)
     : QObject(parent)
 {
 }
 
-CheckRunner::~CheckRunner()
+SyntaxRunner::~SyntaxRunner()
 {
     cancelAll();
     const auto processes = findChildren<QProcess *>(Qt::FindDirectChildrenOnly);
@@ -128,7 +128,7 @@ CheckRunner::~CheckRunner()
     m_running.clear();
 }
 
-void CheckRunner::start(const CheckRequest &request)
+void SyntaxRunner::start(const SyntaxRequest &request)
 {
     if (request.command.isEmpty())
         return;
@@ -143,10 +143,10 @@ void CheckRunner::start(const CheckRequest &request)
     launch(request, true);
 }
 
-void CheckRunner::cancel(quintptr editorId)
+void SyntaxRunner::cancel(quintptr editorId)
 {
     if (m_orchestrator != nullptr)
-        m_orchestrator->cancel(QStringLiteral("check:%1").arg(editorId));
+        m_orchestrator->cancel(QStringLiteral("syntax:%1").arg(editorId));
     Running *running = m_running.value(editorId);
     if (!running)
         return;
@@ -156,14 +156,14 @@ void CheckRunner::cancel(quintptr editorId)
         stopTree(*running);
 }
 
-void CheckRunner::cancelAll()
+void SyntaxRunner::cancelAll()
 {
     const auto ids = m_running.keys();
     for (quintptr id : ids)
         cancel(id);
 }
 
-void CheckRunner::launch(const CheckRequest &request, bool withJob)
+void SyntaxRunner::launch(const SyntaxRequest &request, bool withJob)
 {
     Running *running = m_running.value(request.editorId);
     if (!running) {
@@ -184,7 +184,7 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
             const QByteArray bytes = running->process->readAllStandardError();
             running->errors += bytes;
             if (m_orchestrator != nullptr && !bytes.isEmpty())
-                m_orchestrator->appendLog(QStringLiteral("check:%1").arg(editorId), QString::fromUtf8(bytes));
+                m_orchestrator->appendLog(QStringLiteral("syntax:%1").arg(editorId), QString::fromUtf8(bytes));
         });
         connect(running->process, &QProcess::finished, this, [this, editorId](int exitCode, QProcess::ExitStatus status) {
             Running *done = m_running.value(editorId);
@@ -194,7 +194,7 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
             const QByteArray tail = done->process->readAllStandardError();
             done->errors += tail;
             if (m_orchestrator != nullptr && !tail.isEmpty())
-                m_orchestrator->appendLog(QStringLiteral("check:%1").arg(editorId), QString::fromUtf8(tail));
+                m_orchestrator->appendLog(QStringLiteral("syntax:%1").arg(editorId), QString::fromUtf8(tail));
             if (!done->distro.isEmpty() && !done->groupResolved && !done->pendingOutput.isEmpty()) {
                 const QByteArray first = done->pendingOutput;
                 done->pendingOutput.clear();
@@ -206,7 +206,7 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
             }
 
             if (done->hasPending) {
-                const CheckRequest next = done->pending;
+                const SyntaxRequest next = done->pending;
                 done->hasPending = false;
                 done->discard = false;
                 done->stopRequested = false;
@@ -218,7 +218,7 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
                 done->discard = false;
                 done->stopRequested = false;
                 if (m_orchestrator != nullptr)
-                    m_orchestrator->release(QStringLiteral("check:%1").arg(editorId), token);
+                    m_orchestrator->release(QStringLiteral("syntax:%1").arg(editorId), token);
                 return;
             }
 
@@ -226,17 +226,17 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
             if (status == QProcess::CrashExit || exitCode != 0) {
                 QString message = decoded(done->errors, utf8).trimmed();
                 if (message.isEmpty())
-                    message = QStringLiteral("Check failed.");
+                    message = QStringLiteral("Syntax check failed.");
                 emit failed(editorId, message);
             } else {
                 QList<Diagnostic> spans;
                 if (!diagnosticsFromJson(done->captured, &spans))
-                    emit failed(editorId, QStringLiteral("Couldn't read check results."));
+                    emit failed(editorId, QStringLiteral("Couldn't read syntax check results."));
                 else
                     emit completed(editorId, done->request.revision, spans);
             }
             if (m_orchestrator != nullptr)
-                m_orchestrator->release(QStringLiteral("check:%1").arg(editorId), token);
+                m_orchestrator->release(QStringLiteral("syntax:%1").arg(editorId), token);
         });
         connect(running->process, &QProcess::errorOccurred, this, [this, editorId](QProcess::ProcessError error) {
             if (error != QProcess::FailedToStart)
@@ -246,14 +246,14 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
                 return;
             emit failed(editorId, failedRun->process->errorString());
             if (m_orchestrator != nullptr)
-                m_orchestrator->release(QStringLiteral("check:%1").arg(editorId), failedRun->token);
+                m_orchestrator->release(QStringLiteral("syntax:%1").arg(editorId), failedRun->token);
         });
     }
 
     running->request = request;
     running->token = m_orchestrator == nullptr
                          ? 0
-                         : m_orchestrator->currentToken(QStringLiteral("check:%1").arg(request.editorId));
+                         : m_orchestrator->currentToken(QStringLiteral("syntax:%1").arg(request.editorId));
     running->stopRequested = false;
     running->discard = false;
     running->distro.clear();
@@ -338,7 +338,7 @@ void CheckRunner::launch(const CheckRequest &request, bool withJob)
     }
 }
 
-void CheckRunner::absorbStdout(Running &running, const QByteArray &bytes)
+void SyntaxRunner::absorbStdout(Running &running, const QByteArray &bytes)
 {
     QByteArray payload = bytes;
     if (!running.distro.isEmpty() && !running.groupResolved) {
@@ -361,7 +361,7 @@ void CheckRunner::absorbStdout(Running &running, const QByteArray &bytes)
         running.captured += payload;
 }
 
-void CheckRunner::stopTree(Running &running)
+void SyntaxRunner::stopTree(Running &running)
 {
     running.stopRequested = true;
 #ifdef Q_OS_WIN

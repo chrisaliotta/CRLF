@@ -47,7 +47,7 @@ public:
     void setFilePath(const QString &path);
     const QString &filePath() const { return m_filePath; }
     // When false, edits do not schedule a check and any spans are cleared.
-    void setCheckingEnabled(bool enabled);
+    void setSyntaxEnabled(bool enabled);
     void setCompletionEnabled(bool enabled);
     // The characters this file's language server wants a completion asked
     // after, such as `.`. The first letter of a word always asks.
@@ -94,7 +94,7 @@ signals:
     // Ctrl+click on a package import or an unresolved stylesheet name.
     void externalActivated(const SymbolLocation &target);
     // The buffer has been still for 500ms and checking is enabled.
-    void checkRequested();
+    void syntaxRequested();
     // Ctrl+Space, a word being started, or a trigger character. `trigger` is
     // that character and is empty for the other two.
     void completionRequested(const QString &trigger);
@@ -125,7 +125,7 @@ private:
     // frees formats the edit is still using, so the refresh is deferred.
     void scheduleOverlayRefresh();
     void scheduleSymbolScan();
-    void scheduleCheck();
+    void scheduleSyntax();
     // Decides what the key just typed asks for. `text` is the key's text;
     // Backspace and Delete pass "\b".
     void scheduleCompletion(const QString &text, bool listOpen);
@@ -170,8 +170,8 @@ private:
     const LanguageDefinition *m_definition = nullptr;
     SymbolIndex *m_symbolIndex = nullptr;
     ProcessOrchestrator *m_orchestrator = nullptr;
-    class QTimer *m_checkTimer = nullptr;
-    class QTimer *m_completeTimer = nullptr;
+    class QTimer *m_syntaxTimer = nullptr;
+    class QTimer *m_autocompleteTimer = nullptr;
     class CompletionPopup *m_completionPopup = nullptr;
     class QLabel *m_signature = nullptr;
     QList<SignatureHint> m_signatures;
@@ -190,7 +190,7 @@ private:
     bool m_listIncomplete = false;
     QString m_filePath;
     QString m_workOwner;
-    bool m_checking = false;
+    bool m_syntaxEnabled = false;
     QList<Diagnostic> m_diagnostics;
     // Block number to true when that line's strongest span is an error.
     QHash<int, bool> m_diagnosticLines;

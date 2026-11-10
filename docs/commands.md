@@ -221,21 +221,21 @@ Give the tool the buffer on standard input, not a path to read. A path makes it 
 
 An empty editor may be replaced with empty output. A command that exits 0 and writes nothing while the editor has text leaves the buffer as it is, and the panel says "The command wrote nothing."
 
-## Check
+## Syntax
 
-`check` runs an external program against the focused editor's buffer and draws what it reports. Leaving the key out leaves checking off. `"check": false` does the same. Implementation notes for a later change are in [diagnostics.md](diagnostics.md).
+`syntax` runs an external program against the focused editor's buffer and draws what it reports. Leaving the key out leaves checking off. `"syntax": false` does the same. Implementation notes for a later change are in [diagnostics.md](diagnostics.md).
 
 ```json
-"check": {
+"syntax": {
   "enabled": true,
-  "command": "scripts/check.sh \"${file}\"",
+  "command": "scripts/syntax.sh \"${file}\"",
   "cwd": "."
 }
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
-| `enabled` | no | `false` stops scheduling. The command stays in the file. Missing `check` means off |
+| `enabled` | no | `false` stops scheduling. The command stays in the file. Missing `syntax` means off |
 | `command` | when enabled | The shell command. Variables are filled in when a check starts, the same names as a menu command |
 | `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
 
@@ -260,7 +260,7 @@ Exit code 0 means that array is the result. `[]` means the file is clean. Any ot
 
 An edit clears the marks in that editor and runs the command again once typing has been still for a moment. Each open editor has its own run. The hex view is not checked.
 
-`scripts/check.sh` is a Linux example. It reads stdin and picks the tool from the extension: `clang` or `clang++ -fsyntax-only` for C and C++, `csc` or the .NET SDK compiler for `.cs` when one of those is installed, and `node --check` for `.js`, `.mjs`, and `.cjs` when `node` is installed. A missing C# or Node toolchain writes `[]`. Other extensions write `[]`. A command whose working directory is inside a WSL distro runs in that distro, so the script path has to be one that distro can execute. `scripts/check.sh` from the project directory is the form above.
+`scripts/syntax.sh` is a Linux example. It reads stdin and picks the tool from the extension: `clang` or `clang++ -fsyntax-only` for C and C++, `csc` or the .NET SDK compiler for `.cs` when one of those is installed, and `node --check` for `.js`, `.mjs`, and `.cjs` when `node` is installed. A missing C# or Node toolchain writes `[]`. Other extensions write `[]`. A command whose working directory is inside a WSL distro runs in that distro, so the script path has to be one that distro can execute. `scripts/syntax.sh` from the project directory is the form above.
 
 The Problems page at the bottom lists every span from the editors that have been checked. Rows are grouped by directory, then by file name. A file in the project root is under `.`. A buffer that has never been saved is under `(unsaved)`. Activating a row moves the cursor to that span. The page opens when a check finds spans and the strip is hidden. A check that finishes while Output or Terminal is showing updates the list and leaves that page where it is. Closing the strip does not stop checking.
 
@@ -268,18 +268,18 @@ The Problems page at the bottom lists every span from the editors that have been
 
 `unlimitedLog` set to `true` keeps every line of a process log. Left out, or in an array-shaped file, the log keeps its last 2,000 lines. It is read again when `.crlf` reloads.
 
-`complete` keeps one external process for the project and asks it for completions. Leaving the key out leaves completion off. `"complete": false` does the same. The session is described in [completion.md](completion.md). Adding `--verbose` to the command, or setting `CRLF_COMPLETE_VERBOSE=1`, keeps the language server's information messages.
+`autocomplete` keeps one external process for the project and asks it for completions. Leaving the key out leaves completion off. `"autocomplete": false` does the same. The session is described in [autocomplete.md](autocomplete.md). Adding `--verbose` to the command, or setting `CRLF_AUTOCOMPLETE_VERBOSE=1`, keeps the language server's information messages.
 
 ```json
-"complete": {
+"autocomplete": {
   "enabled": true,
-  "command": "scripts/complete.sh"
+  "command": "scripts/autocomplete.sh"
 }
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
-| `enabled` | no | `false` stops the session. The command stays in the file. Missing `complete` means off |
+| `enabled` | no | `false` stops the session. The command stays in the file. Missing `autocomplete` means off |
 | `command` | when enabled | The shell command. It stays running and reads one JSON object per line |
 | `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
 
@@ -327,4 +327,4 @@ A reply answers one request and repeats its `id` and `revision`. An `open` has n
 
 Ctrl+Space asks immediately. A trigger character and the first letters of a word ask after a short pause. Letters typed while the list is open narrow it in the editor and are not sent, unless the list was `incomplete`. Enter or Tab inserts the selected row. Escape closes the list.
 
-`scripts/complete.sh` runs `scripts/complete.py`. That program speaks to `clangd` for C and C++, and to OmniSharp or the .NET SDK language server for C#, when those tools are installed. The editor does not speak their protocol, and it does not look for a project file. The script walks the completion working directory for `.csproj` files and keeps one C# server per project, plus one server for `.cs` files that belong to none of them. A command whose working directory is inside a WSL distro runs in that distro.
+`scripts/autocomplete.sh` runs `scripts/autocomplete.py`. That program speaks to `clangd` for C and C++, and to OmniSharp or the .NET SDK language server for C#, when those tools are installed. The editor does not speak their protocol, and it does not look for a project file. The script walks the completion working directory for `.csproj` files and keeps one C# server per project, plus one server for `.cs` files that belong to none of them. A command whose working directory is inside a WSL distro runs in that distro.

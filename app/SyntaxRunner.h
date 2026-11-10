@@ -12,7 +12,7 @@ class ProcessOrchestrator;
 // One check of one editor. See docs/diagnostics.md. This is not a menu
 // command: each editor has its own short process, and stdout is a diagnostic
 // list rather than a log.
-struct CheckRequest
+struct SyntaxRequest
 {
     quintptr editorId = 0;
     QString command;
@@ -26,19 +26,19 @@ struct CheckRequest
 // or wsl.exe when the working directory is a distro path. Standard input is
 // the editor buffer. Exit 0 with a JSON array completes; anything else fails
 // and leaves the caller's current marks alone.
-class CheckRunner : public QObject
+class SyntaxRunner : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit CheckRunner(QObject *parent = nullptr);
-    ~CheckRunner() override;
+    explicit SyntaxRunner(QObject *parent = nullptr);
+    ~SyntaxRunner() override;
 
     void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
 
     // A check already running for this editor is stopped and replaced.
     // The replacement starts from the finished handler on this thread.
-    void start(const CheckRequest &request);
+    void start(const SyntaxRequest &request);
     // The result of a stopped check is dropped.
     void cancel(quintptr editorId);
     void cancelAll();
@@ -50,7 +50,7 @@ signals:
 private:
     struct Running;
 
-    void launch(const CheckRequest &request, bool withJob = true);
+    void launch(const SyntaxRequest &request, bool withJob = true);
     void stopTree(Running &running);
     void absorbStdout(Running &running, const QByteArray &bytes);
 

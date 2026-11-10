@@ -241,7 +241,7 @@ void ProcessOrchestrator::submitOnThread(const Submission &submission)
     // token was incremented above, and the task already existed. `token > 1`
     // is true for a reused task. A brand-new task also has token >= 1 and
     // sleeping false. Both call begin(); Hold's begin() invokes work(), and
-    // CheckRunner::start replaces a live process.
+    // SyntaxRunner::start replaces a live process.
     begin(task);
 }
 

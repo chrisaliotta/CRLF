@@ -10,7 +10,7 @@ Widgets, the text document, and painting stay on the UI thread. A child process,
 
 The UI thread may start a debounce timer and call `ProcessOrchestrator::submit`. That call queues onto the orchestrator thread and returns. The finished signal is delivered back to the UI thread, and only that slot writes editor marks, the Problems tree, command output, the symbol index, or the explorer model.
 
-`QProcess` objects live on the orchestrator thread. `CheckRunner` and `CommandRunner` are moved there with `moveToThread`. Their signals connect with `Qt::QueuedConnection`. `WslPath::run` blocks inside `wsl.exe`; it is only called from orchestrator work, including the folder picker and the distro list.
+`QProcess` objects live on the orchestrator thread. `SyntaxRunner` and `CommandRunner` are moved there with `moveToThread`. Their signals connect with `Qt::QueuedConnection`. `WslPath::run` blocks inside `wsl.exe`; it is only called from orchestrator work, including the folder picker and the distro list.
 
 A new feature that can run off the UI thread gets a record and a `submit`. It does not construct a `QProcess` or call `QThreadPool::globalInstance()` itself.
 
@@ -38,8 +38,8 @@ Cancel and Reload act on the selected Active row. `MainWindow` routes them by ke
 
 | Key | Cancel | Reload |
 | --- | --- | --- |
-| `complete` | Stops the autocomplete session | Starts the session again, replacing the running one |
-| `check:<editor>` | Stops that editor's check | Checks the editor's current text again |
+| `autocomplete` | Stops the autocomplete session | Starts the session again, replacing the running one |
+| `syntax:<editor>` | Stops that editor's check | Checks the editor's current text again |
 | `command:<name>` | Stops the menu command | Runs the command again, as choosing it from the menu does |
 | Anything else | Drops the record. A pool task already running keeps going, and its result is no longer the current one | Not offered |
 
@@ -53,7 +53,7 @@ Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on 
 
 | Work | How it is submitted | What stays on the UI thread |
 | --- | --- | --- |
-| Check | `CheckRunner` on the orchestrator thread, after the editor's 500ms idle timer | `MainWindow::applyCheck` draws marks and updates Problems |
+| Syntax check | `SyntaxRunner` on the orchestrator thread, after the editor's 500ms idle timer | `MainWindow::applySyntax` draws marks and updates Problems |
 | Completion | `CompletionSession` on the orchestrator thread. The process stays up; each request is one JSON line | `MainWindow::applyCompletion` fills the popup |
 | Menu command | `CommandRunner` on the orchestrator thread | Output chunks and exit state, which the Output page already displays |
 | Symbol scan | Pool. The editor's 200ms timer is the `Sleep` record | `applyDisk` and the index update |
@@ -64,7 +64,7 @@ Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on 
 
 The 500ms check timer stays on the editor. It does not start a process by itself.
 
-- **First load.** `setCheckingEnabled(true)` starts the timer after the text is in the editor.
+- **First load.** `setSyntaxEnabled(true)` starts the timer after the text is in the editor.
 - **External change.** `reloadExternal` reads the file on the pool, then `replaceText` restarts the same timer.
 - **Typing has finished.** `contentsChange` clears that editor's marks and restarts the timer. It does not cancel a running check. When 500ms pass with no further edit, the UI submits the buffer and the revision.
 

@@ -294,10 +294,10 @@ CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &
     editor->setLineWrapMode(m_wordWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
     editor->setLineNumbersVisible(m_lineNumbers);
     editor->replaceText(text);
-    editor->setCheckingEnabled(m_checking);
+    editor->setSyntaxEnabled(m_syntaxEnabled);
     editor->setCompletionEnabled(m_completion);
 
-    connect(editor, &CodeEditor::checkRequested, this, [this, editor] { emit checkRequested(editor); });
+    connect(editor, &CodeEditor::syntaxRequested, this, [this, editor] { emit syntaxRequested(editor); });
     connect(editor, &CodeEditor::completionRequested, this,
             [this, editor](const QString &trigger) { emit completionRequested(editor, trigger); });
     connect(editor, &CodeEditor::documentationRequested, this,
@@ -349,12 +349,12 @@ QList<CodeEditor *> TabWorkspace::editors() const
     return found;
 }
 
-void TabWorkspace::setCheckingEnabled(bool enabled)
+void TabWorkspace::setSyntaxEnabled(bool enabled)
 {
-    m_checking = enabled;
+    m_syntaxEnabled = enabled;
     for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
         if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
-            editor->setCheckingEnabled(enabled);
+            editor->setSyntaxEnabled(enabled);
     }
 }
 
@@ -837,7 +837,7 @@ bool TabWorkspace::closeTab(int index)
     }
     const QString closed = m_pages[page].file.path();
     if (auto *editor = qobject_cast<CodeEditor *>(page)) {
-        editor->setCheckingEnabled(false);
+        editor->setSyntaxEnabled(false);
         emit editorClosed(quintptr(editor));
     }
     removeTab(index);
@@ -864,7 +864,7 @@ void TabWorkspace::setCurrentHexMode(bool hex)
     QWidget *replacement = nullptr;
     if (hex) {
         auto *editor = static_cast<CodeEditor *>(page);
-        editor->setCheckingEnabled(false);
+        editor->setSyntaxEnabled(false);
         emit editorClosed(quintptr(editor));
         const QByteArray bytes = !modified && !entry.file.path().isEmpty()
                                      ? entry.file.loadBytes()

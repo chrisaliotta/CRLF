@@ -183,15 +183,15 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     m_foldController = new FoldController(this, m_layout);
     viewport()->setMouseTracking(true);
 
-    m_checkTimer = new QTimer(this);
-    m_checkTimer->setSingleShot(true);
-    m_checkTimer->setInterval(500);
-    connect(m_checkTimer, &QTimer::timeout, this, &CodeEditor::checkRequested);
+    m_syntaxTimer = new QTimer(this);
+    m_syntaxTimer->setSingleShot(true);
+    m_syntaxTimer->setInterval(500);
+    connect(m_syntaxTimer, &QTimer::timeout, this, &CodeEditor::syntaxRequested);
 
-    m_completeTimer = new QTimer(this);
-    m_completeTimer->setSingleShot(true);
-    m_completeTimer->setInterval(100);
-    connect(m_completeTimer, &QTimer::timeout, this, [this] {
+    m_autocompleteTimer = new QTimer(this);
+    m_autocompleteTimer->setSingleShot(true);
+    m_autocompleteTimer->setInterval(100);
+    connect(m_autocompleteTimer, &QTimer::timeout, this, [this] {
         if (m_wantCompletion)
             emit completionRequested(m_trigger);
         if (m_wantSignature)
@@ -225,8 +225,8 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
         }
         scheduleOverlayRefresh();
         scheduleSymbolScan();
-        if (m_checking)
-            scheduleCheck();
+        if (m_syntaxEnabled)
+            scheduleSyntax();
     });
 
     updateGutterWidth();
@@ -234,8 +234,8 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
 
 CodeEditor::~CodeEditor()
 {
-    m_checkTimer->stop();
-    m_completeTimer->stop();
+    m_syntaxTimer->stop();
+    m_autocompleteTimer->stop();
     if (m_orchestrator != nullptr)
         m_orchestrator->cancel(QStringLiteral("symbols:%1").arg(quintptr(this)));
     // Drop queued overlay and symbol callbacks before the document goes away.
@@ -299,14 +299,14 @@ void CodeEditor::setFilePath(const QString &path)
         emit filePathChanged();
 }
 
-void CodeEditor::setCheckingEnabled(bool enabled)
+void CodeEditor::setSyntaxEnabled(bool enabled)
 {
-    m_checking = enabled;
+    m_syntaxEnabled = enabled;
     if (enabled) {
-        m_checkTimer->start();
+        m_syntaxTimer->start();
         return;
     }
-    m_checkTimer->stop();
+    m_syntaxTimer->stop();
     if (m_diagnostics.isEmpty())
         return;
     m_diagnostics.clear();
@@ -320,7 +320,7 @@ void CodeEditor::setCompletionEnabled(bool enabled)
     m_completion = enabled;
     if (enabled)
         return;
-    m_completeTimer->stop();
+    m_autocompleteTimer->stop();
     hideCompletions();
     hideSignature();
 }
@@ -390,7 +390,7 @@ void CodeEditor::applyCompletion(const CompletionItem &item)
     if (insideArguments()) {
         m_wantCompletion = false;
         m_wantSignature = true;
-        m_completeTimer->start();
+        m_autocompleteTimer->start();
     }
 }
 
@@ -570,9 +570,9 @@ void CodeEditor::scheduleCompletion(const QString &text, bool listOpen)
     m_wantSignature = signature;
     m_trigger = trigger ? QString(c) : QString();
     if (list || signature)
-        m_completeTimer->start();
+        m_autocompleteTimer->start();
     else
-        m_completeTimer->stop();
+        m_autocompleteTimer->stop();
 }
 
 void CodeEditor::setDiagnostics(const QList<Diagnostic> &spans)
@@ -1047,10 +1047,10 @@ void CodeEditor::scheduleOverlayRefresh()
     }, Qt::QueuedConnection);
 }
 
-void CodeEditor::scheduleCheck()
+void CodeEditor::scheduleSyntax()
 {
-    if (m_checking)
-        m_checkTimer->start();
+    if (m_syntaxEnabled)
+        m_syntaxTimer->start();
 }
 
 bool CodeEditor::diagnosticRange(const Diagnostic &span, int *start, int *end) const

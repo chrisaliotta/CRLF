@@ -93,7 +93,7 @@ public:
     // `false` leaves package imports and unresolved stylesheet names unlinked.
     void setExternalNavigation(bool enabled);
     // `false` stops scheduling checks and clears spans in open editors.
-    void setCheckingEnabled(bool enabled);
+    void setSyntaxEnabled(bool enabled);
     void setCompletionEnabled(bool enabled);
     void setOrchestrator(ProcessOrchestrator *orchestrator);
     // Focuses the Processes tab, creating it when it is closed. Only one exists.
@@ -123,7 +123,7 @@ signals:
     void fileSaved(const QString &directory);
     // A definition was opened in a file other than the one that was current.
     void fileRevealed(const QString &path);
-    void checkRequested(CodeEditor *editor);
+    void syntaxRequested(CodeEditor *editor);
     void completionRequested(CodeEditor *editor, const QString &trigger);
     void signatureRequested(CodeEditor *editor);
     void documentationRequested(CodeEditor *editor, const CompletionItem &item);
@@ -207,7 +207,7 @@ private:
     // a newer time, asks again.
     QHash<QString, QDateTime> m_declinedReload;
     IndentSettings m_indent;
-    bool m_checking = false;
+    bool m_syntaxEnabled = false;
     bool m_completion = false;
     // node_modules is searched from here when the document has no path.
     QString m_symbolRoot;

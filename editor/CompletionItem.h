@@ -18,7 +18,7 @@ struct CompletionEdit
 };
 
 // One row from a completion session. Columns are 1-based. replaceEndColumn
-// is exclusive. See docs/completion.md.
+// is exclusive. See docs/autocomplete.md.
 struct CompletionItem
 {
     QString label;

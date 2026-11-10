@@ -115,7 +115,7 @@ void CompletionSession::start(const QString &command, const QString &workingDire
     m_command = command;
     m_workingDirectory = workingDirectory;
     m_variables = variables;
-    m_token = m_orchestrator == nullptr ? 0 : m_orchestrator->currentToken(QStringLiteral("complete"));
+    m_token = m_orchestrator == nullptr ? 0 : m_orchestrator->currentToken(QStringLiteral("autocomplete"));
     m_stopRequested = false;
     launch(true);
 }
@@ -149,7 +149,7 @@ void CompletionSession::stop()
     m_stopRequested = true;
     m_heldOpens.clear();
     if (m_orchestrator != nullptr)
-        m_orchestrator->cancel(QStringLiteral("complete"));
+        m_orchestrator->cancel(QStringLiteral("autocomplete"));
     stopTree();
 }
 
@@ -165,12 +165,12 @@ void CompletionSession::launch(bool withJob)
             const QByteArray bytes = m_process->readAllStandardError();
             if (bytes.isEmpty() || m_orchestrator == nullptr)
                 return;
-            m_orchestrator->appendLog(QStringLiteral("complete"), QString::fromUtf8(bytes));
+            m_orchestrator->appendLog(QStringLiteral("autocomplete"), QString::fromUtf8(bytes));
         });
         connect(m_process, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
             absorbStdout(m_process->readAllStandardOutput());
             if (!m_stopRequested && m_orchestrator != nullptr)
-                m_orchestrator->release(QStringLiteral("complete"), m_token);
+                m_orchestrator->release(QStringLiteral("autocomplete"), m_token);
             if (!m_stopRequested)
                 emit failed(QStringLiteral("Completion stopped."));
             m_stopRequested = false;

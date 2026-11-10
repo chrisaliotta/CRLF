@@ -74,8 +74,8 @@ set(APP_SOURCES
     app/TemplateDialog.cpp
     app/CommandRunner.h
     app/CommandRunner.cpp
-    app/CheckRunner.h
-    app/CheckRunner.cpp
+    app/SyntaxRunner.h
+    app/SyntaxRunner.cpp
     app/CompletionSession.h
     app/CompletionSession.cpp
     app/ProcessOrchestrator.h
@@ -212,14 +212,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/check.sh"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/check.sh"
+        "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/syntax.sh"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/complete.sh"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/complete.sh"
+        "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/autocomplete.sh"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/complete.py"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/complete.py"
+        "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/autocomplete.py"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -245,9 +245,9 @@ install(CODE "
         \"-DDST=\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.crlf\"
         -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake\")
 ")
-install(FILES "${CMAKE_SOURCE_DIR}/scripts/check.sh"
-    "${CMAKE_SOURCE_DIR}/scripts/complete.sh"
-    "${CMAKE_SOURCE_DIR}/scripts/complete.py"
+install(FILES "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
+    "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"
+    "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
     DESTINATION scripts)
 
 qt_generate_deploy_app_script(

@@ -10,7 +10,7 @@
 class ProcessOrchestrator;
 class QProcess;
 
-// One line to the completion script. See docs/completion.md.
+// One line to the completion script. See docs/autocomplete.md.
 struct CompletionRequest
 {
     // "completion", "signature", "open", or "resolve".
@@ -30,7 +30,7 @@ struct CompletionRequest
 
 // One language-server process for the project. It lives on the orchestrator
 // thread. The UI thread calls start, request, and stop; those queue here.
-// See docs/completion.md.
+// See docs/autocomplete.md.
 class CompletionSession : public QObject
 {
     Q_OBJECT

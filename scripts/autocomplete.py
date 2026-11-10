@@ -4,7 +4,7 @@
 The editor does not speak LSP. This process does. Requests and replies are
 one JSON object per line. Each server answers on its own thread, and only the
 newest request of each kind is answered. Every file the editor names is given
-a state, and every change of that state is one line. See docs/completion.md.
+a state, and every change of that state is one line. See docs/autocomplete.md.
 """
 
 import collections
@@ -72,7 +72,7 @@ KINDS = (
 # and marked incomplete, so the editor asks again as the word changes.
 MAX_ITEMS = 1000
 
-VERBOSE = "--verbose" in sys.argv or os.environ.get("CRLF_COMPLETE_VERBOSE") == "1"
+VERBOSE = "--verbose" in sys.argv or os.environ.get("CRLF_AUTOCOMPLETE_VERBOSE") == "1"
 
 
 def linux_path(path):

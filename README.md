@@ -60,7 +60,7 @@ View > Hex Editor (Ctrl+Shift+H) swaps the current tab between text and a hex vi
 
 ### Project commands
 
-A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, is the project file. [docs/crlf.md](docs/crlf.md) is the list of keys. [docs/commands.md](docs/commands.md) describes the menus and the variables. A bare array is only commands; groups, hide, icons, indent, navigation, check, and complete have to live in an object. Each command is a JSON object:
+A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, is the project file. [docs/crlf.md](docs/crlf.md) is the list of keys. [docs/commands.md](docs/commands.md) describes the menus and the variables. A bare array is only commands; groups, hide, icons, indent, navigation, check, and autocomplete have to live in an object. Each command is a JSON object:
 
 ```json
 [
@@ -78,7 +78,7 @@ A `.crlf` file in the explorer folder, or in a parent folder up to the drive or 
 - `key` is an optional function key from F1 through F35, with no modifiers. The first command to claim a key keeps it
 - The command string may use `${file}`, `${fileName}`, `${fileBase}`, `${fileExt}`, `${fileDir}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`, `${buffer}`, `${terminal}`, `${language}`, `${project}`, `${folder}`, and `${cwd}`, filled from the focused document when the command starts. `${buffer}` and `${terminal}` are paths to temporary UTF-8 files: the editor's current text, and the current terminal's plain text. [docs/commands.md](docs/commands.md) lists each name
 - Output opens in a panel at the bottom of the window, one log per command. Clear wipes the log that is showing. Stop is shown only while that command's process is still running, and it kills the process tree. Closing the panel hides it and leaves the process running
-- `"check"` in the same file runs an external script against the editor buffer and marks what it reports. The Problems page lists those marks by directory and file. [docs/commands.md](docs/commands.md) describes the key. `scripts/check.sh` is the Linux script that drives `clang`, `clang++`, C# when `csc` or the .NET SDK is installed, and JavaScript when `node` is installed
+- `"syntax"` in the same file runs an external script against the editor buffer and marks what it reports. The Problems page lists those marks by directory and file. [docs/commands.md](docs/commands.md) describes the key. `scripts/syntax.sh` is the Linux script that drives `clang`, `clang++`, C# when `csc` or the .NET SDK is installed, and JavaScript when `node` is installed
 
 ### Appearance
 

@@ -16,7 +16,7 @@
 #include <QSet>
 
 class BottomPanel;
-class CheckRunner;
+class SyntaxRunner;
 class CodeEditor;
 class CommandRunner;
 class CompletionSession;
@@ -82,8 +82,8 @@ private:
     void finishStartup(const QStringList &paths);
     CommandVariables commandVariables() const;
     CommandVariables variablesFor(QWidget *page) const;
-    void runCheck(CodeEditor *editor);
-    void applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans);
+    void runSyntax(CodeEditor *editor);
+    void applySyntax(quintptr editorId, int revision, const QList<Diagnostic> &spans);
     // True when the editor's file has, or may still get, a language server.
     // An unsaved buffer, and a file the session has called unsupported or
     // missing, are not asked about.
@@ -143,19 +143,19 @@ private:
     bool m_syncingTerminal = false;
     bool m_syncingProcesses = false;
     CommandRunner *m_runner = nullptr;
-    CheckRunner *m_checks = nullptr;
+    SyntaxRunner *m_syntax = nullptr;
     CompletionSession *m_completion = nullptr;
     ProcessOrchestrator *m_orchestrator = nullptr;
     QThread *m_thread = nullptr;
     QSet<QString> m_runningCommands;
     QSet<QString> m_editorCommands;
     QHash<QString, QString> m_commandTexts;
-    bool m_checkEnabled = false;
-    QString m_checkCommand;
-    QString m_checkDirectory;
-    bool m_completeEnabled = false;
-    QString m_completeCommand;
-    QString m_completeDirectory;
+    bool m_syntaxEnabled = false;
+    QString m_syntaxCommand;
+    QString m_syntaxDirectory;
+    bool m_autocompleteEnabled = false;
+    QString m_autocompleteCommand;
+    QString m_autocompleteDirectory;
     // The newest request of each kind. A reply with an older id is dropped.
     int m_completionId = 0;
     int m_signatureId = 0;

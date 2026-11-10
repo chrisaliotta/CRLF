@@ -1,7 +1,7 @@
 #include "app/MainWindow.h"
 
 #include "app/BottomPanel.h"
-#include "app/CheckRunner.h"
+#include "app/SyntaxRunner.h"
 #include "app/CompletionSession.h"
 #include "app/CommandRunner.h"
 #include "app/ProcessOrchestrator.h"
@@ -374,14 +374,14 @@ MainWindow::MainWindow(QWidget *parent)
     });
     m_thread = new QThread(this);
     m_orchestrator = new ProcessOrchestrator;
-    m_checks = new CheckRunner;
+    m_syntax = new SyntaxRunner;
     m_completion = new CompletionSession;
     m_runner = new CommandRunner;
     m_orchestrator->moveToThread(m_thread);
-    m_checks->moveToThread(m_thread);
+    m_syntax->moveToThread(m_thread);
     m_completion->moveToThread(m_thread);
     m_runner->moveToThread(m_thread);
-    m_checks->setOrchestrator(m_orchestrator);
+    m_syntax->setOrchestrator(m_orchestrator);
     m_completion->setOrchestrator(m_orchestrator);
     m_runner->setOrchestrator(m_orchestrator);
     m_runner->setUi(this);
@@ -426,12 +426,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_tabs, &TabWorkspace::processCancelRequested, this, &MainWindow::cancelProcess);
     connect(m_tabs, &TabWorkspace::processReloadRequested, this, &MainWindow::reloadProcess);
     connect(m_tabs, &TabWorkspace::processServicesRestartRequested, this, &MainWindow::restartServices);
-    connect(m_tabs, &TabWorkspace::checkRequested, this, &MainWindow::runCheck);
+    connect(m_tabs, &TabWorkspace::syntaxRequested, this, &MainWindow::runSyntax);
     connect(m_tabs, &TabWorkspace::completionRequested, this, &MainWindow::askCompletion);
     connect(m_tabs, &TabWorkspace::signatureRequested, this, &MainWindow::askSignature);
     connect(m_tabs, &TabWorkspace::documentationRequested, this, &MainWindow::askDocumentation);
     connect(m_tabs, &TabWorkspace::editorClosed, this, [this](quintptr editorId) {
-        QMetaObject::invokeMethod(m_checks, [this, editorId] { m_checks->cancel(editorId); },
+        QMetaObject::invokeMethod(m_syntax, [this, editorId] { m_syntax->cancel(editorId); },
                                   Qt::QueuedConnection);
         const QString key = m_diagnosticKeys.take(editorId);
         if (!key.isEmpty())
@@ -450,8 +450,8 @@ MainWindow::MainWindow(QWidget *parent)
         m_bottom->problems()->retarget(previous, key, editor->filePath(), m_tabs->titleFor(editor), editorId);
         m_diagnosticKeys.insert(editorId, key);
     });
-    connect(m_checks, &CheckRunner::completed, this, &MainWindow::applyCheck, Qt::QueuedConnection);
-    connect(m_checks, &CheckRunner::failed, this, [this](quintptr, const QString &message) {
+    connect(m_syntax, &SyntaxRunner::completed, this, &MainWindow::applySyntax, Qt::QueuedConnection);
+    connect(m_syntax, &SyntaxRunner::failed, this, [this](quintptr, const QString &message) {
         statusBar()->showMessage(message, 5000);
     }, Qt::QueuedConnection);
     connect(m_completion, &CompletionSession::completed, this, &MainWindow::applyCompletion,
@@ -588,11 +588,11 @@ MainWindow::~MainWindow()
     QThread *uiThread = QThread::currentThread();
     QMetaObject::invokeMethod(m_orchestrator, [this, uiThread] {
         m_runner->stopAll();
-        m_checks->cancelAll();
+        m_syntax->cancelAll();
         m_completion->stop();
         m_orchestrator->shutdown();
-        delete m_checks;
-        m_checks = nullptr;
+        delete m_syntax;
+        m_syntax = nullptr;
         delete m_completion;
         m_completion = nullptr;
         delete m_runner;
@@ -1241,7 +1241,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_sessionStore.save(m_tabs->captureSession());
         m_bottom->closeSessions();
         QMetaObject::invokeMethod(m_runner, [this] { m_runner->stopAll(); }, Qt::QueuedConnection);
-        QMetaObject::invokeMethod(m_checks, [this] { m_checks->cancelAll(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(m_syntax, [this] { m_syntax->cancelAll(); }, Qt::QueuedConnection);
         event->accept();
         return;
     }
@@ -1254,7 +1254,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
     m_bottom->closeSessions();
     QMetaObject::invokeMethod(m_runner, [this] { m_runner->stopAll(); }, Qt::QueuedConnection);
-    QMetaObject::invokeMethod(m_checks, [this] { m_checks->cancelAll(); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_syntax, [this] { m_syntax->cancelAll(); }, Qt::QueuedConnection);
     event->accept();
 }
 
@@ -1311,22 +1311,22 @@ QString MainWindow::diagnosticKey(const CodeEditor *editor) const
     return editor->filePath();
 }
 
-void MainWindow::runCheck(CodeEditor *editor)
+void MainWindow::runSyntax(CodeEditor *editor)
 {
-    if (!m_checkEnabled || m_checkCommand.isEmpty() || editor == nullptr)
+    if (!m_syntaxEnabled || m_syntaxCommand.isEmpty() || editor == nullptr)
         return;
     QString text = editor->toPlainText();
     text.remove(QLatin1Char('\r'));
-    CheckRequest request;
+    SyntaxRequest request;
     request.editorId = quintptr(editor);
-    request.command = m_checkCommand;
-    request.workingDirectory = m_checkDirectory;
+    request.command = m_syntaxCommand;
+    request.workingDirectory = m_syntaxDirectory;
     request.variables = variablesFor(editor);
     request.text = text;
     request.revision = editor->documentRevision();
-    const QString key = QStringLiteral("check:%1").arg(request.editorId);
-    m_orchestrator->submit(key, QStringLiteral("Check"), workOwner(editor), 0, request.command,
-                           [checks = m_checks, request] { checks->start(request); }, ProcessLane::Hold);
+    const QString key = QStringLiteral("syntax:%1").arg(request.editorId);
+    m_orchestrator->submit(key, QStringLiteral("Syntax"), workOwner(editor), 0, request.command,
+                           [checks = m_syntax, request] { checks->start(request); }, ProcessLane::Hold);
 }
 
 void MainWindow::startCompletion(bool restart)
@@ -1336,12 +1336,12 @@ void MainWindow::startCompletion(bool restart)
     CommandVariables vars;
     vars.project = groupDirectory;
     vars.folder = m_explorer->rootPath();
-    vars.cwd = m_completeDirectory;
-    const QString command = m_completeCommand;
-    const QString directory = m_completeDirectory;
+    vars.cwd = m_autocompleteDirectory;
+    const QString command = m_autocompleteCommand;
+    const QString directory = m_autocompleteDirectory;
     // A new process knows no files. Each open below is answered with a state.
     m_fileStates.clear();
-    m_orchestrator->submit(QStringLiteral("complete"), QStringLiteral("autocomplete"), groupDirectory, 0, command,
+    m_orchestrator->submit(QStringLiteral("autocomplete"), QStringLiteral("autocomplete"), groupDirectory, 0, command,
                            [session = m_completion, command, directory, vars, restart] {
                                session->start(command, directory, vars, restart);
                            },
@@ -1355,7 +1355,7 @@ void MainWindow::startCompletion(bool restart)
 
 void MainWindow::warmCompletion(CodeEditor *editor)
 {
-    if (!m_completeEnabled || editor->filePath().isEmpty())
+    if (!m_autocompleteEnabled || editor->filePath().isEmpty())
         return;
     sendCompletion(editor, QStringLiteral("open"), 0);
 }
@@ -1363,7 +1363,7 @@ void MainWindow::warmCompletion(CodeEditor *editor)
 const ProcessRecord *MainWindow::completionRecord() const
 {
     for (const ProcessRecord &record : m_liveProcesses) {
-        if (record.key == QLatin1String("complete"))
+        if (record.key == QLatin1String("autocomplete"))
             return &record;
     }
     return nullptr;
@@ -1390,8 +1390,8 @@ QString MainWindow::completionStatus() const
 
 void MainWindow::refreshCompletionStatus()
 {
-    m_completionLabel->setVisible(m_completeEnabled);
-    if (m_completeEnabled)
+    m_completionLabel->setVisible(m_autocompleteEnabled);
+    if (m_autocompleteEnabled)
         m_completionLabel->setText(QStringLiteral("Autocomplete: ") + completionStatus());
 }
 
@@ -1418,19 +1418,19 @@ void MainWindow::runCommand(const QString &name)
 
 bool MainWindow::canReload(const QString &key)
 {
-    return key == QLatin1String("complete") || key.startsWith(QLatin1String("check:"))
+    return key == QLatin1String("autocomplete") || key.startsWith(QLatin1String("syntax:"))
            || key.startsWith(QLatin1String("command:"));
 }
 
 void MainWindow::cancelProcess(const QString &key)
 {
     m_orchestrator->cancel(key);
-    if (key == QLatin1String("complete")) {
+    if (key == QLatin1String("autocomplete")) {
         QMetaObject::invokeMethod(m_completion, [session = m_completion] { session->stop(); },
                                   Qt::QueuedConnection);
-    } else if (key.startsWith(QLatin1String("check:"))) {
-        const quintptr editorId = key.mid(6).toULongLong();
-        QMetaObject::invokeMethod(m_checks, [checks = m_checks, editorId] { checks->cancel(editorId); },
+    } else if (key.startsWith(QLatin1String("syntax:"))) {
+        const quintptr editorId = key.mid(7).toULongLong();
+        QMetaObject::invokeMethod(m_syntax, [checks = m_syntax, editorId] { checks->cancel(editorId); },
                                   Qt::QueuedConnection);
     } else if (key.startsWith(QLatin1String("command:"))) {
         const QString name = key.mid(8);
@@ -1441,22 +1441,22 @@ void MainWindow::cancelProcess(const QString &key)
 
 void MainWindow::restartServices()
 {
-    if (m_completeEnabled)
+    if (m_autocompleteEnabled)
         startCompletion(true);
-    if (m_checkEnabled) {
+    if (m_syntaxEnabled) {
         for (CodeEditor *editor : m_tabs->editors())
-            runCheck(editor);
+            runSyntax(editor);
     }
 }
 
 void MainWindow::reloadProcess(const QString &key)
 {
-    if (key == QLatin1String("complete")) {
-        if (m_completeEnabled)
+    if (key == QLatin1String("autocomplete")) {
+        if (m_autocompleteEnabled)
             startCompletion(true);
-    } else if (key.startsWith(QLatin1String("check:"))) {
-        if (CodeEditor *editor = m_tabs->editorFor(key.mid(6).toULongLong()))
-            runCheck(editor);
+    } else if (key.startsWith(QLatin1String("syntax:"))) {
+        if (CodeEditor *editor = m_tabs->editorFor(key.mid(7).toULongLong()))
+            runSyntax(editor);
     } else if (key.startsWith(QLatin1String("command:"))) {
         runCommand(key.mid(8));
     }
@@ -1464,7 +1464,7 @@ void MainWindow::reloadProcess(const QString &key)
 
 bool MainWindow::completionServes(const CodeEditor *editor) const
 {
-    if (!m_completeEnabled || editor->filePath().isEmpty())
+    if (!m_autocompleteEnabled || editor->filePath().isEmpty())
         return false;
     const QString state = m_fileStates.value(editor->filePath()).state;
     return state != QLatin1String("unsupported") && state != QLatin1String("missing");
@@ -1538,9 +1538,9 @@ void MainWindow::applySignature(int id, int revision, const QList<SignatureHint>
     editor->showSignatures(signatures, active);
 }
 
-void MainWindow::applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans)
+void MainWindow::applySyntax(quintptr editorId, int revision, const QList<Diagnostic> &spans)
 {
-    if (!m_checkEnabled || m_checkCommand.isEmpty())
+    if (!m_syntaxEnabled || m_syntaxCommand.isEmpty())
         return;
     CodeEditor *editor = m_tabs->editorFor(editorId);
     if (!editor || editor->documentRevision() != revision)
@@ -1604,33 +1604,33 @@ void MainWindow::applyProject(const Project &project)
     m_tabs->setExternalNavigation(project.externalNavigation);
     m_tabs->setSymbolProject(m_explorer->rootPath(), project.hide);
     m_tabs->setIndent(project.indent);
-    const bool checkEnabled = project.check.enabled && !project.check.command.isEmpty();
-    const bool checkChanged = checkEnabled != m_checkEnabled || project.check.command != m_checkCommand
-                              || project.check.workingDirectory != m_checkDirectory;
-    m_checkEnabled = checkEnabled;
-    m_checkCommand = project.check.command;
-    m_checkDirectory = project.check.workingDirectory;
+    const bool syntaxEnabled = project.syntax.enabled && !project.syntax.command.isEmpty();
+    const bool syntaxChanged = syntaxEnabled != m_syntaxEnabled || project.syntax.command != m_syntaxCommand
+                              || project.syntax.workingDirectory != m_syntaxDirectory;
+    m_syntaxEnabled = syntaxEnabled;
+    m_syntaxCommand = project.syntax.command;
+    m_syntaxDirectory = project.syntax.workingDirectory;
     m_bottom->problems()->setProjectDirectory(
         project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath());
-    if (checkChanged)
-        m_tabs->setCheckingEnabled(m_checkEnabled);
-    if (!m_checkEnabled) {
-        QMetaObject::invokeMethod(m_checks, [this] { m_checks->cancelAll(); }, Qt::QueuedConnection);
+    if (syntaxChanged)
+        m_tabs->setSyntaxEnabled(m_syntaxEnabled);
+    if (!m_syntaxEnabled) {
+        QMetaObject::invokeMethod(m_syntax, [this] { m_syntax->cancelAll(); }, Qt::QueuedConnection);
         m_bottom->problems()->clear();
         m_diagnosticKeys.clear();
     }
-    const bool completeEnabled = project.complete.enabled && !project.complete.command.isEmpty();
-    const bool completeChanged = completeEnabled != m_completeEnabled || project.complete.command != m_completeCommand
-                                 || project.complete.workingDirectory != m_completeDirectory;
-    m_completeEnabled = completeEnabled;
-    m_completeCommand = project.complete.command;
-    m_completeDirectory = project.complete.workingDirectory;
+    const bool autocompleteEnabled = project.autocomplete.enabled && !project.autocomplete.command.isEmpty();
+    const bool autocompleteChanged = autocompleteEnabled != m_autocompleteEnabled || project.autocomplete.command != m_autocompleteCommand
+                                 || project.autocomplete.workingDirectory != m_autocompleteDirectory;
+    m_autocompleteEnabled = autocompleteEnabled;
+    m_autocompleteCommand = project.autocomplete.command;
+    m_autocompleteDirectory = project.autocomplete.workingDirectory;
     m_orchestrator->setUnlimitedLog(project.unlimitedLog);
-    if (completeChanged)
-        m_tabs->setCompletionEnabled(m_completeEnabled);
-    if (!m_completeEnabled)
+    if (autocompleteChanged)
+        m_tabs->setCompletionEnabled(m_autocompleteEnabled);
+    if (!m_autocompleteEnabled)
         QMetaObject::invokeMethod(m_completion, [this] { m_completion->stop(); }, Qt::QueuedConnection);
-    else if (completeChanged)
+    else if (autocompleteChanged)
         startCompletion(false);
     refreshCompletionStatus();
     m_commandTexts.clear();
