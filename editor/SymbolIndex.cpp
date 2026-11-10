@@ -16,6 +16,8 @@
 #include <QPointer>
 #include <QSet>
 
+#include <functional>
+
 namespace {
 
 constexpr qint64 kMaxFileBytes = 1024 * 1024;
@@ -53,13 +55,15 @@ bool nameHidden(const QStringList &hide, const QString &name)
     return false;
 }
 
+// `cancelled` is polled before each directory and each file. A walk that is
+// cancelled returns what it had, and the caller drops it.
 QList<ScannedFile> collectProject(const QString &root, const QStringList &hide,
-                                  const LanguageRegistry *registry)
+                                  const LanguageRegistry *registry, const std::function<bool()> &cancelled)
 {
     QList<ScannedFile> found;
     QSet<QString> seenDirs;
     QStringList pending{root};
-    while (!pending.isEmpty()) {
+    while (!pending.isEmpty() && !cancelled()) {
         const QString dir = pending.takeLast();
         const QString dirKey = normalizedPath(dir).toLower();
         if (!seenDirs.contains(dirKey))
@@ -70,6 +74,8 @@ QList<ScannedFile> collectProject(const QString &root, const QStringList &hide,
         const QFileInfoList entries =
             QDir(dir).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
         for (const QFileInfo &info : entries) {
+            if (cancelled())
+                break;
             if (nameHidden(hide, info.fileName()))
                 continue;
             if (info.isDir()) {
@@ -117,6 +123,11 @@ SymbolIndex::SymbolIndex(const LanguageRegistry *registry, QObject *parent)
 {
 }
 
+SymbolIndex::~SymbolIndex()
+{
+    m_walkGeneration->fetchAndAddOrdered(1);
+}
+
 void SymbolIndex::setEnabled(bool enabled)
 {
     if (m_enabled == enabled)
@@ -131,7 +142,7 @@ void SymbolIndex::setEnabled(bool enabled)
         for (const QString &path : files)
             m_orchestrator->cancel(QStringLiteral("symbols:file:%1").arg(path));
     }
-    ++m_walkGeneration;
+    m_walkGeneration->fetchAndAddOrdered(1);
     m_bufferGeneration.clear();
     m_fileGeneration.clear();
     m_slices.clear();
@@ -159,7 +170,7 @@ void SymbolIndex::setProject(const QString &root, const QStringList &hide)
         return;
     m_root = normal;
     m_hide = hide;
-    const int generation = ++m_walkGeneration;
+    const int generation = m_walkGeneration->fetchAndAddOrdered(1) + 1;
     if (normal.isEmpty()) {
         if (m_orchestrator != nullptr)
             m_orchestrator->cancel(QStringLiteral("symbols:project"));
@@ -178,10 +189,11 @@ void SymbolIndex::setProject(const QString &root, const QStringList &hide)
     const LanguageRegistry *registry = m_registry;
     QPointer<SymbolIndex> alive(this);
     m_orchestrator->submit(QStringLiteral("symbols:project"), QStringLiteral("Project symbols"), normal, 0, normal,
-                           [alive, normal, hide, registry, generation] {
-        const QList<ScannedFile> scanned = collectProject(normal, hide, registry);
+                           [alive, normal, hide, registry, generation, latest = m_walkGeneration] {
+        const auto cancelled = [latest, generation] { return latest->loadAcquire() != generation; };
+        const QList<ScannedFile> scanned = collectProject(normal, hide, registry, cancelled);
         QCoreApplication *app = QCoreApplication::instance();
-        if (app == nullptr)
+        if (app == nullptr || cancelled())
             return;
         QMetaObject::invokeMethod(app, [alive, scanned, generation] {
             if (alive.isNull())
@@ -707,7 +719,7 @@ void SymbolIndex::rebuild()
 
 void SymbolIndex::applyDisk(int generation, const QList<DiskFile> &files)
 {
-    if (generation != m_walkGeneration)
+    if (generation != m_walkGeneration->loadAcquire())
         return;
     QStringList drop;
     for (auto it = m_slices.cbegin(); it != m_slices.cend(); ++it) {

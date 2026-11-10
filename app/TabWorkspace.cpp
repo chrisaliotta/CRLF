@@ -52,6 +52,11 @@ void setPageModified(QWidget *page, bool modified)
 
 } // namespace
 
+TabWorkspace::~TabWorkspace()
+{
+    m_externalGeneration->fetchAndAddOrdered(1);
+}
+
 TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme, QWidget *parent)
     : QTabWidget(parent)
     , m_registry(registry)
@@ -243,6 +248,10 @@ void TabWorkspace::showProcesses()
         return;
     }
     m_processes = new ProcessesPanel(this);
+    connect(m_processes, &ProcessesPanel::cancelRequested, this, &TabWorkspace::processCancelRequested);
+    connect(m_processes, &ProcessesPanel::reloadRequested, this, &TabWorkspace::processReloadRequested);
+    connect(m_processes, &ProcessesPanel::restartServicesRequested, this,
+            &TabWorkspace::processServicesRestartRequested);
     const int index = count() - 1;
     insertTab(index, m_processes, QStringLiteral("Processes"));
     auto *close = new QToolButton(this);
@@ -289,7 +298,10 @@ CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &
     editor->setCompletionEnabled(m_completion);
 
     connect(editor, &CodeEditor::checkRequested, this, [this, editor] { emit checkRequested(editor); });
-    connect(editor, &CodeEditor::completionRequested, this, [this, editor] { emit completionRequested(editor); });
+    connect(editor, &CodeEditor::completionRequested, this,
+            [this, editor](const QString &trigger) { emit completionRequested(editor, trigger); });
+    connect(editor, &CodeEditor::documentationRequested, this,
+            [this, editor](const CompletionItem &item) { emit documentationRequested(editor, item); });
     connect(editor, &CodeEditor::signatureRequested, this, [this, editor] { emit signatureRequested(editor); });
     connect(editor, &CodeEditor::filePathChanged, this, [this, editor] { emit editorRetargeted(editor); });
     connect(editor->document(), &QTextDocument::modificationChanged, this,
@@ -325,6 +337,16 @@ void TabWorkspace::setSymbolProject(const QString &root, const QStringList &hide
 void TabWorkspace::setExternalNavigation(bool enabled)
 {
     m_symbols->setExternalEnabled(enabled);
+}
+
+QList<CodeEditor *> TabWorkspace::editors() const
+{
+    QList<CodeEditor *> found;
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (auto *editor = qobject_cast<CodeEditor *>(it.key()))
+            found.append(editor);
+    }
+    return found;
 }
 
 void TabWorkspace::setCheckingEnabled(bool enabled)
@@ -494,7 +516,7 @@ void TabWorkspace::applyIndent(CodeEditor *editor, const QString &path)
 {
     const QString name = path.isEmpty() ? QString() : QFileInfo(path).fileName();
     const IndentRule rule = indentForFileName(m_indent, name);
-    editor->setIndent(rule.spaces, rule.size);
+    editor->setIndent(rule.spaces, rule.size, rule.keep);
 }
 
 void TabWorkspace::watchFile(const QString &path)

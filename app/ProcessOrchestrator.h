@@ -15,6 +15,8 @@ class QThreadPool;
 // the page never reads the orchestrator's memory.
 struct ProcessRecord
 {
+    // The submit() key. Cancel and Reload are addressed by it.
+    QString key;
     QString name;
     QString owner;
     // Milliseconds left on a Sleep debounce. Zero while Running.
@@ -22,9 +24,16 @@ struct ProcessRecord
     // "Sleep" while a debounce timer is waiting, "Running" after it fires.
     // A finished row is "Finished" or "Cancelled".
     QString status;
+    // The last CRLF_STATUS line the script wrote, such as "servers: 2 ready".
+    QString activity;
     QString detail;
-    // Standard error and other log lines the script wrote. Capped.
+    // Standard error and other log lines the script wrote. The last
+    // kMaxLogLines lines are kept.
     QString log;
+    // Set by the UI for keys it knows how to start again.
+    bool reloadable = false;
+    // Identifies a finished row while newer rows are prepended. Zero while live.
+    int serial = 0;
 };
 
 Q_DECLARE_METATYPE(ProcessRecord)
@@ -62,8 +71,14 @@ public:
     int currentToken(const QString &key) const;
 
     // Appends script log text (standard error) to the live record. Queues
-    // onto this object's thread.
+    // onto this object's thread. A line that starts with CRLF_STATUS: sets
+    // the record's activity and is not kept in the log.
     void appendLog(const QString &key, const QString &text);
+    void setActivity(const QString &key, const QString &text);
+    // When true, logs keep every line. When false, the last kMaxLogLines.
+    void setUnlimitedLog(bool unlimited);
+
+    static constexpr int kMaxLogLines = 2000;
 
     // Called from a Deliver function, on the UI thread. Runs `work` on the pool
     // under the deliver's token.
@@ -89,6 +104,8 @@ private:
     void startPool(Task *task, int token, const std::function<void()> &work);
     void removeTask(const QString &key, const QString &outcome);
     void appendLogOnThread(const QString &key, const QString &text);
+    void setActivityOnThread(const QString &key, const QString &text);
+    ProcessRecord recordFor(const Task *task) const;
     void publish();
 
     QThreadPool *m_pool = nullptr;
@@ -97,6 +114,8 @@ private:
     QHash<QString, int> m_tokens;
     QStringList m_order;
     QList<ProcessRecord> m_recent;
+    int m_serial = 0;
+    bool m_unlimitedLog = false;
 
     // Written only on the UI thread, from a Deliver callback, and only read
     // there to stamp the pool task with that deliver's token.

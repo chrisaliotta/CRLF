@@ -8,6 +8,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStringList>
 #include <QTimer>
 #include <QWheelEvent>
 
@@ -250,6 +251,29 @@ void TerminalView::syncSize()
     vterm_set_size(m_vt, rows, cols);
     emit resized(rows, cols);
     update();
+}
+
+QString TerminalView::transcript() const
+{
+    if (m_screen == nullptr)
+        return {};
+    const int last = m_scrollback.size() + m_rows;
+    QStringList rows;
+    for (int line = 0; line < last; ++line) {
+        QString row;
+        for (int col = 0; col < m_cols; ++col) {
+            VTermScreenCell cell;
+            if (!cellAt(line, col, &cell) || cell.chars[0] == uint32_t(-1))
+                continue;
+            row += textFor(cell);
+        }
+        while (row.endsWith(QLatin1Char(' ')))
+            row.chop(1);
+        rows.append(row);
+    }
+    while (!rows.isEmpty() && rows.last().isEmpty())
+        rows.removeLast();
+    return rows.join(QLatin1Char('\n'));
 }
 
 void TerminalView::paintEvent(QPaintEvent *)

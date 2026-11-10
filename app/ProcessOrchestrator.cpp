@@ -30,7 +30,11 @@ struct ProcessOrchestrator::Task
     QString name;
     QString owner;
     QString detail;
+    QString activity;
     QString log;
+    // Standard error after the last newline. A status prefix can arrive
+    // split across reads, so lines are classified only once complete.
+    QString partial;
     std::function<void()> work;
     ProcessLane lane = ProcessLane::Pool;
     QPointer<QObject> deliverTo;
@@ -115,10 +119,51 @@ void ProcessOrchestrator::appendLogOnThread(const QString &key, const QString &t
     Task *task = m_tasks.value(key);
     if (task == nullptr)
         return;
-    task->log.append(text);
-    const int maxChars = 12000;
-    if (task->log.size() > maxChars)
-        task->log = task->log.right(maxChars);
+    static const QString marker = QStringLiteral("CRLF_STATUS:");
+    QString pending = task->partial + text;
+    pending.remove(QLatin1Char('\r'));
+    const int lastNewline = pending.lastIndexOf(QLatin1Char('\n'));
+    task->partial = pending.mid(lastNewline + 1);
+    if (lastNewline >= 0) {
+        const QStringList lines = pending.left(lastNewline).split(QLatin1Char('\n'));
+        for (const QString &line : lines) {
+            if (line.startsWith(marker))
+                task->activity = line.mid(marker.size()).trimmed();
+            else
+                task->log += line + QLatin1Char('\n');
+        }
+    }
+    int excess = m_unlimitedLog ? 0 : task->log.count(QLatin1Char('\n')) - kMaxLogLines;
+    if (excess > 0) {
+        int cut = 0;
+        while (excess-- > 0)
+            cut = task->log.indexOf(QLatin1Char('\n'), cut) + 1;
+        task->log.remove(0, cut);
+    }
+    publish();
+}
+
+void ProcessOrchestrator::setUnlimitedLog(bool unlimited)
+{
+    QMetaObject::invokeMethod(this, [this, unlimited] { m_unlimitedLog = unlimited; }, Qt::QueuedConnection);
+}
+
+void ProcessOrchestrator::setActivity(const QString &key, const QString &text)
+{
+    if (QThread::currentThread() == thread()) {
+        setActivityOnThread(key, text);
+        return;
+    }
+    QMetaObject::invokeMethod(this, [this, key, text] { setActivityOnThread(key, text); },
+                              Qt::QueuedConnection);
+}
+
+void ProcessOrchestrator::setActivityOnThread(const QString &key, const QString &text)
+{
+    Task *task = m_tasks.value(key);
+    if (task == nullptr)
+        return;
+    task->activity = text;
     publish();
 }
 
@@ -278,12 +323,11 @@ void ProcessOrchestrator::removeTask(const QString &key, const QString &outcome)
     Task *task = m_tasks.take(key);
     if (task == nullptr)
         return;
-    ProcessRecord record;
-    record.name = task->name;
-    record.owner = task->owner;
-    record.detail = task->detail;
-    record.log = task->log;
+    if (!task->partial.isEmpty())
+        task->log += task->partial + QLatin1Char('\n');
+    ProcessRecord record = recordFor(task);
     record.status = outcome;
+    record.serial = ++m_serial;
     m_recent.prepend(record);
     while (m_recent.size() > 20)
         m_recent.removeLast();
@@ -292,6 +336,18 @@ void ProcessOrchestrator::removeTask(const QString &key, const QString &outcome)
     m_order.removeOne(key);
     delete task;
     publish();
+}
+
+ProcessRecord ProcessOrchestrator::recordFor(const Task *task) const
+{
+    ProcessRecord record;
+    record.key = task->key;
+    record.name = task->name;
+    record.owner = task->owner;
+    record.detail = task->detail;
+    record.activity = task->activity;
+    record.log = task->log;
+    return record;
 }
 
 void ProcessOrchestrator::publish()
@@ -308,11 +364,7 @@ void ProcessOrchestrator::publish()
         const Task *task = m_tasks.value(key);
         if (task == nullptr)
             continue;
-        ProcessRecord record;
-        record.name = task->name;
-        record.owner = task->owner;
-        record.detail = task->detail;
-        record.log = task->log;
+        ProcessRecord record = recordFor(task);
         if (task->sleeping) {
             sleeping = true;
             record.status = QStringLiteral("Sleep");

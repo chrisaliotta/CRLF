@@ -13,6 +13,7 @@
 #include "app/ProblemsPanel.h"
 #include "app/TabWorkspace.h"
 #include "app/TemplateDialog.h"
+#include "app/TerminalPanel.h"
 #include "app/TitleBar.h"
 #include "io/ProjectCommands.h"
 #include "io/WslPath.h"
@@ -25,6 +26,8 @@
 #include <QActionGroup>
 #include <QCloseEvent>
 #include <QDir>
+#include <QFile>
+#include <QUuid>
 #include <QCoreApplication>
 #include <QDialog>
 #include <QFileDialog>
@@ -68,6 +71,19 @@ QString rgbaString(const QColor &color)
         .arg(color.green())
         .arg(color.blue())
         .arg(color.alpha());
+}
+
+// A command names ${buffer} or ${terminal}. The value is a path, not the
+// text, so a newline in the buffer cannot break the shell command.
+QString writePayload(const QString &prefix, const QString &text)
+{
+    const QString path = QDir(QDir::tempPath()).filePath(
+        QStringLiteral("crlf-%1-%2.txt").arg(prefix, QUuid::createUuid().toString(QUuid::Id128)));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return {};
+    file.write(text.toUtf8());
+    return path;
 }
 
 QColor chromeBorder(const Theme &theme)
@@ -135,9 +151,10 @@ FindBar QListWidget::item { padding: 2px 8px; }
 FindBar QListWidget::item:selected { background: %6; color: %2; }
 OutputPanel, TerminalPanel, ProblemsPanel, ProcessesPanel, BottomPanel { background: %1; }
 OutputPanel QLabel, TerminalPanel QLabel, ProblemsPanel QLabel, ProcessesPanel QLabel, BottomPanel QLabel { color: %2; }
-OutputPanel QToolButton, TerminalPanel QToolButton, BottomPanel QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px 8px; }
-OutputPanel QToolButton:hover, TerminalPanel QToolButton:hover, BottomPanel QToolButton:hover { background: %4; }
-#outputPage:checked, #problemsPage:checked, #terminalPage:checked, #processesPage:checked { background: %5; }
+OutputPanel QToolButton, TerminalPanel QToolButton, BottomPanel QToolButton, ProcessesPanel QToolButton { border: none; border-radius: 5px; color: %2; padding: 3px 8px; }
+OutputPanel QToolButton:hover, TerminalPanel QToolButton:hover, BottomPanel QToolButton:hover, ProcessesPanel QToolButton:hover { background: %4; }
+ProcessesPanel QToolButton:disabled { color: %3; }
+#outputPage:checked, #problemsPage:checked, #terminalPage:checked, #processesPage:checked, #processSection:checked { background: %5; }
 OutputPanel QPlainTextEdit { background: %7; color: %2; }
 ProblemsPanel QTreeWidget { background: %1; color: %2; border: none; outline: 0; }
 ProblemsPanel QTreeWidget::item { padding: 2px 4px; }
@@ -368,7 +385,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_completion->setOrchestrator(m_orchestrator);
     m_runner->setOrchestrator(m_orchestrator);
     m_runner->setUi(this);
-    m_runner->setContextProvider([this] { return commandVariables(); });
+    m_runner->setContextProvider([this](const QString &command) {
+        CommandVariables vars = commandVariables();
+        if (command.contains(QStringLiteral("${buffer}"))) {
+            CodeEditor *editor = m_tabs->currentEditor();
+            if (editor != nullptr) {
+                QString text = editor->toPlainText();
+                text.remove(QLatin1Char('\r'));
+                vars.buffer = writePayload(QStringLiteral("buffer"), text);
+            }
+        }
+        if (command.contains(QStringLiteral("${terminal}")) && m_bottom->terminal()->sessionCount() > 0)
+            vars.terminal = writePayload(QStringLiteral("terminal"), m_bottom->terminal()->transcript());
+        return vars;
+    });
     m_runner->setEditorInputProvider([this](const QString &name) {
         m_tabs->rememberCommandEditor(name);
         EditorFeed feed;
@@ -385,14 +415,21 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_orchestrator, &ProcessOrchestrator::recordsChanged, this,
             [this](const QList<ProcessRecord> &live, const QList<ProcessRecord> &recent) {
                 m_liveProcesses = live;
+                for (ProcessRecord &record : m_liveProcesses)
+                    record.reloadable = canReload(record.key);
                 m_recentProcesses = recent;
                 if (ProcessesPanel *panel = m_tabs->processes())
-                    panel->setRecords(live, recent);
+                    panel->setRecords(m_liveProcesses, m_recentProcesses);
+                refreshCompletionStatus();
             },
             Qt::QueuedConnection);
+    connect(m_tabs, &TabWorkspace::processCancelRequested, this, &MainWindow::cancelProcess);
+    connect(m_tabs, &TabWorkspace::processReloadRequested, this, &MainWindow::reloadProcess);
+    connect(m_tabs, &TabWorkspace::processServicesRestartRequested, this, &MainWindow::restartServices);
     connect(m_tabs, &TabWorkspace::checkRequested, this, &MainWindow::runCheck);
     connect(m_tabs, &TabWorkspace::completionRequested, this, &MainWindow::askCompletion);
     connect(m_tabs, &TabWorkspace::signatureRequested, this, &MainWindow::askSignature);
+    connect(m_tabs, &TabWorkspace::documentationRequested, this, &MainWindow::askDocumentation);
     connect(m_tabs, &TabWorkspace::editorClosed, this, [this](quintptr editorId) {
         QMetaObject::invokeMethod(m_checks, [this, editorId] { m_checks->cancel(editorId); },
                                   Qt::QueuedConnection);
@@ -401,6 +438,8 @@ MainWindow::MainWindow(QWidget *parent)
             m_bottom->problems()->removeFile(key);
     });
     connect(m_tabs, &TabWorkspace::editorRetargeted, this, [this](CodeEditor *editor) {
+        warmCompletion(editor);
+        refreshCompletionStatus();
         const quintptr editorId = quintptr(editor);
         const QString previous = m_diagnosticKeys.value(editorId);
         if (previous.isEmpty())
@@ -417,7 +456,11 @@ MainWindow::MainWindow(QWidget *parent)
     }, Qt::QueuedConnection);
     connect(m_completion, &CompletionSession::completed, this, &MainWindow::applyCompletion,
             Qt::QueuedConnection);
+    connect(m_completion, &CompletionSession::resolved, this, &MainWindow::applyResolved,
+            Qt::QueuedConnection);
     connect(m_completion, &CompletionSession::signatureReady, this, &MainWindow::applySignature,
+            Qt::QueuedConnection);
+    connect(m_completion, &CompletionSession::fileStateChanged, this, &MainWindow::applyFileState,
             Qt::QueuedConnection);
     connect(m_completion, &CompletionSession::failed, this, [this](const QString &message) {
         statusBar()->showMessage(message, 5000);
@@ -466,9 +509,14 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     m_cursorLabel = new QLabel(this);
+    m_completionLabel = new QLabel(this);
+    m_completionLabel->setToolTip(QStringLiteral(
+        "Autocomplete for the file in front. When it is stopped, Restart Services in View > Processes starts it again."));
+    m_completionLabel->hide();
     m_languageLabel = new QLabel(this);
     m_encodingLabel = new QLabel(this);
     m_eolLabel = new QLabel(this);
+    statusBar()->addPermanentWidget(m_completionLabel);
     statusBar()->addPermanentWidget(m_languageLabel);
     statusBar()->addPermanentWidget(m_encodingLabel);
     statusBar()->addPermanentWidget(m_eolLabel);
@@ -527,8 +575,16 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    if (m_thread == nullptr)
-        return;
+    // The tabs go first, while the orchestrator is still running. Each editor
+    // cancels its scans on it as it is destroyed, and the symbol index and
+    // the external lookup stop their walks, so the wait below is for work
+    // that is already ending. Left to ~QWidget, the tabs would be destroyed
+    // after the orchestrator and call into freed memory.
+    m_findBar->setEditor(nullptr);
+    m_tabs->disconnect(this);
+    delete m_tabs;
+    m_tabs = nullptr;
+
     QThread *uiThread = QThread::currentThread();
     QMetaObject::invokeMethod(m_orchestrator, [this, uiThread] {
         m_runner->stopAll();
@@ -905,6 +961,19 @@ void MainWindow::connectActions()
     connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
         m_findBar->setEditor(m_tabs->currentEditor());
         reloadCommands();
+        // A reply still on its way belongs to the tab that was left.
+        ++m_completionId;
+        ++m_signatureId;
+        if (CodeEditor *editor = m_tabs->currentEditor()) {
+            // A tab opened since the session started has no state yet. One
+            // reopened on a file the session knows takes that file's triggers.
+            const auto state = m_fileStates.constFind(editor->filePath());
+            if (state != m_fileStates.constEnd())
+                editor->setCompletionTriggers(state->triggers);
+            else if (completionRecord() != nullptr)
+                warmCompletion(editor);
+        }
+        refreshCompletionStatus();
     });
     connect(m_commandWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString &path) {
         if (QFileInfo::exists(path))
@@ -1260,56 +1329,213 @@ void MainWindow::runCheck(CodeEditor *editor)
                            [checks = m_checks, request] { checks->start(request); }, ProcessLane::Hold);
 }
 
-void MainWindow::askCompletion(CodeEditor *editor)
+void MainWindow::startCompletion(bool restart)
 {
-    if (!m_completeEnabled || m_completeCommand.isEmpty() || editor == nullptr)
+    const QString groupDirectory =
+        m_projectFile.isEmpty() ? QString() : QFileInfo(m_projectFile).absolutePath();
+    CommandVariables vars;
+    vars.project = groupDirectory;
+    vars.folder = m_explorer->rootPath();
+    vars.cwd = m_completeDirectory;
+    const QString command = m_completeCommand;
+    const QString directory = m_completeDirectory;
+    // A new process knows no files. Each open below is answered with a state.
+    m_fileStates.clear();
+    m_orchestrator->submit(QStringLiteral("complete"), QStringLiteral("autocomplete"), groupDirectory, 0, command,
+                           [session = m_completion, command, directory, vars, restart] {
+                               session->start(command, directory, vars, restart);
+                           },
+                           ProcessLane::Hold);
+    // Queued behind the start on the same thread, so they reach the new
+    // session. Every tab is opened, so its server is loaded before it is
+    // selected.
+    for (CodeEditor *editor : m_tabs->editors())
+        warmCompletion(editor);
+}
+
+void MainWindow::warmCompletion(CodeEditor *editor)
+{
+    if (!m_completeEnabled || editor->filePath().isEmpty())
         return;
-    QString text = editor->toPlainText();
-    text.remove(QLatin1Char('\r'));
-    const int id = ++m_completionId;
-    const int revision = editor->documentRevision();
-    const QString path = editor->filePath();
-    const int line = editor->textCursor().blockNumber() + 1;
-    const int column = editor->textCursor().positionInBlock() + 1;
-    QMetaObject::invokeMethod(m_completion, [session = m_completion, id, revision, path, line, column, text] {
-        session->request(id, revision, path, line, column, text, QStringLiteral("completion"));
-    }, Qt::QueuedConnection);
+    sendCompletion(editor, QStringLiteral("open"), 0);
+}
+
+const ProcessRecord *MainWindow::completionRecord() const
+{
+    for (const ProcessRecord &record : m_liveProcesses) {
+        if (record.key == QLatin1String("complete"))
+            return &record;
+    }
+    return nullptr;
+}
+
+QString MainWindow::completionStatus() const
+{
+    const ProcessRecord *record = completionRecord();
+    if (record == nullptr)
+        return QStringLiteral("stopped");
+    const CodeEditor *editor = m_tabs->currentEditor();
+    // A page that is not an editor shows the session as a whole.
+    if (editor == nullptr)
+        return record->activity.isEmpty() ? QStringLiteral("starting") : record->activity;
+    if (editor->filePath().isEmpty())
+        return QStringLiteral("not available until the file is saved");
+    const auto state = m_fileStates.constFind(editor->filePath());
+    if (state == m_fileStates.constEnd())
+        return QStringLiteral("starting");
+    if (state->state == QLatin1String("unsupported"))
+        return QStringLiteral("not available for ") + editor->language()->name;
+    return state->message;
+}
+
+void MainWindow::refreshCompletionStatus()
+{
+    m_completionLabel->setVisible(m_completeEnabled);
+    if (m_completeEnabled)
+        m_completionLabel->setText(QStringLiteral("Autocomplete: ") + completionStatus());
+}
+
+void MainWindow::applyFileState(const QString &path, const CompletionFileState &state)
+{
+    m_fileStates.insert(path, state);
+    for (CodeEditor *editor : m_tabs->editors()) {
+        if (editor->filePath() == path)
+            editor->setCompletionTriggers(state.triggers);
+    }
+    refreshCompletionStatus();
+}
+
+void MainWindow::runCommand(const QString &name)
+{
+    if (m_editorCommands.contains(name) && m_tabs->currentEditor() != nullptr)
+        m_output->allowReveal();
+    else
+        m_output->showCommand(name);
+    m_orchestrator->submit(QStringLiteral("command:%1").arg(name), name, workOwner(m_tabs->currentWidget()), 0,
+                           m_commandTexts.value(name), [runner = m_runner, name] { runner->requestLaunch(name); },
+                           ProcessLane::Hold);
+}
+
+bool MainWindow::canReload(const QString &key)
+{
+    return key == QLatin1String("complete") || key.startsWith(QLatin1String("check:"))
+           || key.startsWith(QLatin1String("command:"));
+}
+
+void MainWindow::cancelProcess(const QString &key)
+{
+    m_orchestrator->cancel(key);
+    if (key == QLatin1String("complete")) {
+        QMetaObject::invokeMethod(m_completion, [session = m_completion] { session->stop(); },
+                                  Qt::QueuedConnection);
+    } else if (key.startsWith(QLatin1String("check:"))) {
+        const quintptr editorId = key.mid(6).toULongLong();
+        QMetaObject::invokeMethod(m_checks, [checks = m_checks, editorId] { checks->cancel(editorId); },
+                                  Qt::QueuedConnection);
+    } else if (key.startsWith(QLatin1String("command:"))) {
+        const QString name = key.mid(8);
+        QMetaObject::invokeMethod(m_runner, [runner = m_runner, name] { runner->stop(name); },
+                                  Qt::QueuedConnection);
+    }
+}
+
+void MainWindow::restartServices()
+{
+    if (m_completeEnabled)
+        startCompletion(true);
+    if (m_checkEnabled) {
+        for (CodeEditor *editor : m_tabs->editors())
+            runCheck(editor);
+    }
+}
+
+void MainWindow::reloadProcess(const QString &key)
+{
+    if (key == QLatin1String("complete")) {
+        if (m_completeEnabled)
+            startCompletion(true);
+    } else if (key.startsWith(QLatin1String("check:"))) {
+        if (CodeEditor *editor = m_tabs->editorFor(key.mid(6).toULongLong()))
+            runCheck(editor);
+    } else if (key.startsWith(QLatin1String("command:"))) {
+        runCommand(key.mid(8));
+    }
+}
+
+bool MainWindow::completionServes(const CodeEditor *editor) const
+{
+    if (!m_completeEnabled || editor->filePath().isEmpty())
+        return false;
+    const QString state = m_fileStates.value(editor->filePath()).state;
+    return state != QLatin1String("unsupported") && state != QLatin1String("missing");
+}
+
+void MainWindow::sendCompletion(CodeEditor *editor, const QString &kind, int id, const QString &trigger,
+                                const QString &data)
+{
+    CompletionRequest request;
+    request.kind = kind;
+    request.id = id;
+    request.revision = editor->documentRevision();
+    request.path = editor->filePath();
+    request.line = editor->textCursor().blockNumber() + 1;
+    request.column = editor->textCursor().positionInBlock() + 1;
+    request.trigger = trigger;
+    request.data = data;
+    if (kind != QLatin1String("resolve")) {
+        request.text = editor->toPlainText();
+        request.text.remove(QLatin1Char('\r'));
+    }
+    QMetaObject::invokeMethod(m_completion, [session = m_completion, request] { session->request(request); },
+                              Qt::QueuedConnection);
+}
+
+void MainWindow::askCompletion(CodeEditor *editor, const QString &trigger)
+{
+    if (completionServes(editor))
+        sendCompletion(editor, QStringLiteral("completion"), ++m_completionId, trigger);
+}
+
+void MainWindow::askDocumentation(CodeEditor *editor, const CompletionItem &item)
+{
+    if (item.data == m_resolveData)
+        return;
+    m_resolveData = item.data;
+    sendCompletion(editor, QStringLiteral("resolve"), ++m_resolveId, QString(), item.data);
 }
 
 void MainWindow::askSignature(CodeEditor *editor)
 {
-    if (!m_completeEnabled || m_completeCommand.isEmpty() || editor == nullptr)
-        return;
-    QString text = editor->toPlainText();
-    text.remove(QLatin1Char('\r'));
-    const int id = ++m_completionId;
-    const int revision = editor->documentRevision();
-    const QString path = editor->filePath();
-    const int line = editor->textCursor().blockNumber() + 1;
-    const int column = editor->textCursor().positionInBlock() + 1;
-    QMetaObject::invokeMethod(m_completion, [session = m_completion, id, revision, path, line, column, text] {
-        session->request(id, revision, path, line, column, text, QStringLiteral("signature"));
-    }, Qt::QueuedConnection);
+    if (completionServes(editor))
+        sendCompletion(editor, QStringLiteral("signature"), ++m_signatureId);
 }
 
-void MainWindow::applyCompletion(int id, int revision, const QList<CompletionItem> &items)
+void MainWindow::applyCompletion(int id, int revision, const QList<CompletionItem> &items, bool incomplete)
 {
     if (id != m_completionId)
         return;
     CodeEditor *editor = m_tabs->currentEditor();
     if (editor == nullptr || editor->documentRevision() != revision)
         return;
-    editor->showCompletions(items);
+    editor->showCompletions(items, incomplete);
 }
 
-void MainWindow::applySignature(int id, int revision, const QString &label, const QString &parameter)
+void MainWindow::applyResolved(int id, const QString &data, const QString &detail, const QString &documentation)
 {
-    if (id != m_completionId)
+    if (id != m_resolveId || data != m_resolveData)
+        return;
+    if (CodeEditor *editor = m_tabs->currentEditor())
+        editor->showResolved(data, detail, documentation);
+}
+
+void MainWindow::applySignature(int id, int revision, const QList<SignatureHint> &signatures, int active)
+{
+    if (id != m_signatureId)
         return;
     CodeEditor *editor = m_tabs->currentEditor();
     if (editor == nullptr || editor->documentRevision() != revision)
         return;
-    editor->showSignature(label, parameter);
+    editor->showSignatures(signatures, active);
 }
 
 void MainWindow::applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans)
@@ -1399,23 +1625,17 @@ void MainWindow::applyProject(const Project &project)
     m_completeEnabled = completeEnabled;
     m_completeCommand = project.complete.command;
     m_completeDirectory = project.complete.workingDirectory;
+    m_orchestrator->setUnlimitedLog(project.unlimitedLog);
     if (completeChanged)
         m_tabs->setCompletionEnabled(m_completeEnabled);
-    if (!m_completeEnabled) {
+    if (!m_completeEnabled)
         QMetaObject::invokeMethod(m_completion, [this] { m_completion->stop(); }, Qt::QueuedConnection);
-    } else if (completeChanged) {
-        CommandVariables vars;
-        vars.project = groupDirectory;
-        vars.folder = m_explorer->rootPath();
-        vars.cwd = m_completeDirectory;
-        const QString command = m_completeCommand;
-        const QString directory = m_completeDirectory;
-        m_orchestrator->submit(QStringLiteral("complete"), QStringLiteral("autocomplete"), groupDirectory, 0, command,
-                               [session = m_completion, command, directory, vars] {
-                                   session->start(command, directory, vars);
-                               },
-                               ProcessLane::Hold);
-    }
+    else if (completeChanged)
+        startCompletion(false);
+    refreshCompletionStatus();
+    m_commandTexts.clear();
+    for (const ProjectCommand &command : project.commands)
+        m_commandTexts.insert(command.name, command.command);
     clearProjectCommands(m_menuBar);
     if (project.commands.isEmpty()) {
         if (!project.error.isEmpty())
@@ -1429,16 +1649,7 @@ void MainWindow::applyProject(const Project &project)
                 action->setShortcut(command.key);
                 action->setShortcutContext(Qt::WindowShortcut);
             }
-            connect(action, &QAction::triggered, this, [this, name = command.name, toEditor = command.outputToEditor,
-                                                        commandText = command.command] {
-                if (toEditor && m_tabs->currentEditor() != nullptr)
-                    m_output->allowReveal();
-                else
-                    m_output->showCommand(name);
-                m_orchestrator->submit(QStringLiteral("command:%1").arg(name), name, workOwner(m_tabs->currentWidget()),
-                                       0, commandText, [runner = m_runner, name] { runner->requestLaunch(name); },
-                                       ProcessLane::Hold);
-            });
+            connect(action, &QAction::triggered, this, [this, name = command.name] { runCommand(name); });
         }
     }
     m_runMenu->menuAction()->setVisible(!m_runMenu->actions().isEmpty());

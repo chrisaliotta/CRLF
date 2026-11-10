@@ -35,6 +35,8 @@ const CommandKey kCommandKeys[] = {
     {"line", "Cursor line, starting at 1"},
     {"column", "Cursor column, starting at 1"},
     {"selection", "The selected text"},
+    {"buffer", "Path of a file holding the focused editor's text, including unsaved edits"},
+    {"terminal", "Path of a file holding the current terminal's plain text"},
     {"language", "Language of the focused document"},
     {"project", "Directory that contains the .crlf file"},
     {"folder", "Folder the explorer is scoped to"},

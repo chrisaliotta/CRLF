@@ -109,6 +109,7 @@ IndentRule readIndentRule(const QJsonObject &obj, const IndentRule &base)
         rule.spaces = false;
     const int size = obj.value(QLatin1String("size")).toInt(base.size);
     rule.size = size < 1 ? base.size : size;
+    rule.keep = obj.value(QLatin1String("keep")).toBool(base.keep);
     for (const QJsonValue &extension : obj.value(QLatin1String("extensions")).toArray()) {
         const QString text = extension.toString().trimmed();
         if (!text.isEmpty())
@@ -261,6 +262,7 @@ Project projectFor(const QString &start)
     project.externalNavigation = root.value(QLatin1String("externalNavigation")).toBool(true);
     readCheck(project.check, root.value(QLatin1String("check")), directory);
     readCheck(project.complete, root.value(QLatin1String("complete")), directory);
+    project.unlimitedLog = root.value(QLatin1String("unlimitedLog")).toBool(false);
     return project;
 }
 

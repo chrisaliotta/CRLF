@@ -2,6 +2,7 @@
 
 #include "Types.h"
 #include "app/ProcessesPanel.h"
+#include "editor/CompletionItem.h"
 #include "editor/SymbolLocation.h"
 #include "io/DocumentFile.h"
 #include "io/ProjectCommands.h"
@@ -37,6 +38,8 @@ class TabWorkspace : public QTabWidget
 
 public:
     TabWorkspace(const LanguageRegistry *registry, const Theme *theme, QWidget *parent = nullptr);
+    // Stops an external lookup that is still running, so exit does not wait for it.
+    ~TabWorkspace() override;
 
     // Null when the current tab is the other page type.
     CodeEditor *currentEditor() const;
@@ -100,6 +103,7 @@ public:
     bool isProcesses(QWidget *page) const { return page != nullptr && page == m_processes; }
     ProcessesPanel *processes() const { return m_processes; }
     CodeEditor *editorFor(quintptr editorId) const;
+    QList<CodeEditor *> editors() const;
     // Focuses the open document and moves its cursor. A path that is not open
     // is left alone; check rows belong to documents that are still open.
     void goToDiagnostic(const QString &path, quintptr editorId, int line, int column);
@@ -120,11 +124,15 @@ signals:
     // A definition was opened in a file other than the one that was current.
     void fileRevealed(const QString &path);
     void checkRequested(CodeEditor *editor);
-    void completionRequested(CodeEditor *editor);
+    void completionRequested(CodeEditor *editor, const QString &trigger);
     void signatureRequested(CodeEditor *editor);
+    void documentationRequested(CodeEditor *editor, const CompletionItem &item);
     void editorClosed(quintptr editorId);
     void editorRetargeted(CodeEditor *editor);
     void processesCurrent(bool current);
+    void processCancelRequested(const QString &key);
+    void processReloadRequested(const QString &key);
+    void processServicesRestartRequested();
 
 private:
     struct Page {

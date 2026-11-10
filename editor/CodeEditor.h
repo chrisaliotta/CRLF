@@ -49,8 +49,14 @@ public:
     // When false, edits do not schedule a check and any spans are cleared.
     void setCheckingEnabled(bool enabled);
     void setCompletionEnabled(bool enabled);
-    void showCompletions(const QList<CompletionItem> &items);
-    void showSignature(const QString &label, const QString &parameter);
+    // The characters this file's language server wants a completion asked
+    // after, such as `.`. The first letter of a word always asks.
+    void setCompletionTriggers(const QStringList &triggers);
+    // `incomplete` means the list was cut short for the word typed so far,
+    // so it is asked for again when that word changes.
+    void showCompletions(const QList<CompletionItem> &items, bool incomplete = false);
+    void showResolved(const QString &data, const QString &detail, const QString &documentation);
+    void showSignatures(const QList<SignatureHint> &signatures, int active);
     void setDiagnostics(const QList<Diagnostic> &spans);
     int documentRevision() const;
     // 1-based. Unfolds a region that hides the line, then centers it.
@@ -69,8 +75,10 @@ public:
     // Fold markers stay. Hiding numbers narrows the gutter to just those markers.
     void setLineNumbersVisible(bool visible);
     // `spaces` inserts `size` spaces for Tab. Otherwise Tab inserts one tab
-    // character, drawn `size` columns wide.
-    void setIndent(bool spaces, int size);
+    // character, drawn `size` columns wide. Those are the fallback when the
+    // lines above the cursor show no indentation. `keep` copies the prior
+    // line's own leading whitespace onto a new line.
+    void setIndent(bool spaces, int size, bool keep);
 
     // Highlights every occurrence. An empty term clears the highlights.
     void setFindTerm(const QString &term);
@@ -87,9 +95,13 @@ signals:
     void externalActivated(const SymbolLocation &target);
     // The buffer has been still for 500ms and checking is enabled.
     void checkRequested();
-    // Ctrl+Space, a trigger character, or another character while the list is open.
-    void completionRequested();
+    // Ctrl+Space, a word being started, or a trigger character. `trigger` is
+    // that character and is empty for the other two.
+    void completionRequested(const QString &trigger);
+    // A key was pressed while the caret is inside a call's parentheses.
     void signatureRequested();
+    // The selected completion has no documentation yet.
+    void documentationRequested(const CompletionItem &item);
     void filePathChanged();
 
 protected:
@@ -114,9 +126,18 @@ private:
     void scheduleOverlayRefresh();
     void scheduleSymbolScan();
     void scheduleCheck();
+    // Decides what the key just typed asks for. `text` is the key's text;
+    // Backspace and Delete pass "\b".
     void scheduleCompletion(const QString &text, bool listOpen);
+    // The identifier that ends at the caret.
+    QString completionPrefix() const;
+    // The caret is still in the word the open list was asked for.
+    bool inCompletion() const;
+    void narrowCompletions();
     void hideCompletions();
     void hideSignature();
+    void drawSignature();
+    void cycleSignature(int delta);
     bool insideArguments() const;
     void placeSignature();
     void applyCompletion(const CompletionItem &item);
@@ -128,7 +149,15 @@ private:
     int foldMarkerWidth() const;
     void drawFoldMarker(QPainter &painter, const QRect &rect, bool expanded) const;
     void applyTabStop();
+    // The file rule, used when no line above shows an indentation.
     QString indentUnit() const;
+    // One indent level taken from the nearest indented line at or above
+    // `origin`. A tab there means a tab; spaces mean the shallowest run.
+    QString indentUnitAt(const QTextBlock &origin) const;
+    // Leading whitespace to carry onto a new line: the current line, or the
+    // prior non-blank line when this one is empty. Empty when that line is
+    // not indented.
+    QString keptIndent(const QTextBlock &block) const;
     // Adds or removes one indent from each line in the selection.
     void indentLines(int direction);
 
@@ -145,8 +174,20 @@ private:
     class QTimer *m_completeTimer = nullptr;
     class CompletionPopup *m_completionPopup = nullptr;
     class QLabel *m_signature = nullptr;
+    QList<SignatureHint> m_signatures;
+    int m_signatureIndex = 0;
     bool m_completion = false;
+    // What the completion timer asks for when it fires.
+    bool m_wantCompletion = false;
     bool m_wantSignature = false;
+    QString m_trigger;
+    QString m_triggers;
+    // The open list: the line it is on, the column its word starts at, and
+    // the caret column when it was shown.
+    int m_listBlock = 0;
+    int m_listAnchor = 0;
+    int m_listCaret = 0;
+    bool m_listIncomplete = false;
     QString m_filePath;
     QString m_workOwner;
     bool m_checking = false;
@@ -165,6 +206,7 @@ private:
     bool m_lineNumbers = true;
     bool m_indentSpaces = false;
     int m_indentSize = 4;
+    bool m_keepIndent = false;
     QString m_findTerm;
     QList<QTextEdit::ExtraSelection> m_findSelections;
     bool m_overlayRefreshQueued = false;

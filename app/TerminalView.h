@@ -26,6 +26,8 @@ public:
     void reset();
     // Tells the pseudoconsole the cell size once the widget has one.
     void syncSize();
+    // Scrollback plus the screen, as plain text. Trailing blank rows are omitted.
+    QString transcript() const;
 
     int rows() const { return m_rows; }
     int cols() const { return m_cols; }

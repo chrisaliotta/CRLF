@@ -15,6 +15,8 @@ QString expandCommand(const QString &command, const CommandVariables &vars)
         {QStringLiteral("line"), vars.line},
         {QStringLiteral("column"), vars.column},
         {QStringLiteral("selection"), vars.selection},
+        {QStringLiteral("buffer"), vars.buffer},
+        {QStringLiteral("terminal"), vars.terminal},
         {QStringLiteral("language"), vars.language},
         {QStringLiteral("project"), vars.project},
         {QStringLiteral("folder"), vars.folder},

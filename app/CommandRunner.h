@@ -38,7 +38,7 @@ public:
     void setProject(const QList<ProjectCommand> &commands);
     // Asked again every time a command starts, including a restart, so
     // ${file} and the rest follow the document focused at that moment.
-    void setContextProvider(std::function<CommandVariables()> provider);
+    void setContextProvider(std::function<CommandVariables(const QString &command)> provider);
     // Asked when a command's output is "editor", at the same moment as the
     // context, so stdin is the document that document's variables describe.
     void setEditorInputProvider(std::function<EditorFeed(const QString &name)> provider);
@@ -66,9 +66,11 @@ private:
     // Panel output, or the bytes an "editor" command will apply at exit.
     // A distro's leading CRLF_PGID line is consumed here.
     void absorbStdout(const QString &name, const QByteArray &bytes);
+    // Removes the payload files recorded for this launch.
+    void discardPayloads(const QString &name);
 
     QList<ProjectCommand> m_commands;
-    std::function<CommandVariables()> m_contextProvider;
+    std::function<CommandVariables(const QString &command)> m_contextProvider;
     std::function<EditorFeed(const QString &name)> m_editorInput;
     QHash<QString, Running *> m_running;
     QHash<QString, CommandVariables> m_launchVars;

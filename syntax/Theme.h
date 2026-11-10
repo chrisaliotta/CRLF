@@ -29,6 +29,12 @@ public:
     // omits these keeps the terminal red and yellow.
     QColor diagnosticError;
     QColor diagnosticWarning;
+    // Completion list and the signature hint above the caret. A theme that
+    // omits these gets a panel that stays readable on that editor background.
+    QColor completionBackground;
+    QColor completionForeground;
+    QColor completionBorder;
+    QColor completionActive;
     // ANSI colors 0–15 for terminal output. A theme file's `terminal` object
     // replaces these; a missing entry keeps the default for that theme's
     // background.

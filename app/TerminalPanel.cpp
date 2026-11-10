@@ -95,6 +95,15 @@ void TerminalPanel::closeSessions()
         session.pty->stop();
 }
 
+QString TerminalPanel::transcript() const
+{
+    const int index = m_sessionsCombo->currentIndex();
+    if (index < 0 || index >= m_sessions.size())
+        return {};
+    const TerminalView *view = m_sessions.at(index).view;
+    return view != nullptr ? view->transcript() : QString();
+}
+
 TerminalPanel::Launch TerminalPanel::launchFor(const QString &directory) const
 {
     const WslPath::LinuxPath linux = WslPath::toLinux(directory);

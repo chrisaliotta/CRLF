@@ -192,13 +192,15 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
     m_completeTimer->setSingleShot(true);
     m_completeTimer->setInterval(100);
     connect(m_completeTimer, &QTimer::timeout, this, [this] {
+        if (m_wantCompletion)
+            emit completionRequested(m_trigger);
         if (m_wantSignature)
             emit signatureRequested();
-        else
-            emit completionRequested();
     });
     m_completionPopup = new CompletionPopup(this);
+    m_completionPopup->setHighlighting(m_registry, m_theme, m_definition);
     connect(m_completionPopup, &CompletionPopup::accepted, this, &CodeEditor::applyCompletion);
+    connect(m_completionPopup, &CompletionPopup::documentationRequested, this, &CodeEditor::documentationRequested);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, [this] { updateGutterWidth(); });
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateGutterArea);
@@ -206,6 +208,9 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
         scheduleOverlayRefresh();
         if (m_signature != nullptr && m_signature->isVisible() && !insideArguments())
             hideSignature();
+        // An arrow key or a click that leaves the word leaves its list.
+        if (m_completionPopup->isVisible() && !inCompletion())
+            hideCompletions();
     });
     connect(document(), &QTextDocument::contentsChange, this, [this](int, int, int) {
         // The link cursor would be applied from inside the edit. Drop the
@@ -257,6 +262,8 @@ void CodeEditor::setTheme(const Theme *theme)
         rebuildHighlighter();
     highlightCurrentLine();
     m_gutter->update();
+    if (m_completionPopup != nullptr)
+        m_completionPopup->setHighlighting(m_registry, m_theme, m_definition);
 }
 
 void CodeEditor::setLanguage(const LanguageDefinition *definition)
@@ -264,6 +271,8 @@ void CodeEditor::setLanguage(const LanguageDefinition *definition)
     m_definition = definition;
     rebuildHighlighter();
     scheduleSymbolScan();
+    if (m_completionPopup != nullptr)
+        m_completionPopup->setHighlighting(m_registry, m_theme, m_definition);
 }
 
 void CodeEditor::setSymbolIndex(SymbolIndex *index)
@@ -316,18 +325,38 @@ void CodeEditor::setCompletionEnabled(bool enabled)
     hideSignature();
 }
 
-void CodeEditor::showCompletions(const QList<CompletionItem> &items)
+void CodeEditor::setCompletionTriggers(const QStringList &triggers)
 {
-    if (!m_completion || items.isEmpty()) {
+    m_triggers = triggers.join(QString());
+}
+
+void CodeEditor::showCompletions(const QList<CompletionItem> &items, bool incomplete)
+{
+    const QString prefix = completionPrefix();
+    if (m_completion) {
+        m_completionPopup->setItems(items);
+        m_completionPopup->setPrefix(prefix);
+    }
+    // A list with no row for the word typed so far is not shown.
+    if (!m_completion || m_completionPopup->isEmpty()) {
         hideCompletions();
         return;
     }
-    m_completionPopup->setItems(items);
+    m_listBlock = textCursor().blockNumber();
+    m_listCaret = textCursor().positionInBlock();
+    m_listAnchor = m_listCaret - prefix.size();
+    m_listIncomplete = incomplete;
     placeCompletionPopup();
     m_completionPopup->show();
     m_completionPopup->raise();
     if (m_signature != nullptr && m_signature->isVisible())
         placeSignature();
+}
+
+void CodeEditor::showResolved(const QString &data, const QString &detail, const QString &documentation)
+{
+    if (m_completionPopup != nullptr)
+        m_completionPopup->fillResolved(data, detail, documentation);
 }
 
 void CodeEditor::hideCompletions()
@@ -347,26 +376,56 @@ void CodeEditor::placeCompletionPopup()
 void CodeEditor::applyCompletion(const CompletionItem &item)
 {
     hideCompletions();
-    QTextBlock block = document()->findBlockByNumber(qMax(0, item.replaceLine - 1));
-    if (!block.isValid())
-        block = textCursor().block();
-    int start = item.replaceColumn > 0 ? item.replaceColumn - 1 : textCursor().positionInBlock();
-    int end = item.replaceEndColumn > 0 ? item.replaceEndColumn - 1 : start;
-    start = qBound(0, start, block.text().size());
-    end = qBound(start, end, block.text().size());
+    // The row's range was measured when the list was asked for. Letters typed
+    // since then, while it narrowed, moved the end of the word.
+    const int typedSince = textCursor().positionInBlock() - m_listCaret;
+    const QTextBlock block = document()->findBlockByNumber(item.replaceLine - 1);
+    const int start = item.replaceColumn - 1;
+    const int end = qMax(start, item.replaceEndColumn - 1 + typedSince);
     QTextCursor cursor(block);
     cursor.setPosition(block.position() + start);
     cursor.setPosition(block.position() + end, QTextCursor::KeepAnchor);
     cursor.insertText(item.insert);
     setTextCursor(cursor);
     if (insideArguments()) {
+        m_wantCompletion = false;
         m_wantSignature = true;
         m_completeTimer->start();
     }
 }
 
-void CodeEditor::showSignature(const QString &label, const QString &parameter)
+void CodeEditor::showSignatures(const QList<SignatureHint> &signatures, int active)
 {
+    m_signatures.clear();
+    for (const SignatureHint &hint : signatures) {
+        if (!hint.label.isEmpty())
+            m_signatures.append(hint);
+    }
+    if (!m_completion || m_signatures.isEmpty()) {
+        hideSignature();
+        return;
+    }
+    m_signatureIndex = qBound(0, active, m_signatures.size() - 1);
+    drawSignature();
+}
+
+void CodeEditor::cycleSignature(int delta)
+{
+    if (m_signatures.size() < 2)
+        return;
+    const int count = m_signatures.size();
+    m_signatureIndex = (m_signatureIndex + delta + count) % count;
+    drawSignature();
+}
+
+void CodeEditor::drawSignature()
+{
+    if (m_signatureIndex < 0 || m_signatureIndex >= m_signatures.size()) {
+        hideSignature();
+        return;
+    }
+    const QString label = m_signatures.at(m_signatureIndex).label;
+    const QString parameter = m_signatures.at(m_signatureIndex).parameter;
     if (!m_completion || label.isEmpty()) {
         hideSignature();
         return;
@@ -377,26 +436,38 @@ void CodeEditor::showSignature(const QString &label, const QString &parameter)
         m_signature->setContentsMargins(6, 2, 6, 2);
     }
     m_signature->setAutoFillBackground(true);
-    const QColor accent = m_theme != nullptr
-                              ? m_theme->tokenFormat(TokenRole::Function).foreground().color()
-                              : palette().color(QPalette::Text);
+    m_signature->setAttribute(Qt::WA_StyledBackground, true);
+    const QColor accent = m_theme != nullptr ? m_theme->completionActive
+                                             : palette().color(QPalette::Text);
     if (m_theme != nullptr) {
         QPalette pal = m_signature->palette();
-        pal.setColor(QPalette::Window, m_theme->background);
-        pal.setColor(QPalette::WindowText, m_theme->foreground);
+        pal.setColor(QPalette::Window, m_theme->completionBackground);
+        pal.setColor(QPalette::WindowText, m_theme->completionForeground);
         m_signature->setPalette(pal);
-        m_signature->setStyleSheet(QStringLiteral("QLabel { border: 1px solid %1; }").arg(accent.name()));
+        // Background has to be in the stylesheet. A border rule alone leaves
+        // the label transparent, so the hint sat on top of the source.
+        // Color stays off this rule so the active-parameter span can keep its own.
+        m_signature->setStyleSheet(QStringLiteral(
+                                       "QLabel { background: %1; border: 1px solid %2; padding: 3px 8px; }")
+                                       .arg(m_theme->completionBackground.name(),
+                                            m_theme->completionBorder.name()));
     }
+    const QString body = m_theme != nullptr ? m_theme->completionForeground.name()
+                                           : palette().color(QPalette::Text).name();
     QString html = label.toHtmlEscaped();
     if (!parameter.isEmpty()) {
         const int at = label.indexOf(parameter);
         if (at >= 0) {
             html = label.left(at).toHtmlEscaped()
-                   + QStringLiteral("<span style=\"color:%1\">").arg(accent.name())
-                   + parameter.toHtmlEscaped() + QStringLiteral("</span>")
+                   + QStringLiteral("<span style=\"color:%1\"><b>").arg(accent.name())
+                   + parameter.toHtmlEscaped() + QStringLiteral("</b></span>")
                    + label.mid(at + parameter.size()).toHtmlEscaped();
         }
     }
+    if (m_signatures.size() > 1) {
+        html = QStringLiteral("%1 of %2&nbsp;&nbsp;").arg(m_signatureIndex + 1).arg(m_signatures.size()) + html;
+    }
+    html = QStringLiteral("<span style=\"color:%1\">%2</span>").arg(body, html);
     m_signature->setText(html);
     m_signature->adjustSize();
     placeSignature();
@@ -438,30 +509,70 @@ bool CodeEditor::insideArguments() const
     return false;
 }
 
+QString CodeEditor::completionPrefix() const
+{
+    const QString line = textCursor().block().text();
+    int start = textCursor().positionInBlock();
+    while (start > 0) {
+        const QChar c = line.at(start - 1);
+        if (!c.isLetterOrNumber() && c != QLatin1Char('_'))
+            break;
+        --start;
+    }
+    return line.mid(start, textCursor().positionInBlock() - start);
+}
+
+bool CodeEditor::inCompletion() const
+{
+    // On the list's line, at or after the column its word starts at, with
+    // nothing but that word between the two.
+    const QTextCursor cursor = textCursor();
+    const int typed = cursor.positionInBlock() - m_listAnchor;
+    return cursor.blockNumber() == m_listBlock && typed >= 0 && typed <= completionPrefix().size();
+}
+
+void CodeEditor::narrowCompletions()
+{
+    if (!m_completionPopup->isVisible())
+        return;
+    if (inCompletion())
+        m_completionPopup->setPrefix(completionPrefix());
+    if (!inCompletion() || m_completionPopup->isEmpty())
+        hideCompletions();
+}
+
 void CodeEditor::scheduleCompletion(const QString &text, bool listOpen)
 {
     if (!m_completion || text.isEmpty())
         return;
     const QChar c = text.at(0);
-    const bool member = c == QLatin1Char('.') || c == QLatin1Char('>') || c == QLatin1Char(':');
     const bool ident = c.isLetterOrNumber() || c == QLatin1Char('_');
-    // Member access asks for names. A call asks for the signature on every
-    // key while the caret stays inside the parentheses, so the hint is not
-    // cleared by the argument text.
-    if (member || (listOpen && ident)) {
-        m_wantSignature = false;
-        m_completeTimer->start();
-        return;
+    const bool erase = c == QLatin1Char('\b');
+    const bool trigger = m_triggers.contains(c);
+    const QString word = completionPrefix();
+    // A trigger character asks for the names that can follow it. A letter
+    // asks when it starts or continues a word and no list is open. While a
+    // list is open, letters and Backspace narrow it in place, and ask again
+    // only when that list was cut short. A number is not a word.
+    bool list = trigger;
+    if (!trigger && (ident || erase)) {
+        const bool named = !word.isEmpty() && !word.at(0).isDigit();
+        list = listOpen ? m_listIncomplete : ident && named;
     }
-    if (insideArguments()) {
-        m_wantSignature = true;
-        m_completeTimer->start();
-        return;
-    }
-    m_wantSignature = false;
-    hideSignature();
-    if (listOpen)
+    if (!list && !ident && !erase && listOpen)
         hideCompletions();
+    // A call asks for the signature on every key while the caret stays
+    // inside the parentheses, so the hint follows the argument being typed.
+    const bool signature = insideArguments();
+    if (!signature)
+        hideSignature();
+    m_wantCompletion = list;
+    m_wantSignature = signature;
+    m_trigger = trigger ? QString(c) : QString();
+    if (list || signature)
+        m_completeTimer->start();
+    else
+        m_completeTimer->stop();
 }
 
 void CodeEditor::setDiagnostics(const QList<Diagnostic> &spans)
@@ -609,16 +720,75 @@ void CodeEditor::applyTabStop()
     setTabStopDistance(m_indentSize * fontMetrics().horizontalAdvance(QLatin1Char(' ')));
 }
 
-void CodeEditor::setIndent(bool spaces, int size)
+void CodeEditor::setIndent(bool spaces, int size, bool keep)
 {
     m_indentSpaces = spaces;
-    m_indentSize = size;
+    m_indentSize = size < 1 ? 4 : size;
+    m_keepIndent = keep;
     applyTabStop();
 }
 
 QString CodeEditor::indentUnit() const
 {
     return m_indentSpaces ? QString(m_indentSize, QLatin1Char(' ')) : QStringLiteral("\t");
+}
+
+QString CodeEditor::indentUnitAt(const QTextBlock &origin) const
+{
+    const QString originText = origin.text();
+    int originLead = 0;
+    while (originLead < originText.size()
+           && (originText.at(originLead) == QLatin1Char(' ') || originText.at(originLead) == QLatin1Char('\t')))
+        ++originLead;
+
+    bool tabs = false;
+    bool sawIndent = false;
+    int step = 0;
+    // The line itself counts when it is already indented. Otherwise the prior
+    // line decides, and the walk stops at the first line that has text and
+    // no indent so a distant block cannot set the step.
+    for (QTextBlock block = originLead == 0 ? origin.previous() : origin; block.isValid();
+         block = block.previous()) {
+        const QString text = block.text();
+        int length = 0;
+        bool tab = false;
+        while (length < text.size()
+               && (text.at(length) == QLatin1Char(' ') || text.at(length) == QLatin1Char('\t'))) {
+            tab = tab || text.at(length) == QLatin1Char('\t');
+            ++length;
+        }
+        if (length == 0) {
+            if (!text.trimmed().isEmpty())
+                break;
+            continue;
+        }
+        if (!sawIndent) {
+            sawIndent = true;
+            tabs = tab;
+        }
+        if (tabs)
+            return QStringLiteral("\t");
+        if (!tab)
+            step = step == 0 ? length : qMin(step, length);
+    }
+    if (step > 0)
+        return QString(step, QLatin1Char(' '));
+    return indentUnit();
+}
+
+QString CodeEditor::keptIndent(const QTextBlock &block) const
+{
+    QTextBlock sample = block;
+    while (sample.isValid() && sample.text().trimmed().isEmpty())
+        sample = sample.previous();
+    if (!sample.isValid())
+        return {};
+    const QString text = sample.text();
+    int length = 0;
+    while (length < text.size()
+           && (text.at(length) == QLatin1Char(' ') || text.at(length) == QLatin1Char('\t')))
+        ++length;
+    return text.left(length);
 }
 
 void CodeEditor::indentLines(int direction)
@@ -634,11 +804,12 @@ void CodeEditor::indentLines(int direction)
         --last;
 
     cursor.beginEditBlock();
+    const QString unit = indentUnitAt(document()->findBlockByNumber(first));
     for (int number = first; number <= last; ++number) {
         const QTextBlock block = document()->findBlockByNumber(number);
         if (direction > 0) {
             QTextCursor line(block);
-            line.insertText(indentUnit());
+            line.insertText(unit);
             continue;
         }
         const QString text = block.text();
@@ -646,7 +817,8 @@ void CodeEditor::indentLines(int direction)
         if (text.startsWith(QLatin1Char('\t')))
             remove = 1;
         else {
-            while (remove < m_indentSize && remove < text.size() && text.at(remove) == QLatin1Char(' '))
+            const int spaces = unit.startsWith(QLatin1Char('\t')) ? m_indentSize : unit.size();
+            while (remove < spaces && remove < text.size() && text.at(remove) == QLatin1Char(' '))
                 ++remove;
         }
         if (remove == 0)
@@ -666,6 +838,11 @@ void CodeEditor::indentLines(int direction)
 
 void CodeEditor::keyPressEvent(QKeyEvent *event)
 {
+    if (m_signature != nullptr && m_signature->isVisible() && event->modifiers() == Qt::ControlModifier
+        && (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+        cycleSignature(event->key() == Qt::Key_Up ? -1 : 1);
+        return;
+    }
     const bool listOpen = m_completionPopup != nullptr && m_completionPopup->isVisible();
     if (listOpen) {
         if (event->key() == Qt::Key_Escape) {
@@ -687,22 +864,40 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
         }
     }
     if (event->key() == Qt::Key_Space && event->modifiers() == Qt::ControlModifier && m_completion) {
-        emit completionRequested();
+        emit completionRequested(QString());
         return;
     }
     const bool tab = event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier;
     const bool backtab = event->key() == Qt::Key_Backtab
                          || (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier);
     if (tab && !textCursor().hasSelection()) {
-        insertPlainText(indentUnit());
+        insertPlainText(indentUnitAt(textCursor().block()));
         return;
     }
     if ((tab && textCursor().hasSelection()) || backtab) {
         indentLines(tab ? 1 : -1);
         return;
     }
+    const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+                            && (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
+    if (plainEnter && m_keepIndent) {
+        QTextCursor cursor = textCursor();
+        cursor.beginEditBlock();
+        if (cursor.hasSelection())
+            cursor.removeSelectedText();
+        cursor.insertText(QStringLiteral("\n") + keptIndent(cursor.block()));
+        cursor.endEditBlock();
+        setTextCursor(cursor);
+        scheduleCompletion(QStringLiteral("\n"), listOpen);
+        return;
+    }
     QPlainTextEdit::keyPressEvent(event);
-    scheduleCompletion(event->text(), listOpen);
+    const bool erase = event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete;
+    const bool ident = !event->text().isEmpty()
+                       && (event->text().at(0).isLetterOrNumber() || event->text().at(0) == QLatin1Char('_'));
+    if (listOpen && (ident || erase))
+        narrowCompletions();
+    scheduleCompletion(erase ? QStringLiteral("\b") : event->text(), m_completionPopup->isVisible());
     if (event->key() == Qt::Key_Control && !event->isAutoRepeat())
         updateSymbolLink(viewport()->mapFromGlobal(QCursor::pos()));
 }

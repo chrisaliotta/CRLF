@@ -28,7 +28,24 @@ flowchart LR
 
 `submit` takes a key, a name, an owner (tab title and path, or a folder), a debounce interval, a detail string, and the function to run. The record is `Sleep` while the debounce timer is waiting and `Running` while the pool task or child process is in flight. Completion or cancellation removes it.
 
-The Processes page receives a copy of the records. It never reads the worker's memory. View > Processes opens that view as one editor tab. Choosing it again focuses the same tab. Closing the tab does not stop the work. Selecting a row shows that task's log. A script writes the log on standard error; standard output stays the protocol (the check array, or one completion reply per line).
+The Processes page receives a copy of the records. It never reads the worker's memory. View > Processes opens that view as one editor tab. Choosing it again focuses the same tab. Closing the tab does not stop the work.
+
+The page has three sections. Active lists live records. History lists the last 20 that finished or were cancelled. Log shows the log of the row last selected in either list. Double-clicking a row opens Log. A live task that finishes keeps its log on screen as its History row. A script writes the log on standard error; standard output stays the protocol (the check array, or one completion reply per line). The last 2,000 lines are kept. `"unlimitedLog": true` at the top of the object-shaped `.crlf` keeps every line instead. An array-shaped file leaves the cap on. A finished task's log moves to its History row whole, so set the key before reproducing a noisy problem. New lines are appended to the view, and it stays where it is when you have scrolled up.
+
+A standard error line that starts with `CRLF_STATUS:` is not logged. The rest of the line becomes the record's Activity, such as `servers: 2 ready`, until the next one. `ProcessOrchestrator::setActivity` sets it from C++.
+
+Cancel and Reload act on the selected Active row. `MainWindow` routes them by key:
+
+| Key | Cancel | Reload |
+| --- | --- | --- |
+| `complete` | Stops the autocomplete session | Starts the session again, replacing the running one |
+| `check:<editor>` | Stops that editor's check | Checks the editor's current text again |
+| `command:<name>` | Stops the menu command | Runs the command again, as choosing it from the menu does |
+| Anything else | Drops the record. A pool task already running keeps going, and its result is no longer the current one | Not offered |
+
+Reload starts the command string again, so an edited script is read from disk. Nothing watches the script.
+
+Restart Services, on Active, needs no selection. It starts autocomplete again and checks every open editor, for whichever of the two the project enables. Those are the processes that run without being chosen from a menu, so this brings them back after a Cancel. Menu commands are left alone.
 
 Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
 

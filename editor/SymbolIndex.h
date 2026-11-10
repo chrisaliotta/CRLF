@@ -4,9 +4,11 @@
 #include "editor/SymbolLocation.h"
 #include "syntax/SymbolScanner.h"
 
+#include <QAtomicInt>
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QSharedPointer>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -23,6 +25,8 @@ class SymbolIndex : public QObject
 
 public:
     explicit SymbolIndex(const LanguageRegistry *registry, QObject *parent = nullptr);
+    // Stops a project walk that is still running, so exit does not wait for it.
+    ~SymbolIndex() override;
 
     void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
 
@@ -130,7 +134,9 @@ private:
     bool m_external = true;
     QString m_root;
     QStringList m_hide;
-    int m_walkGeneration = 0;
+    // Shared with the project walk on the pool, which stops once this moves
+    // on: a newer project, the index being turned off, or the index going away.
+    QSharedPointer<QAtomicInt> m_walkGeneration = QSharedPointer<QAtomicInt>::create(0);
     QHash<QString, int> m_fileGeneration;
     QHash<quintptr, int> m_bufferGeneration;
     // Editor to the slice key currently published for it.

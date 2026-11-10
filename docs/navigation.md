@@ -57,6 +57,12 @@ Each scanned file is a `Slice`: hits (name, line, column, local flag), module bi
 
 Every async scan carries a generation number (`m_walkGeneration`, `m_fileGeneration[path]`, `m_bufferGeneration[editor]`). A result whose generation is no longer current is dropped. This is what makes debouncing and rescoping safe without locks: the index is only touched on the UI thread, and stale results simply do not apply.
 
+`m_walkGeneration` is also shared with the project walk itself. The walk reads it before each directory and each file and stops once it has moved on: a newer project, the index being turned off, or the index being destroyed. An external lookup stops the same way when the tabs are destroyed. That matters at exit. The orchestrator waits for its pool before the process ends, and a walk of a large folder that could not be stopped kept the process alive, with no window, until it had read every file.
+
+### Order at exit
+
+`~MainWindow` deletes the tabs first, while the orchestrator is still running on its thread. Each editor cancels its scans on the orchestrator as it is destroyed, and the index stops its walk. Then the orchestrator is shut down and deleted. Left to `~QWidget`, the tabs would be destroyed after the orchestrator, and every editor would call into freed memory.
+
 ### Posting back: `QCoreApplication::instance()`, not `this`
 
 Workers post results with `QMetaObject::invokeMethod(QCoreApplication::instance(), lambda, Qt::QueuedConnection)` and check a `QPointer<SymbolIndex>` **inside** the lambda.

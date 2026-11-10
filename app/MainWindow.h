@@ -84,11 +84,42 @@ private:
     CommandVariables variablesFor(QWidget *page) const;
     void runCheck(CodeEditor *editor);
     void applyCheck(quintptr editorId, int revision, const QList<Diagnostic> &spans);
-    void askCompletion(CodeEditor *editor);
+    // True when the editor's file has, or may still get, a language server.
+    // An unsaved buffer, and a file the session has called unsupported or
+    // missing, are not asked about.
+    bool completionServes(const CodeEditor *editor) const;
+    // Queues one request of `kind` for the editor: its path, caret, revision,
+    // and, for every kind but resolve, its buffer.
+    void sendCompletion(CodeEditor *editor, const QString &kind, int id, const QString &trigger = QString(),
+                        const QString &data = QString());
+    void askCompletion(CodeEditor *editor, const QString &trigger);
     void askSignature(CodeEditor *editor);
-    void applyCompletion(int id, int revision, const QList<CompletionItem> &items);
-    void applySignature(int id, int revision, const QString &label, const QString &parameter);
+    void askDocumentation(CodeEditor *editor, const CompletionItem &item);
+    void applyCompletion(int id, int revision, const QList<CompletionItem> &items, bool incomplete);
+    void applyResolved(int id, const QString &data, const QString &detail, const QString &documentation);
+    void applySignature(int id, int revision, const QList<SignatureHint> &signatures, int active);
+    void applyFileState(const QString &path, const CompletionFileState &state);
     QString diagnosticKey(const CodeEditor *editor) const;
+    // `restart` replaces a running session, so the script is read again.
+    void startCompletion(bool restart);
+    // Opens an editor's file in the session so its language server loads
+    // before the first completion is asked for. The session answers with
+    // that file's state.
+    void warmCompletion(CodeEditor *editor);
+    // The session's row on the Processes page, or null when it is not running.
+    const ProcessRecord *completionRecord() const;
+    // What the Autocomplete field says about the tab in front.
+    QString completionStatus() const;
+    void refreshCompletionStatus();
+    void runCommand(const QString &name);
+    // Processes page requests. A key this window does not start (a scan, a
+    // read) can be cancelled and cannot be reloaded.
+    void cancelProcess(const QString &key);
+    void reloadProcess(const QString &key);
+    // Autocomplete and every open editor's check, when the project enables
+    // them. These are the processes that run without being chosen from a menu.
+    void restartServices();
+    static bool canReload(const QString &key);
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
@@ -118,13 +149,21 @@ private:
     QThread *m_thread = nullptr;
     QSet<QString> m_runningCommands;
     QSet<QString> m_editorCommands;
+    QHash<QString, QString> m_commandTexts;
     bool m_checkEnabled = false;
     QString m_checkCommand;
     QString m_checkDirectory;
     bool m_completeEnabled = false;
     QString m_completeCommand;
     QString m_completeDirectory;
+    // The newest request of each kind. A reply with an older id is dropped.
     int m_completionId = 0;
+    int m_signatureId = 0;
+    int m_resolveId = 0;
+    QString m_resolveData;
+    // What the session last said about each file, by editor path. Emptied
+    // when the session starts again.
+    QHash<QString, CompletionFileState> m_fileStates;
     QList<ProcessRecord> m_liveProcesses;
     QList<ProcessRecord> m_recentProcesses;
     QHash<quintptr, QString> m_diagnosticKeys;
@@ -140,6 +179,7 @@ private:
     QActionGroup *m_themeGroup = nullptr;
     QActionGroup *m_iconThemeGroup = nullptr;
     QLabel *m_cursorLabel = nullptr;
+    QLabel *m_completionLabel = nullptr;
     QLabel *m_languageLabel = nullptr;
     QLabel *m_encodingLabel = nullptr;
     QLabel *m_eolLabel = nullptr;

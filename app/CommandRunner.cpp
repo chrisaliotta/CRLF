@@ -3,6 +3,8 @@
 #include "app/ProcessOrchestrator.h"
 #include "io/WslPath.h"
 
+#include <QDir>
+#include <QFile>
 #include <QMetaObject>
 #include <QProcess>
 
@@ -13,7 +15,13 @@ QString linuxPath(const QString &windowsPath)
     if (windowsPath.isEmpty())
         return windowsPath;
     const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
-    return converted.valid() ? converted.path : windowsPath;
+    if (converted.valid())
+        return converted.path;
+    // A payload file lives on a Windows drive. The distro sees it under /mnt.
+    const QString clean = QDir::fromNativeSeparators(windowsPath);
+    if (clean.size() >= 3 && clean.at(1) == QLatin1Char(':'))
+        return QStringLiteral("/mnt/") + clean.at(0).toLower() + clean.mid(2);
+    return windowsPath;
 }
 
 // The editor stores LF. A tool's stdout is the file bytes, decoded as UTF-8.
@@ -130,6 +138,9 @@ CommandRunner::CommandRunner(QObject *parent)
 CommandRunner::~CommandRunner()
 {
     stopAll();
+    const auto payloads = m_launchVars.keys();
+    for (const QString &name : payloads)
+        discardPayloads(name);
     const auto processes = findChildren<QProcess *>(Qt::FindDirectChildrenOnly);
     for (QProcess *process : processes) {
         if (process->state() != QProcess::NotRunning)
@@ -139,7 +150,7 @@ CommandRunner::~CommandRunner()
     m_running.clear();
 }
 
-void CommandRunner::setContextProvider(std::function<CommandVariables()> provider)
+void CommandRunner::setContextProvider(std::function<CommandVariables(const QString &command)> provider)
 {
     m_contextProvider = std::move(provider);
 }
@@ -152,8 +163,10 @@ void CommandRunner::setEditorInputProvider(std::function<EditorFeed(const QStrin
 void CommandRunner::requestLaunch(const QString &name)
 {
     const bool toEditor = sendsOutputToEditor(name);
-    QMetaObject::invokeMethod(m_ui, [this, name, toEditor] {
-        CommandVariables vars = m_contextProvider ? m_contextProvider() : CommandVariables{};
+    const ProjectCommand *spec = command(name);
+    const QString commandText = spec != nullptr ? spec->command : QString();
+    QMetaObject::invokeMethod(m_ui, [this, name, toEditor, commandText] {
+        CommandVariables vars = m_contextProvider ? m_contextProvider(commandText) : CommandVariables{};
         EditorFeed feed;
         if (toEditor && m_editorInput)
             feed = m_editorInput(name);
@@ -267,6 +280,7 @@ void CommandRunner::launch(const QString &name, bool withJob)
                     done->restart = false;
                     done->stopRequested = false;
                     emit stateChanged(name, false, stopped ? -1 : exitCode);
+                    discardPayloads(name);
                     if (restart)
                         requestLaunch(name);
                     else if (m_orchestrator != nullptr)
@@ -282,6 +296,7 @@ void CommandRunner::launch(const QString &name, bool withJob)
                     failed->restart = false;
                     emit outputReceived(name, failed->process->errorString() + QLatin1Char('\n'));
                     emit stateChanged(name, false, -1);
+                    discardPayloads(name);
                     if (m_orchestrator != nullptr)
                         m_orchestrator->release(QStringLiteral("command:%1").arg(name), failed->token);
                 });
@@ -318,6 +333,8 @@ void CommandRunner::launch(const QString &name, bool withJob)
         vars.fileDir = linuxPath(vars.fileDir);
         vars.project = linuxPath(vars.project);
         vars.folder = linuxPath(vars.folder);
+        vars.buffer = linuxPath(vars.buffer);
+        vars.terminal = linuxPath(vars.terminal);
         vars.cwd = linux.path;
     }
 #endif
@@ -386,6 +403,15 @@ void CommandRunner::launch(const QString &name, bool withJob)
         running->process->closeWriteChannel();
     }
     emit stateChanged(name, running->process->state() != QProcess::NotRunning, 0);
+}
+
+void CommandRunner::discardPayloads(const QString &name)
+{
+    const CommandVariables vars = m_launchVars.take(name);
+    if (!vars.buffer.isEmpty())
+        QFile::remove(vars.buffer);
+    if (!vars.terminal.isEmpty())
+        QFile::remove(vars.terminal);
 }
 
 void CommandRunner::absorbStdout(const QString &name, const QByteArray &bytes)

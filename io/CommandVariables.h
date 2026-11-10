@@ -16,6 +16,11 @@
 //   ${line}          cursor line, starting at 1
 //   ${column}        cursor column, starting at 1
 //   ${selection}     selected text
+//   ${buffer}        path of a UTF-8 file holding the focused editor's text,
+//                    including unsaved edits. Empty in the hex view
+//   ${terminal}      path of a UTF-8 file holding the current terminal's
+//                    plain-text scrollback and screen. Empty when no session
+//                    is open
 //   ${language}      language of the focused document
 //   ${project}       directory that contains the .crlf
 //   ${folder}        folder the explorer is scoped to
@@ -34,6 +39,10 @@ struct CommandVariables
     QString line;
     QString column;
     QString selection;
+    // Paths of files written for this launch. Empty when the command does
+    // not name them. The runner deletes the files when the process ends.
+    QString buffer;
+    QString terminal;
     QString language;
     QString project;
     QString folder;

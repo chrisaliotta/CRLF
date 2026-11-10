@@ -1,6 +1,6 @@
 # Project commands
 
-A `.crlf` file defines commands for one project. CRLF finds that file, adds each command to the menu bar, and runs it when you choose it. The command string can include values from the document that is focused at the moment the command starts.
+A `.crlf` file defines commands for one project. CRLF finds that file, adds each command to the menu bar, and runs it when you choose it. The command string can include values from the document that is focused at the moment the command starts. Every key the file can carry, and the cases where a key is ignored, are in [crlf.md](crlf.md).
 
 ## Finding the file
 
@@ -114,14 +114,19 @@ Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `
 
 ## Indent
 
-`indent` sets what Tab inserts. `style` is `spaces` or `tab`. `size` is how many spaces a spaces-style Tab inserts, and how many columns a tab character is wide. With no `indent` key, Tab inserts one tab character four columns wide.
+`indent` sets what Tab inserts when the lines above the cursor do not show an indentation. `style` is `spaces` or `tab`. `size` is how many spaces a spaces-style Tab inserts, and how many columns a tab character is wide. With no `indent` key, that fallback is one tab character four columns wide.
 
-`types` overrides that for file extensions. A file with no extension is matched on its file name, so `Makefile` uses an extension entry of `makefile`. The first matching type wins. A selection indents each highlighted line; Shift+Tab removes one indent from those lines.
+When a line at or above the cursor is indented, Tab follows that line instead of the file rule. The current line counts when it is already indented; otherwise the prior line does. The walk stops at the first line that has text and no indent. A tab in that leading whitespace inserts a tab. Spaces insert the shallowest space run in the walk, so a line at four spaces and a line at eight insert four spaces. Shift+Tab removes one such level. A selection uses the same level for every highlighted line.
+
+`keep` copies indentation onto the new line when Enter is pressed. The copy is the current line's own leading whitespace. A blank line uses the prior non-blank line. A line that is not indented stays at column zero; Enter does not invent a level from the file rule. Leaving `keep` out leaves Enter at column zero.
+
+`types` overrides that for file extensions. A file with no extension is matched on its file name, so `Makefile` uses an extension entry of `makefile`. The first matching type wins. A selection indents each highlighted line; Shift+Tab removes one indent from those lines. A type that omits `keep` uses the value from the standard rule.
 
 ```json
 "indent": {
   "style": "spaces",
   "size": 4,
+  "keep": true,
   "types": [
     { "extensions": ["py"], "style": "spaces", "size": 4 },
     { "extensions": ["go", "makefile"], "style": "tab", "size": 4 }
@@ -161,6 +166,8 @@ Write a variable as `${name}` inside `command`. The value is taken when the comm
 | `${line}` | Cursor line, starting at 1 |
 | `${column}` | Cursor column, starting at 1 |
 | `${selection}` | The selected text |
+| `${buffer}` | Path of a UTF-8 file written for this launch. The file is the focused editor's text, including unsaved edits. Empty in the hex view, and when the command does not name it |
+| `${terminal}` | Path of a UTF-8 file written for this launch. The file is the current terminal session: scrollback, then the screen, as plain text. Empty when no session is open |
 | `${language}` | Language of the focused document. The hex view reports `Hex` |
 | `${project}` | Directory that contains the `.crlf` file |
 | `${folder}` | Folder the explorer is scoped to |
@@ -168,9 +175,18 @@ Write a variable as `${name}` inside `command`. The value is taken when the comm
 
 `${file}`, `${fileDir}`, and `${relativeFile}` are empty when the focused document has never been saved. `${line}`, `${column}`, and `${selection}` are empty in the hex view.
 
+`${buffer}` and `${terminal}` are paths, not the text itself. A buffer or a transcript can contain newlines and quotes, which would split the shell command. The file is written when the command starts and removed when that process exits. Quote the path: `"${buffer}"`. A command that runs in a WSL distro receives `/mnt/<drive>/...` for these two files, because they are created on the Windows temp directory. `${file}` and the other project paths are still Linux paths when they already point into the distro.
+
+```json
+{
+  "name": "Review",
+  "command": "python review.py \"${buffer}\" \"${terminal}\""
+}
+```
+
 `cwd` in the JSON file is a path, not a command string, so variables are not substituted there. `${cwd}` inside `command` is the directory the process actually starts in.
 
-When the working directory is inside a WSL distro, the command runs in that distro and the path variables (`${file}`, `${fileDir}`, `${project}`, `${folder}`, and `${cwd}`) are Linux paths when they point into a distro. `${relativeFile}`, the file name, and the extension stay as they are.
+When the working directory is inside a WSL distro, the command runs in that distro and the path variables (`${file}`, `${fileDir}`, `${project}`, `${folder}`, and `${cwd}`) are Linux paths when they point into a distro. `${buffer}` and `${terminal}` are `/mnt/<drive>/...` paths. `${relativeFile}`, the file name, and the extension stay as they are.
 
 ## Running a command
 
@@ -250,7 +266,9 @@ The Problems page at the bottom lists every span from the editors that have been
 
 ## Completion
 
-`complete` keeps one external process for the project and asks it for completions. Leaving the key out leaves completion off. `"complete": false` does the same. The session is described in [completion.md](completion.md).
+`unlimitedLog` set to `true` keeps every line of a process log. Left out, or in an array-shaped file, the log keeps its last 2,000 lines. It is read again when `.crlf` reloads.
+
+`complete` keeps one external process for the project and asks it for completions. Leaving the key out leaves completion off. `"complete": false` does the same. The session is described in [completion.md](completion.md). Adding `--verbose` to the command, or setting `CRLF_COMPLETE_VERBOSE=1`, keeps the language server's information messages.
 
 ```json
 "complete": {
@@ -265,18 +283,48 @@ The Problems page at the bottom lists every span from the editors that have been
 | `command` | when enabled | The shell command. It stays running and reads one JSON object per line |
 | `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
 
-Each request is one line. `line` and `column` start at 1. `text` is the editor buffer. `revision` is the document revision at the moment the request was sent.
+Each request is one line. `kind` is `completion`, `signature` for the parameter hint inside a call, `open` to load a file before anything is asked about it, or `resolve` for the documentation of one row. `line` and `column` start at 1. `text` is the editor buffer. `revision` is the document revision at the moment the request was sent. A completion that a typed character asked for carries that character as `trigger`.
 
 ```json
-{"id":1,"revision":4,"path":"/src/main.cpp","line":12,"column":8,"text":""}
+{"kind":"completion","id":7,"revision":4,"path":"/src/main.cpp","line":12,"column":8,"text":"","trigger":"."}
 ```
 
-The reply is one line. `replaceEndColumn` is the column where the replacement stops, and that column is not included.
+The script writes two kinds of line. A state says where one file stands. It is written when a file is first named, each time that changes, and again for every `open`:
 
 ```json
-{"id":1,"revision":4,"items":[{"label":"push_back","detail":"void push_back(const T&)","insert":"push_back(","replaceLine":12,"replaceColumn":5,"replaceEndColumn":8}]}
+{"kind":"state","path":"/src/main.cpp","state":"ready","server":"clangd","message":"ready","triggers":[".",">",":"]}
 ```
 
-Ctrl+Space asks immediately. `.`, `->`, and `::` ask after a short pause. Typing while the list is open asks again. Enter or Tab inserts the selected row. Escape closes the list.
+| Field | Meaning |
+|---|---|
+| `state` | `starting`, `loading`, or `ready` on the way to a working server. `unsupported`, `missing`, or `failed` when the file has none |
+| `server` | The name of the server that owns the file |
+| `message` | The sentence the status bar shows after `Autocomplete:` |
+| `triggers` | The characters a completion is asked after, in this file |
 
-`scripts/complete.sh` runs `scripts/complete.py`. That program speaks to `clangd` for C and C++, and to OmniSharp or the .NET SDK language server for C#, when those tools are installed. The editor does not speak their protocol. A command whose working directory is inside a WSL distro runs in that distro.
+The editor shows the state of the tab in front and nothing else. A script that never writes a state leaves the field at `Autocomplete: starting`. A file whose state is `unsupported` or `missing` is not asked about again.
+
+A reply answers one request and repeats its `id` and `revision`. An `open` has no reply. `replaceEndColumn` is the column where the replacement stops, and that column is not included. `incomplete` asks the editor to send the request again each time the word being typed changes.
+
+```json
+{"id":7,"revision":4,"incomplete":false,"items":[{"label":"push_back","detail":"void push_back(const T&)","insert":"push_back(","kind":"method","data":"7:0","replaceLine":12,"replaceColumn":5,"replaceEndColumn":8}]}
+```
+
+| Item field | Required | Meaning |
+|---|---|---|
+| `label` | yes | The row's text |
+| `replaceLine`, `replaceColumn`, `replaceEndColumn` | yes | The text the row replaces |
+| `insert` | no | What is inserted. The default is the label |
+| `detail` | no | Shown after the label |
+| `documentation` | no | Markdown shown under the list for the selected row |
+| `kind` | no | What the row is, shown at the right: `class`, `enum`, `enumMember`, `method`, `keyword`, ... |
+| `filterText` | no | What the typed word is compared with. The default is the label |
+| `preselect` | no | `true` on the row the list opens on, such as the enum a value is being assigned to |
+| `additionalEdits` | no | Edits that belong with the row, such as an import. Carried, not applied yet |
+| `data` | no | The script's name for the row. Selecting a row with no documentation sends `resolve` with it |
+
+`resolve` carries `data` and no `text`. Its reply is `{id, revision, kind, data, detail, documentation}` for that row. A signature reply is `signatures`, one overload each, with `label`, `parameters`, and `active`, and `activeSignature`. The editor shows one at a time, with `2 of 5` in front, and Ctrl+Up and Ctrl+Down move through them. A signature that the server rejects comes back as an empty `signatures` list. A reply may be skipped when a newer request of the same kind has arrived, because the editor drops an older reply anyway.
+
+Ctrl+Space asks immediately. A trigger character and the first letters of a word ask after a short pause. Letters typed while the list is open narrow it in the editor and are not sent, unless the list was `incomplete`. Enter or Tab inserts the selected row. Escape closes the list.
+
+`scripts/complete.sh` runs `scripts/complete.py`. That program speaks to `clangd` for C and C++, and to OmniSharp or the .NET SDK language server for C#, when those tools are installed. The editor does not speak their protocol, and it does not look for a project file. The script walks the completion working directory for `.csproj` files and keeps one C# server per project, plus one server for `.cs` files that belong to none of them. A command whose working directory is inside a WSL distro runs in that distro.

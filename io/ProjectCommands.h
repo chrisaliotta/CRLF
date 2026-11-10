@@ -30,6 +30,9 @@ struct IndentRule
     QStringList extensions;
     bool spaces = false;
     int size = 4;
+    // Enter copies the prior line's leading whitespace onto the next line.
+    // Tab still follows the inferred level, then this rule.
+    bool keep = false;
 };
 
 struct IndentSettings
@@ -107,6 +110,8 @@ struct Project
     CheckSettings check;
     // Same shape as `check`. One long-lived completion process per project.
     CheckSettings complete;
+    // Keeps every line of a process log. False keeps the last 2,000.
+    bool unlimitedLog = false;
     QString error;
 };
 

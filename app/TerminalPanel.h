@@ -27,6 +27,8 @@ public:
     void ensureSession();
     void focusCurrent();
     void closeSessions();
+    // Plain text of the session on screen: scrollback, then the visible rows.
+    QString transcript() const;
     int sessionCount() const { return m_sessions.size(); }
 
 private:

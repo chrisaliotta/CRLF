@@ -79,6 +79,23 @@ Theme Theme::fromJsonFile(const QString &path)
     theme.diagnosticError = diagnosticError.isValid() ? diagnosticError : theme.terminal.at(1);
     theme.diagnosticWarning = diagnosticWarning.isValid() ? diagnosticWarning : theme.terminal.at(3);
 
+    const bool light = theme.background.lightness() >= 128;
+    const QColor completionBackground(editor.value(QLatin1String("completionBackground")).toString());
+    const QColor completionForeground(editor.value(QLatin1String("completionForeground")).toString());
+    const QColor completionBorder(editor.value(QLatin1String("completionBorder")).toString());
+    const QColor completionActive(editor.value(QLatin1String("completionActive")).toString());
+    theme.completionBackground = completionBackground.isValid()
+                                     ? completionBackground
+                                     : (light ? QColor(QStringLiteral("#f3f3f3"))
+                                              : theme.background.lighter(180));
+    theme.completionForeground = completionForeground.isValid() ? completionForeground : theme.foreground;
+    theme.completionBorder = completionBorder.isValid()
+                                 ? completionBorder
+                                 : QColor(light ? QStringLiteral("#8a8a8a") : QStringLiteral("#9a9a9a"));
+    theme.completionActive = completionActive.isValid()
+                                 ? completionActive
+                                 : QColor(light ? QStringLiteral("#0451a5") : QStringLiteral("#9cdcfe"));
+
     const QJsonObject tokens = root.value(QLatin1String("tokens")).toObject();
     for (auto it = tokens.begin(); it != tokens.end(); ++it) {
         const QJsonObject spec = it.value().toObject();

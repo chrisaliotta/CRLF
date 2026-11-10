@@ -9,7 +9,11 @@
     "gutterForeground": "#909090",
     "codeBlockBackground": "#f0f2f5",
     "diagnosticError": "#a31515",
-    "diagnosticWarning": "#795e26"
+    "diagnosticWarning": "#795e26",
+    "completionBackground": "#f3f3f3",
+    "completionForeground": "#1f1f1f",
+    "completionBorder": "#8a8a8a",
+    "completionActive": "#0451a5"
   },
   "tokens": {
     "text": { "color": "#1f1f1f" },
