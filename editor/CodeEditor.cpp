@@ -8,6 +8,7 @@
 #include "editor/Gutter.h"
 #include "editor/SymbolIndex.h"
 #include "editor/TailwindNames.h"
+#include "git/LineDiff.h"
 #include "syntax/Highlighter.h"
 #include "syntax/LanguageDefinition.h"
 #include "syntax/Theme.h"
@@ -19,6 +20,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QTimer>
 #include <QPainter>
 #include <QRegularExpression>
@@ -29,6 +31,24 @@
 #include <QToolTip>
 
 namespace {
+
+constexpr int kChangeBarWidth = 4;
+
+// The buffer's side of each change: what it added, rewrote, or where it
+// deleted rows.
+QList<ChangeMark> bufferMarks(const QList<LineChange> &changes)
+{
+    QList<ChangeMark> marks;
+    for (const LineChange &change : changes) {
+        if (change.oldCount == 0)
+            marks.append({change.newStart, change.newCount, ChangeKind::Added});
+        else if (change.newCount == 0)
+            marks.append({change.newStart, 0, ChangeKind::Removed});
+        else
+            marks.append({change.newStart, change.newCount, ChangeKind::Modified});
+    }
+    return marks;
+}
 
 // The platform Vista style's branch indicators cannot be recolored, so fold
 // markers are always drawn through Fusion.
@@ -236,6 +256,8 @@ CodeEditor::CodeEditor(const LanguageRegistry *registry, QWidget *parent)
         scheduleSymbolScan();
         if (m_syntaxEnabled)
             scheduleSyntax();
+        if (m_hasDiffBase)
+            scheduleChangeScan();
     });
 
     updateGutterWidth();
@@ -245,8 +267,10 @@ CodeEditor::~CodeEditor()
 {
     m_syntaxTimer->stop();
     m_autocompleteTimer->stop();
-    if (m_orchestrator != nullptr)
+    if (m_orchestrator != nullptr) {
         m_orchestrator->cancel(QStringLiteral("symbols:%1").arg(quintptr(this)));
+        m_orchestrator->cancel(QStringLiteral("changes:%1").arg(quintptr(this)));
+    }
     // Drop queued overlay and symbol callbacks before the document goes away.
     disconnect(this, nullptr, this, nullptr);
     if (m_symbolIndex != nullptr) {
@@ -599,6 +623,95 @@ void CodeEditor::setDiagnostics(const QList<Diagnostic> &spans)
     highlightCurrentLine();
     if (m_gutter)
         m_gutter->update();
+}
+
+void CodeEditor::setDiffBase(const QString &base)
+{
+    const bool widened = !m_hasDiffBase && m_changeMarks.isEmpty();
+    m_hasDiffBase = true;
+    m_diffBase = base;
+    if (widened)
+        updateGutterWidth();
+    scheduleChangeScan();
+}
+
+void CodeEditor::clearDiffBase()
+{
+    if (!m_hasDiffBase)
+        return;
+    m_hasDiffBase = false;
+    m_diffBase.clear();
+    if (m_orchestrator != nullptr)
+        m_orchestrator->cancel(QStringLiteral("changes:%1").arg(quintptr(this)));
+    setChangeMarks({}, false);
+}
+
+void CodeEditor::setChangeMarks(const QList<ChangeMark> &marks, bool tint)
+{
+    const int width = changeBarWidth();
+    m_changeMarks = marks;
+    m_tintChanges = tint;
+    m_changeRows.clear();
+    m_changeBoundaries.clear();
+    for (const ChangeMark &mark : marks) {
+        if (mark.count == 0)
+            m_changeBoundaries.insert(mark.line, mark.kind);
+        for (int row = mark.line; row < mark.line + mark.count; ++row)
+            m_changeRows.insert(row, mark.kind);
+    }
+    if (changeBarWidth() != width)
+        updateGutterWidth();
+    highlightCurrentLine();
+    m_gutter->update();
+}
+
+void CodeEditor::setLineNumberMap(const QList<int> &numbers)
+{
+    m_lineNumberMap = numbers;
+    m_gutter->update();
+}
+
+int CodeEditor::changeBarWidth() const
+{
+    return m_hasDiffBase || !m_changeMarks.isEmpty() ? kChangeBarWidth : 0;
+}
+
+QColor CodeEditor::changeColor(ChangeKind kind) const
+{
+    switch (kind) {
+    case ChangeKind::Added:
+        return m_theme->gitAdded;
+    case ChangeKind::Modified:
+        return m_theme->gitModified;
+    case ChangeKind::Removed:
+        return m_theme->gitDeleted;
+    case ChangeKind::Padding:
+        break;
+    }
+    return m_theme->gutterForeground;
+}
+
+void CodeEditor::scheduleChangeScan()
+{
+    const QString key = QStringLiteral("changes:%1").arg(quintptr(this));
+    const QString owner = m_workOwner.isEmpty() ? m_filePath : m_workOwner;
+    m_orchestrator->submit(
+        key, QStringLiteral("Changes"), owner, 300, m_filePath,
+        [this, key] {
+            const QString base = m_diffBase;
+            const QString text = toPlainText();
+            const int revision = documentRevision();
+            QPointer<CodeEditor> alive(this);
+            m_orchestrator->runOnPool(key, [alive, base, text, revision] {
+                const QList<ChangeMark> marks = bufferMarks(diffLines(splitLines(base), splitLines(text)));
+                QMetaObject::invokeMethod(QCoreApplication::instance(), [alive, marks, revision] {
+                    if (alive.isNull() || !alive->m_hasDiffBase || alive->documentRevision() != revision)
+                        return;
+                    alive->setChangeMarks(marks, false);
+                }, Qt::QueuedConnection);
+            });
+        },
+        ProcessLane::Deliver, this);
 }
 
 int CodeEditor::documentRevision() const
@@ -973,11 +1086,12 @@ void CodeEditor::setLineNumbersVisible(bool visible)
 int CodeEditor::gutterWidth() const
 {
     if (!m_lineNumbers)
-        return 4 + foldMarkerWidth();
+        return 4 + foldMarkerWidth() + changeBarWidth();
     int digits = 1;
     for (int max = qMax(1, blockCount()); max >= 10; max /= 10)
         ++digits;
-    return 8 + fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits + 4 + foldMarkerWidth();
+    return 8 + fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits + 4 + foldMarkerWidth()
+           + changeBarWidth();
 }
 
 void CodeEditor::updateGutterWidth()
@@ -1120,6 +1234,19 @@ void CodeEditor::highlightCurrentLine()
     selection.cursor = textCursor();
     selection.cursor.clearSelection();
     QList<QTextEdit::ExtraSelection> selections{selection};
+    if (m_tintChanges) {
+        for (const ChangeMark &mark : std::as_const(m_changeMarks)) {
+            QColor tint = changeColor(mark.kind);
+            tint.setAlpha(mark.kind == ChangeKind::Padding ? 18 : 48);
+            for (int row = mark.line; row < mark.line + mark.count; ++row) {
+                QTextEdit::ExtraSelection band;
+                band.format.setBackground(tint);
+                band.format.setProperty(QTextFormat::FullWidthSelection, true);
+                band.cursor = QTextCursor(document()->findBlockByNumber(row));
+                selections.append(band);
+            }
+        }
+    }
     selections.append(m_findSelections);
     if (m_theme != nullptr) {
         for (const Diagnostic &span : m_diagnostics) {
@@ -1307,7 +1434,9 @@ void CodeEditor::paintGutter(QPaintEvent *event)
     painter.setFont(font());
     painter.setPen(m_theme->gutterForeground);
 
-    const int numberWidth = m_lineNumbers ? m_gutter->width() - foldMarkerWidth() - 4 : 0;
+    const int barWidth = changeBarWidth();
+    const int barX = m_gutter->width() - barWidth;
+    const int numberWidth = m_lineNumbers ? barX - foldMarkerWidth() - 4 : 0;
     const int markerX = m_lineNumbers ? numberWidth + 4 : 0;
     const int lineHeight = fontMetrics().height();
 
@@ -1315,11 +1444,33 @@ void CodeEditor::paintGutter(QPaintEvent *event)
     int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
     int bottom = top + qRound(blockBoundingRect(block).height());
 
+    // Rows deleted after the last line are marked below it.
+    const auto drawBoundary = [&painter, barX, barWidth, this](int y, ChangeKind kind) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(changeColor(kind));
+        const int half = barWidth;
+        painter.drawPolygon(QPolygon({QPoint(barX, y - half), QPoint(barX + barWidth, y), QPoint(barX, y + half)}));
+        painter.setPen(m_theme->gutterForeground);
+    };
+
     while (block.isValid() && top <= event->rect().bottom()) {
         if (block.isVisible() && bottom >= event->rect().top()) {
+            const int number = block.blockNumber();
             if (m_lineNumbers) {
-                painter.drawText(0, top, numberWidth, lineHeight, Qt::AlignRight,
-                                 QString::number(block.blockNumber() + 1));
+                const int shown = m_lineNumberMap.isEmpty() ? number + 1 : m_lineNumberMap.value(number);
+                if (shown > 0)
+                    painter.drawText(0, top, numberWidth, lineHeight, Qt::AlignRight, QString::number(shown));
+            }
+            const auto row = m_changeRows.constFind(number);
+            if (row != m_changeRows.cend() && row.value() != ChangeKind::Padding)
+                painter.fillRect(barX + 1, top, barWidth - 1, bottom - top, changeColor(row.value()));
+            const auto boundary = m_changeBoundaries.constFind(number);
+            if (boundary != m_changeBoundaries.cend())
+                drawBoundary(top, boundary.value());
+            if (!block.next().isValid()) {
+                const auto end = m_changeBoundaries.constFind(number + 1);
+                if (end != m_changeBoundaries.cend())
+                    drawBoundary(bottom, end.value());
             }
             const auto mark = m_diagnosticLines.constFind(block.blockNumber());
             if (mark != m_diagnosticLines.cend() && m_theme != nullptr) {
@@ -1356,7 +1507,8 @@ void CodeEditor::drawFoldMarker(QPainter &painter, const QRect &rect, bool expan
 
 void CodeEditor::gutterMousePress(QMouseEvent *event)
 {
-    if (m_lineNumbers && event->pos().x() < m_gutter->width() - foldMarkerWidth())
+    const int markerX = m_gutter->width() - changeBarWidth() - foldMarkerWidth();
+    if ((m_lineNumbers && event->pos().x() < markerX) || event->pos().x() >= markerX + foldMarkerWidth())
         return;
     // cursorForPosition with x forced to 0 maps a y-coordinate to its block.
     const QTextBlock block = cursorForPosition(QPoint(0, event->pos().y())).block();

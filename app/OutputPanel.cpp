@@ -71,6 +71,13 @@ void OutputPanel::allowReveal()
 
 void OutputPanel::appendOutput(const QString &name, const QString &text)
 {
+    record(name, text);
+    if (!m_closed)
+        emit keepVisible();
+}
+
+void OutputPanel::record(const QString &name, const QString &text)
+{
     ensureCommand(name);
     m_logs[name].text += text;
     if (currentName() == name) {
@@ -78,8 +85,6 @@ void OutputPanel::appendOutput(const QString &name, const QString &text)
         m_output->insertPlainText(text);
         m_output->moveCursor(QTextCursor::End);
     }
-    if (!m_closed)
-        emit keepVisible();
 }
 
 void OutputPanel::suppress()

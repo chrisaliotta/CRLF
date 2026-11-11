@@ -1,5 +1,6 @@
 #include "app/FileIconTheme.h"
 
+#include "io/NamePattern.h"
 #include "syntax/LanguageRegistry.h"
 
 #include <QColor>
@@ -112,23 +113,13 @@ bool wildcard(const QString &pattern)
     return pattern.contains(QLatin1Char('*')) || pattern.contains(QLatin1Char('?'));
 }
 
-bool patternMatches(const QString &pattern, const QString &name)
-{
-    if (!wildcard(pattern))
-        return name.compare(pattern, Qt::CaseInsensitive) == 0;
-    const QRegularExpression expression(
-        QRegularExpression::wildcardToRegularExpression(pattern),
-        QRegularExpression::CaseInsensitiveOption);
-    return expression.match(name).hasMatch();
-}
-
 bool extensionMatches(const QString &pattern, const QString &fileName)
 {
-    if (patternMatches(pattern, fileName))
+    if (namePatternMatches(pattern, fileName))
         return true;
     int dot = fileName.indexOf(QLatin1Char('.'));
     while (dot >= 0 && dot + 1 < fileName.size()) {
-        if (patternMatches(pattern, fileName.mid(dot + 1)))
+        if (namePatternMatches(pattern, fileName.mid(dot + 1)))
             return true;
         dot = fileName.indexOf(QLatin1Char('.'), dot + 1);
     }
@@ -284,7 +275,7 @@ QString FileIconTheme::definitionId(const QString &fileName, bool isDir, bool ex
     const QString lower = fileName.toLower();
     if (isDir) {
         for (const PatternRule &rule : m_patterns) {
-            if (rule.kind != QLatin1String("folder") || !patternMatches(rule.pattern, lower))
+            if (rule.kind != QLatin1String("folder") || !namePatternMatches(rule.pattern, lower))
                 continue;
             if (expanded && !rule.openId.isEmpty())
                 return rule.openId;
@@ -301,7 +292,7 @@ QString FileIconTheme::definitionId(const QString &fileName, bool isDir, bool ex
         return named.isEmpty() ? m_folder : named;
     }
     for (const PatternRule &rule : m_patterns) {
-        if (rule.kind == QLatin1String("file") && patternMatches(rule.pattern, lower))
+        if (rule.kind == QLatin1String("file") && namePatternMatches(rule.pattern, lower))
             return rule.closedId;
     }
     const QString named = m_fileNames.value(lower);

@@ -72,6 +72,8 @@ set(APP_SOURCES
     app/FileIconTheme.cpp
     app/TemplateDialog.h
     app/TemplateDialog.cpp
+    app/ProcessLaunch.h
+    app/ProcessLaunch.cpp
     app/CommandRunner.h
     app/CommandRunner.cpp
     app/SyntaxRunner.h
@@ -96,9 +98,30 @@ set(APP_SOURCES
     app/BottomPanel.cpp
     app/OpenWith.h
     app/OpenWith.cpp
+    app/GitClient.h
+    app/GitClient.cpp
+    app/SourceControl.h
+    app/SourceControl.cpp
+    app/SourceControlPanel.h
+    app/SourceControlPanel.cpp
+    app/DiffView.h
+    app/DiffView.cpp
+)
+
+# Reading git's output and comparing text. No widgets, so the tests build it too.
+set(GIT_SOURCES
+    git/GitTypes.h
+    git/GitTypes.cpp
+    git/GitParse.h
+    git/GitParse.cpp
+    git/GitDiscovery.h
+    git/GitDiscovery.cpp
+    git/LineDiff.h
+    git/LineDiff.cpp
 )
 
 set(EDITOR_SOURCES
+    editor/ChangeMark.h
     editor/CodeEditor.h
     editor/CodeEditor.cpp
     editor/CompletionItem.h
@@ -147,6 +170,8 @@ set(IO_SOURCES
     io/DocumentFile.cpp
     io/FileOperations.h
     io/FileOperations.cpp
+    io/NamePattern.h
+    io/NamePattern.cpp
     io/SessionStore.h
     io/SessionStore.cpp
     io/ProjectCommands.h
@@ -162,6 +187,7 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     Types.h
     ${APP_SOURCES}
+    ${GIT_SOURCES}
     ${EDITOR_SOURCES}
     ${HEX_SOURCES}
     ${SYNTAX_SOURCES}
@@ -171,6 +197,25 @@ qt_add_executable(${PROJECT_NAME}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Unit tests for git output parsing, repository discovery, and the line diff.
+# Run with: ctest --test-dir build
+option(CRLF_BUILD_TESTS "Build the unit tests in tests/" ON)
+if(CRLF_BUILD_TESTS)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    enable_testing()
+    add_executable(GitTests tests/GitTests.cpp ${GIT_SOURCES} io/NamePattern.cpp io/WslPath.cpp)
+    target_include_directories(GitTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(GitTests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME GitTests COMMAND GitTests)
+
+    # Runs a real git against a temporary repository.
+    add_executable(GitClientTests tests/GitClientTests.cpp app/GitClient.cpp app/ProcessLaunch.cpp
+        app/ProcessOrchestrator.cpp ${GIT_SOURCES} io/NamePattern.cpp io/WslPath.cpp)
+    target_include_directories(GitClientTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(GitClientTests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME GitClientTests COMMAND GitClientTests)
+endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg vterm)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     APP_NAME="${PROJECT_NAME}"

@@ -21,6 +21,10 @@ class CodeEditor;
 class CommandRunner;
 class CompletionSession;
 class ExplorerPanel;
+class GitClient;
+class SourceControl;
+class SourceControlPanel;
+struct GitDiffRequest;
 class FindBar;
 class OutputPanel;
 class ProcessOrchestrator;
@@ -30,8 +34,10 @@ class QFileSystemWatcher;
 class QLabel;
 class QMenu;
 class QMenuBar;
+class QSplitter;
 class QThread;
 class QTimer;
+class QToolButton;
 class TabWorkspace;
 class TitleBar;
 
@@ -122,6 +128,20 @@ private:
     // them. These are the processes that run without being chosen from a menu.
     void restartServices();
     static bool canReload(const QString &key);
+    void connectSourceControl();
+    // The explorer and Source Control share the left column, which hides when
+    // neither is open.
+    void updateSidebar();
+    // The repository Git menu items and the branch button act on: the one
+    // holding the file in front, otherwise the one picked in Source Control.
+    QString gitRoot() const;
+    void refreshGitStatus();
+    // Reads the staged text of the editor's file, which its change bars
+    // compare against. A file outside every repository has no bars.
+    void refreshDiffBase(CodeEditor *editor);
+    void openGitDiff(GitDiffRequest request);
+    // The Output log that holds one repository's operations.
+    static QString gitLogName(const QString &root);
 
     LanguageRegistry m_registry;
     SessionStore m_sessionStore;
@@ -147,6 +167,14 @@ private:
     CommandRunner *m_runner = nullptr;
     SyntaxRunner *m_syntax = nullptr;
     CompletionSession *m_completion = nullptr;
+    GitClient *m_gitClient = nullptr;
+    SourceControl *m_sourceControl = nullptr;
+    SourceControlPanel *m_sourcePanel = nullptr;
+    QSplitter *m_sidebar = nullptr;
+    QToolButton *m_branchButton = nullptr;
+    QMenu *m_gitMenu = nullptr;
+    // Output log name to its repository, for Stop.
+    QHash<QString, QString> m_gitLogs;
     ProcessOrchestrator *m_orchestrator = nullptr;
     QThread *m_thread = nullptr;
     QSet<QString> m_runningCommands;

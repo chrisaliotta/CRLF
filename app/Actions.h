@@ -42,4 +42,18 @@ struct Actions
     QAction *zoomReset;
     QAction *foldAll;
     QAction *unfoldAll;
+
+    QAction *sourceControl;
+    // The Git menu. Pull, Push, Commit, Branches, and the stash act on the
+    // repository of the file in front, or the one picked in Source Control.
+    QAction *gitRefresh;
+    QAction *gitFetchAll;
+    QAction *gitPull;
+    QAction *gitPush;
+    QAction *gitCommit;
+    QAction *gitBranches;
+    QAction *gitStash;
+    QAction *gitPopStash;
+    QAction *gitOpenChanges;
+    QAction *gitFileHistory;
 };

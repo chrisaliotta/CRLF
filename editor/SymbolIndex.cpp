@@ -4,6 +4,7 @@
 #include "editor/ImportAliases.h"
 
 #include "io/DocumentFile.h"
+#include "io/NamePattern.h"
 #include "syntax/LanguageDefinition.h"
 #include "syntax/LanguageRegistry.h"
 #include "syntax/SymbolScanner.h"
@@ -38,23 +39,6 @@ QString normalizedPath(const QString &path)
     return path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
 }
 
-bool nameHidden(const QStringList &hide, const QString &name)
-{
-    for (const QString &pattern : hide) {
-        if (!pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?'))) {
-            if (name.compare(pattern, Qt::CaseInsensitive) == 0)
-                return true;
-        } else {
-            const QRegularExpression expression(
-                QRegularExpression::wildcardToRegularExpression(pattern),
-                QRegularExpression::CaseInsensitiveOption);
-            if (expression.match(name).hasMatch())
-                return true;
-        }
-    }
-    return false;
-}
-
 // `cancelled` is polled before each directory and each file. A walk that is
 // cancelled returns what it had, and the caller drops it.
 QList<ScannedFile> collectProject(const QString &root, const QStringList &hide,
@@ -76,7 +60,7 @@ QList<ScannedFile> collectProject(const QString &root, const QStringList &hide,
         for (const QFileInfo &info : entries) {
             if (cancelled())
                 break;
-            if (nameHidden(hide, info.fileName()))
+            if (nameMatchesAny(hide, info.fileName()))
                 continue;
             if (info.isDir()) {
                 if (!info.fileName().startsWith(QLatin1Char('.'))

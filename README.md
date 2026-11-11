@@ -41,6 +41,17 @@ File > Open Folder (Ctrl+Shift+O), or View > Explorer (Ctrl+B). The tree is scop
 - A `.crlf` file can define virtual folders that group files without creating a directory. A group can be limited to one path or applied in its subfolders. A group with no matching files is hidden unless `showIfEmpty` is true. New Virtual Folder on the explorer menu creates one, and dragging a file onto it records the file in `.crlf`. Changing those rules leaves the explorer expanded where it was. See [docs/commands.md](docs/commands.md)
 - The chosen folder is restored on the next launch
 
+### Source control
+
+`"git": true` in `.crlf` tracks the git repositories in the scoped folder. `"git": { "depth": 2 }` also finds nested repositories up to two folder levels below it. See [docs/git.md](docs/git.md).
+
+- View > Source Control (Ctrl+Shift+G) lists each repository with its branch, ahead and behind counts, merge conflicts, staged changes, and working changes. Stage, unstage, discard, and commit from there; Ctrl+Enter commits the message
+- Changed files are colored in the explorer with a letter (U, A, M, R, D, or ! for a conflict), and folders show a dot. The status bar shows the branch of the file in front; clicking it opens the branch menu: switch, new branch, merge into current, delete
+- An editor on a tracked file draws gutter bars beside lines that differ from the staged copy, and they follow typing
+- The Diff tab compares two versions side by side with both sides highlighted: working copy against the index, the index against `HEAD`, or a commit from File History against its parent. Git > Open Changes (Ctrl+Alt+D) compares the file in front
+- Fetch, Pull (fast-forward only), Push, Stash, and Pop Stash are on the panel and the Git menu. Each operation's output is in the Output log `git: <folder>`, which opens when an operation fails
+- A repository inside a WSL distro runs that distro's git
+
 ### WSL
 
 File > Open WSL Folder… picks a distro and a Linux path (the distro's home is the default) and scopes the explorer to `\\wsl.localhost\<Distro>\…`. The tooltip shows the Linux path. Parent-folder and project search stop at the distro root.
@@ -61,7 +72,7 @@ View > Hex Editor (Ctrl+Shift+H) swaps the current tab between text and a hex vi
 
 ### Project commands
 
-A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, is the project file. [docs/crlf.md](docs/crlf.md) is the list of keys. [docs/commands.md](docs/commands.md) describes the menus and the variables. A bare array is only commands; groups, hide, icons, indent, navigation, check, and autocomplete have to live in an object. Each command is a JSON object:
+A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, is the project file. [docs/crlf.md](docs/crlf.md) is the list of keys. [docs/commands.md](docs/commands.md) describes the menus and the variables. A bare array is only commands; groups, hide, icons, indent, navigation, check, autocomplete, and git have to live in an object. Each command is a JSON object:
 
 ```json
 [
@@ -98,6 +109,12 @@ cmake --build build
 
 Or open `CMakeLists.txt` in Qt Creator and press Run.
 
+The unit tests build with the program (`-DCRLF_BUILD_TESTS=OFF` skips them). Run them with Qt's `bin` folder on `PATH`; `GitClientTests` needs `git` too:
+
+```
+ctest --test-dir build --output-on-failure
+```
+
 ## Releasing
 
 The Windows installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php)
@@ -122,11 +139,13 @@ and sessions in `%APPDATA%\CRLF` are kept.
 | Directory | Contents |
 | --- | --- |
 | `Types.h` | Types shared across module boundaries (`TokenRole`, `FoldMode`, `FoldPair`) |
-| `app/` | `MainWindow`, `TabWorkspace` (tab strip, pins, documents), `ExplorerPanel` and `ExplorerModel`, `CommandRunner`, `OutputPanel`, `Actions`, `FindBar` |
+| `app/` | `MainWindow`, `TabWorkspace` (tab strip, pins, documents), `ExplorerPanel` and `ExplorerModel`, `ProcessLaunch` (how every child process starts), `CommandRunner`, `OutputPanel`, `Actions`, `FindBar`, and source control: `GitClient`, `SourceControl`, `SourceControlPanel`, `DiffView` |
+| `git/` | No widgets: git status, branch, and log parsers (`GitParse`), repository search (`GitDiscovery`), and the line diff (`LineDiff`) |
+| `tests/` | `GitTests` (parsers, search, diff) and `GitClientTests` (a real git against a temporary repository) |
 | `editor/` | `CodeEditor` (QPlainTextEdit subclass), `Gutter`, `FoldController`, `FoldingLayout`, `BlockData`, and definition navigation: `SymbolIndex`, `ImportAliases`, `ExternalLookup`, `TailwindNames` |
 | `hex/` | `HexView` |
 | `syntax/` | JSON-driven `LanguageDefinition`/`LanguageRegistry`, `Theme`, `Highlighter` |
-| `io/` | `DocumentFile` (load/save, encoding, line endings), `SessionStore`, `ProjectCommands`, `WslPath` |
+| `io/` | `DocumentFile` (load/save, encoding, line endings), `SessionStore`, `ProjectCommands`, `WslPath`, `NamePattern` (the `.crlf` name and wildcard rule) |
 | `resources/languages/` | One JSON file per language definition, copied to `styles` on build and install |
 | `resources/themes/` | Theme JSON, copied to `themes` on build and install |
 | `resources/icons/` | File-icon themes, copied to `icons` on build and install |

@@ -29,6 +29,12 @@ public:
     // omits these keeps the terminal red and yellow.
     QColor diagnosticError;
     QColor diagnosticWarning;
+    // Source control: gutter bars, diff rows, and explorer badges. A theme
+    // that omits these uses the terminal green, blue, red, and magenta.
+    QColor gitAdded;
+    QColor gitModified;
+    QColor gitDeleted;
+    QColor gitConflicted;
     // Completion list and the signature hint above the caret. A theme that
     // omits these gets a panel that stays readable on that editor background.
     QColor completionBackground;

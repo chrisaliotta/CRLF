@@ -36,5 +36,9 @@
     "enabled": false,
     "command": "./scripts/autocomplete.sh"
   },
-  "unlimitedLog": false
+  "unlimitedLog": false,
+  "git": {
+    "enabled": true,
+    "depth": 1
+  }
 }

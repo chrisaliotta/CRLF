@@ -77,6 +77,15 @@ struct ServiceSettings
     QStringList watch;
 };
 
+// Source control for the scoped folder. `depth` is how many folder levels
+// below that folder are searched for repositories; 0 is only the folder
+// itself and the repository that contains it.
+struct GitSettings
+{
+    bool enabled = false;
+    int depth = 0;
+};
+
 // One entry from a project's .crlf file. workingDirectory is absolute:
 // the .crlf directory, or its `cwd` resolved against that directory.
 // command may contain ${...} names from CommandVariables, filled in when
@@ -118,6 +127,7 @@ struct Project
     ServiceSettings autocomplete;
     // Keeps every line of a process log. False keeps the last 2,000.
     bool unlimitedLog = false;
+    GitSettings git;
     QString error;
 };
 

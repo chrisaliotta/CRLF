@@ -79,6 +79,15 @@ Theme Theme::fromJsonFile(const QString &path)
     theme.diagnosticError = diagnosticError.isValid() ? diagnosticError : theme.terminal.at(1);
     theme.diagnosticWarning = diagnosticWarning.isValid() ? diagnosticWarning : theme.terminal.at(3);
 
+    const auto editorColor = [&editor](const char *key, const QColor &fallback) {
+        const QColor color(editor.value(QLatin1String(key)).toString());
+        return color.isValid() ? color : fallback;
+    };
+    theme.gitAdded = editorColor("gitAdded", theme.terminal.at(2));
+    theme.gitModified = editorColor("gitModified", theme.terminal.at(4));
+    theme.gitDeleted = editorColor("gitDeleted", theme.terminal.at(1));
+    theme.gitConflicted = editorColor("gitConflicted", theme.terminal.at(5));
+
     const bool light = theme.background.lightness() >= 128;
     const QColor completionBackground(editor.value(QLatin1String("completionBackground")).toString());
     const QColor completionForeground(editor.value(QLatin1String("completionForeground")).toString());

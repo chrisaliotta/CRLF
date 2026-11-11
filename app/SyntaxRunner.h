@@ -50,9 +50,8 @@ signals:
 private:
     struct Running;
 
-    void launch(const SyntaxRequest &request, bool withJob = true);
+    void launch(const SyntaxRequest &request);
     void stopTree(Running &running);
-    void absorbStdout(Running &running, const QByteArray &bytes);
 
     QHash<quintptr, Running *> m_running;
     ProcessOrchestrator *m_orchestrator = nullptr;

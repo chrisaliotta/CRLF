@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/ChangeMark.h"
 #include "editor/CompletionItem.h"
 #include "editor/Diagnostic.h"
 #include "editor/SymbolLocation.h"
@@ -58,6 +59,16 @@ public:
     void showResolved(const QString &data, const QString &detail, const QString &documentation);
     void showSignatures(const QList<SignatureHint> &signatures, int active);
     void setDiagnostics(const QList<Diagnostic> &spans);
+    // Change bars against `base`, the text git has staged for this file.
+    // After an edit they are recomputed on the pool once typing pauses.
+    void setDiffBase(const QString &base);
+    void clearDiffBase();
+    // Marks placed by the caller, as the diff view does. `tint` also colors
+    // the rows they cover.
+    void setChangeMarks(const QList<ChangeMark> &marks, bool tint);
+    // The number drawn beside each block; 0 leaves that row unnumbered. An
+    // empty list numbers blocks 1, 2, 3.
+    void setLineNumberMap(const QList<int> &numbers);
     int documentRevision() const;
     // 1-based. Unfolds a region that hides the line, then centers it.
     void goTo(int line, int column);
@@ -126,6 +137,11 @@ private:
     void scheduleOverlayRefresh();
     void scheduleSymbolScan();
     void scheduleSyntax();
+    void scheduleChangeScan();
+    // Width the change bars take at the gutter's right edge. Zero when the
+    // editor has no marks and no base to compare with.
+    int changeBarWidth() const;
+    QColor changeColor(ChangeKind kind) const;
     // Decides what the key just typed asks for. `text` is the key's text;
     // Backspace and Delete pass "\b".
     void scheduleCompletion(const QString &text, bool listOpen);
@@ -213,4 +229,13 @@ private:
     QString m_findTerm;
     QList<QTextEdit::ExtraSelection> m_findSelections;
     bool m_overlayRefreshQueued = false;
+    bool m_hasDiffBase = false;
+    QString m_diffBase;
+    QList<ChangeMark> m_changeMarks;
+    // m_changeMarks by block number: rows they cover, and boundaries above a
+    // block where rows were deleted.
+    QHash<int, ChangeKind> m_changeRows;
+    QHash<int, ChangeKind> m_changeBoundaries;
+    bool m_tintChanges = false;
+    QList<int> m_lineNumberMap;
 };

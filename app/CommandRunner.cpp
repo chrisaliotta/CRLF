@@ -1,5 +1,6 @@
 #include "app/CommandRunner.h"
 
+#include "app/ProcessLaunch.h"
 #include "app/ProcessOrchestrator.h"
 #include "io/WslPath.h"
 
@@ -36,99 +37,19 @@ QString commandEditorText(const QByteArray &bytes)
 
 } // namespace
 
-#ifdef Q_OS_WIN
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
-
 struct CommandRunner::Running
 {
     QProcess *process = nullptr;
-    void *job = nullptr;
+    ProcessLaunch launch;
     bool stopRequested = false;
     bool restart = false;
-    // Set while start() is inside a job launch that may be retried, so the
-    // failure signal from that attempt is not shown.
-    bool suppressFailure = false;
     int token = 0;
-    // Set when the command runs inside a distro. linuxGroup is filled from
-    // the CRLF_PGID line bash prints before the command.
-    QString distro;
-    qint64 linuxGroup = 0;
-    bool groupResolved = false;
-    QByteArray pendingOutput;
     // output "editor": stdin is input, stdout accumulates in captured, and
     // stderr stays on its own channel so it is not inserted into the document.
     bool captureEditor = false;
     QByteArray input;
     QByteArray captured;
 };
-
-namespace {
-
-#ifdef Q_OS_WIN
-
-void *createKillJob()
-{
-    HANDLE job = CreateJobObjectW(nullptr, nullptr);
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = {};
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
-    return job;
-}
-
-// Puts the new process in the job at creation, so every program it launches
-// (cmd -> pnpm -> node) dies with the job instead of only the shell.
-// `job` must stay alive through CreateProcess, which runs after the modifier
-// returns. Children created by the new process inherit the job.
-void assignJobOnCreate(HANDLE *job, QProcess::CreateProcessArguments *args, STARTUPINFOEXW *extended,
-                       LPPROC_THREAD_ATTRIBUTE_LIST *attributes)
-{
-    auto *source = reinterpret_cast<STARTUPINFOW *>(args->startupInfo);
-    extended->StartupInfo = *source;
-    extended->StartupInfo.cb = sizeof(STARTUPINFOEXW);
-
-    SIZE_T size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
-    *attributes = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(), 0, size));
-    InitializeProcThreadAttributeList(*attributes, 1, 0, &size);
-    UpdateProcThreadAttribute(*attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, job, sizeof(HANDLE),
-                              nullptr, nullptr);
-    extended->lpAttributeList = *attributes;
-
-    args->startupInfo = reinterpret_cast<Q_STARTUPINFO *>(extended);
-    args->flags |= EXTENDED_STARTUPINFO_PRESENT;
-}
-
-void freeAttributes(LPPROC_THREAD_ATTRIBUTE_LIST attributes)
-{
-    if (!attributes)
-        return;
-    DeleteProcThreadAttributeList(attributes);
-    HeapFree(GetProcessHeap(), 0, attributes);
-}
-
-void startGroupKill(QObject *parent, const QString &distro, qint64 group)
-{
-    if (distro.isEmpty() || group <= 0)
-        return;
-    auto *killer = new QProcess(parent);
-    killer->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
-    killer->setArguments({QStringLiteral("-d"), distro, QStringLiteral("--"), QStringLiteral("kill"),
-                          QStringLiteral("--"), QString::number(-group)});
-    QObject::connect(killer, &QProcess::finished, killer, &QObject::deleteLater);
-    QObject::connect(killer, &QProcess::errorOccurred, killer, [killer](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart)
-            killer->deleteLater();
-    });
-    killer->start();
-}
-
-#endif
-
-} // namespace
 
 CommandRunner::CommandRunner(QObject *parent)
     : QObject(parent)
@@ -227,10 +148,10 @@ void CommandRunner::start(const QString &name)
         stop(name);
         return;
     }
-    launch(name, true);
+    launch(name);
 }
 
-void CommandRunner::launch(const QString &name, bool withJob)
+void CommandRunner::launch(const QString &name)
 {
     const ProjectCommand *spec = command(name);
     Running *running = m_running.value(name);
@@ -250,8 +171,8 @@ void CommandRunner::launch(const QString &name, bool withJob)
             const QByteArray bytes = running->process->readAllStandardError();
             if (bytes.isEmpty())
                 return;
-            emit outputReceived(name, running->distro.isEmpty() ? QString::fromLocal8Bit(bytes)
-                                                                : QString::fromUtf8(bytes));
+            emit outputReceived(name, running->launch.distro().isEmpty() ? QString::fromLocal8Bit(bytes)
+                                                                         : QString::fromUtf8(bytes));
         });
         connect(running->process, &QProcess::finished, this,
                 [this, name](int exitCode, QProcess::ExitStatus) {
@@ -260,8 +181,8 @@ void CommandRunner::launch(const QString &name, bool withJob)
                         absorbStdout(name, done->process->readAllStandardOutput());
                         const QByteArray err = done->process->readAllStandardError();
                         if (!err.isEmpty())
-                            emit outputReceived(name, done->distro.isEmpty() ? QString::fromLocal8Bit(err)
-                                                                            : QString::fromUtf8(err));
+                            emit outputReceived(name, done->launch.distro().isEmpty() ? QString::fromLocal8Bit(err)
+                                                                                     : QString::fromUtf8(err));
                         if (!done->stopRequested && !done->restart) {
                             const QString text = commandEditorText(done->captured);
                             if (exitCode != 0) {
@@ -291,7 +212,7 @@ void CommandRunner::launch(const QString &name, bool withJob)
                     if (error != QProcess::FailedToStart)
                         return;
                     Running *failed = m_running.value(name);
-                    if (failed->suppressFailure)
+                    if (failed->launch.retrying())
                         return;
                     failed->restart = false;
                     emit outputReceived(name, failed->process->errorString() + QLatin1Char('\n'));
@@ -309,10 +230,6 @@ void CommandRunner::launch(const QString &name, bool withJob)
         const QString key = QStringLiteral("command:%1").arg(name);
         running->token = m_orchestrator->currentToken(key);
     }
-    running->distro.clear();
-    running->linuxGroup = 0;
-    running->groupResolved = false;
-    running->pendingOutput.clear();
     running->captureEditor = false;
     running->input.clear();
     running->captured.clear();
@@ -338,66 +255,9 @@ void CommandRunner::launch(const QString &name, bool withJob)
         vars.cwd = linux.path;
     }
 #endif
-    const QString commandText = expandCommand(spec->command, vars);
-
-#ifdef Q_OS_WIN
-    if (running->job) {
-        CloseHandle(static_cast<HANDLE>(running->job));
-        running->job = nullptr;
-    }
-    STARTUPINFOEXW extended = {};
-    LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
-    HANDLE jobHandle = nullptr;
-    if (withJob) {
-        running->job = createKillJob();
-        jobHandle = static_cast<HANDLE>(running->job);
-        withJob = jobHandle != nullptr;
-    }
-    if (withJob) {
-        running->process->setCreateProcessArgumentsModifier(
-            [&extended, &attributes, &jobHandle](QProcess::CreateProcessArguments *args) {
-                assignJobOnCreate(&jobHandle, args, &extended, &attributes);
-            });
-    } else {
-        running->process->setCreateProcessArgumentsModifier({});
-    }
-    if (linux.valid()) {
-        running->distro = linux.distro;
-        const QString script = QStringLiteral("printf 'CRLF_PGID:%s\\n' \"$$\"; ") + commandText;
-        running->process->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
-        running->process->setNativeArguments({});
-        running->process->setArguments({QStringLiteral("-d"), linux.distro, QStringLiteral("--cd"),
-                                        linux.path, QStringLiteral("--"), QStringLiteral("bash"),
-                                        QStringLiteral("-lc"), script});
-        // cmd.exe cannot use a UNC path as its current directory, and wsl.exe
-        // takes the Linux path through --cd instead.
-        running->process->setWorkingDirectory(QString());
-    } else {
-        running->process->setProgram(qEnvironmentVariable("ComSpec", QStringLiteral("C:\\Windows\\System32\\cmd.exe")));
-        running->process->setArguments({});
-        running->process->setNativeArguments(QStringLiteral("/d /s /c ") + commandText);
-        running->process->setWorkingDirectory(spec->workingDirectory);
-    }
-#else
-    running->process->setProgram(QStringLiteral("/bin/sh"));
-    running->process->setArguments({QStringLiteral("-c"), commandText});
-    running->process->setWorkingDirectory(spec->workingDirectory);
-#endif
     running->process->setProcessChannelMode(running->captureEditor ? QProcess::SeparateChannels
                                                                    : QProcess::MergedChannels);
-    running->suppressFailure = withJob;
-    running->process->start();
-    running->suppressFailure = false;
-#ifdef Q_OS_WIN
-    running->process->setCreateProcessArgumentsModifier({});
-    freeAttributes(attributes);
-    // Some parent jobs reject a nested job. Run the command anyway; stop()
-    // still kills the tree with taskkill /T.
-    if (withJob && running->process->error() == QProcess::FailedToStart) {
-        launch(name, false);
-        return;
-    }
-#endif
+    running->launch.startShell(running->process, spec->workingDirectory, expandCommand(spec->command, vars));
     if (running->captureEditor && running->process->state() != QProcess::NotRunning) {
         running->process->write(running->input);
         running->process->closeWriteChannel();
@@ -420,44 +280,21 @@ void CommandRunner::absorbStdout(const QString &name, const QByteArray &bytes)
     if (!running)
         return;
 
-    QByteArray payload = bytes;
-    if (!running->distro.isEmpty() && !running->groupResolved) {
-        running->pendingOutput += bytes;
-        const int newline = running->pendingOutput.indexOf('\n');
-        if (newline < 0)
-            return;
-        const QByteArray first = running->pendingOutput.left(newline);
-        payload = running->pendingOutput.mid(newline + 1);
-        running->pendingOutput.clear();
-        running->groupResolved = true;
-        const QString line = QString::fromUtf8(first).trimmed();
-        const QString marker = QStringLiteral("CRLF_PGID:");
-        if (line.startsWith(marker))
-            running->linuxGroup = line.mid(marker.size()).toLongLong();
-        else
-            payload.prepend(first + '\n');
-    }
-
+    const QByteArray payload = running->launch.takeOutput(bytes);
     if (payload.isEmpty())
         return;
     if (running->captureEditor) {
         running->captured += payload;
         return;
     }
-    emit outputReceived(name, running->distro.isEmpty() ? QString::fromLocal8Bit(payload)
-                                                        : QString::fromUtf8(payload));
+    emit outputReceived(name, running->launch.distro().isEmpty() ? QString::fromLocal8Bit(payload)
+                                                                 : QString::fromUtf8(payload));
 }
 
 void CommandRunner::stopTree(Running &running)
 {
     running.stopRequested = true;
-#ifdef Q_OS_WIN
-    startGroupKill(this, running.distro, running.linuxGroup);
-    if (running.job) {
-        CloseHandle(static_cast<HANDLE>(running.job));
-        running.job = nullptr;
-    }
-#endif
+    running.launch.stopTree(this);
     running.process->kill();
 }
 

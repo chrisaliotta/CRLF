@@ -2,6 +2,7 @@
 
 #include "app/ExplorerModel.h"
 #include "io/FileOperations.h"
+#include "io/NamePattern.h"
 #include "io/WslPath.h"
 
 #include <QCoreApplication>
@@ -75,7 +76,8 @@ bool canScopeUp(const QString &path)
 
 } // namespace
 
-// Draws a cut or in-progress drag row faded so the two states read at a glance.
+// Draws a cut or in-progress drag row faded so the two states read at a glance,
+// and a changed file in its source-control color with its letter on the right.
 class ExplorerDelegate : public QStyledItemDelegate
 {
 public:
@@ -93,13 +95,24 @@ public:
                               && path.compare(m_panel->m_dragPath, Qt::CaseInsensitive) == 0;
         const bool cut = m_panel->m_clipboardCut
                          && path.compare(m_panel->m_clipboardPath, Qt::CaseInsensitive) == 0;
-        if (!dragging && !cut) {
-            QStyledItemDelegate::paint(painter, option, index);
-            return;
+        const auto badge = m_panel->m_gitBadges.constFind(path.toLower());
+        const bool marked = !path.isEmpty() && badge != m_panel->m_gitBadges.cend();
+        QStyleOptionViewItem styled(option);
+        QColor color;
+        if (marked) {
+            color = m_panel->m_gitColors[int(badge->tone)];
+            styled.palette.setColor(QPalette::Text, color);
+            styled.palette.setColor(QPalette::HighlightedText, color);
         }
         painter->save();
-        painter->setOpacity(dragging ? 0.35 : 0.45);
-        QStyledItemDelegate::paint(painter, option, index);
+        if (dragging || cut)
+            painter->setOpacity(dragging ? 0.35 : 0.45);
+        QStyledItemDelegate::paint(painter, styled, index);
+        if (marked) {
+            painter->setPen(color);
+            painter->drawText(option.rect.adjusted(0, 0, -8, 0), Qt::AlignRight | Qt::AlignVCenter,
+                              QString(badge->letter));
+        }
         painter->restore();
     }
 
@@ -248,16 +261,6 @@ private:
 // Drops directories whose names start with '.' while leaving dot files,
 // such as .crlf, in the tree. The scoped folder itself is the model's only
 // top-level row and stays visible even when its name starts with '.'.
-bool patternMatches(const QString &pattern, const QString &name)
-{
-    if (!pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?')))
-        return name.compare(pattern, Qt::CaseInsensitive) == 0;
-    const QRegularExpression expression(
-        QRegularExpression::wildcardToRegularExpression(pattern),
-        QRegularExpression::CaseInsensitiveOption);
-    return expression.match(name).hasMatch();
-}
-
 class DirectoryFilter : public QSortFilterProxyModel
 {
 public:
@@ -291,10 +294,8 @@ protected:
         if (files->isPlaceholder(index))
             return true;
         const QString name = files->fileName(index);
-        for (const QString &pattern : hidden) {
-            if (patternMatches(pattern, name))
-                return false;
-        }
+        if (nameMatchesAny(hidden, name))
+            return false;
         if (!hideDotFolders || !sourceParent.isValid())
             return true;
         return !files->isDir(index) || !name.startsWith(QLatin1Char('.'));
@@ -432,6 +433,22 @@ QToolButton *ExplorerPanel::makeHeaderButton(const QString &glyph, const QString
     button->setFocusPolicy(Qt::NoFocus);
     button->setFixedSize(22, 22);
     return button;
+}
+
+void ExplorerPanel::setGitBadges(const QHash<QString, GitBadge> &badges)
+{
+    m_gitBadges = badges;
+    m_tree->viewport()->update();
+}
+
+void ExplorerPanel::setGitColors(const QColor &added, const QColor &modified, const QColor &deleted,
+                                 const QColor &conflicted)
+{
+    m_gitColors[int(GitTone::Added)] = added;
+    m_gitColors[int(GitTone::Modified)] = modified;
+    m_gitColors[int(GitTone::Deleted)] = deleted;
+    m_gitColors[int(GitTone::Conflicted)] = conflicted;
+    m_tree->viewport()->update();
 }
 
 void ExplorerPanel::setIconTheme(const FileIconTheme *theme)

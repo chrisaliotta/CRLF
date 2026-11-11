@@ -61,7 +61,7 @@ private:
     struct Running;
 
     const ProjectCommand *command(const QString &name) const;
-    void launch(const QString &name, bool withJob = true);
+    void launch(const QString &name);
     void stopTree(Running &running);
     // Panel output, or the bytes an "editor" command will apply at exit.
     // A distro's leading CRLF_PGID line is consumed here.

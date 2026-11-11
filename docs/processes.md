@@ -41,13 +41,14 @@ Cancel and Reload act on the selected Active row. `MainWindow` routes them by ke
 | `autocomplete` | Stops the autocomplete session | Starts the session again, replacing the running one |
 | `syntax:<editor>` | Stops that editor's check | Checks the editor's current text again |
 | `command:<name>` | Stops the menu command | Runs the command again, as choosing it from the menu does |
+| `git:<n>` | Stops that git job. The repository's next queued job starts | Not offered |
 | Anything else | Drops the record. A pool task already running keeps going, and its result is no longer the current one | Not offered |
 
 Reload starts the command string again, so an edited script is read from disk. Nothing watches the script.
 
 Restart Services, on Active, needs no selection. It starts autocomplete again and checks every open editor, for whichever of the two the project enables. Those are the processes that run without being chosen from a menu, so this brings them back after a Cancel. Menu commands are left alone.
 
-Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
+`ProcessLaunch` is the one place a child process is started: `cmd.exe`, `bash` inside a distro, or a program with plain arguments, each inside a kill-on-close job. `CommandRunner`, `SyntaxRunner`, `CompletionSession`, and `GitClient` each hold one per process. Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
 
 ## What runs where
 
@@ -61,6 +62,9 @@ Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on 
 | Explorer listing | Pool | The model update |
 | Open file, restore session, `projectFor` | Pool | Applying the text or the project |
 | `WslPath::distros` and `home` | Orchestrator thread, before the folder picker reads the names | The dialogs |
+| git status, operations, and object reads | `GitClient` on the orchestrator thread, one job at a time per repository. See [git.md](git.md) | `SourceControl` keeps each status; the panel, explorer, and status bar redraw from it |
+| Repository search, the Diff tab's diff | Pool | Applying the repositories, opening the tab |
+| Change bars | Pool. The editor's 300ms timer is the `Sleep` record | `CodeEditor::setChangeMarks` |
 
 The 500ms check timer stays on the editor. It does not start a process by itself.
 

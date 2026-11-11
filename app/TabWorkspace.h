@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Types.h"
+#include "app/DiffView.h"
 #include "app/ProcessesPanel.h"
 #include "editor/CompletionItem.h"
 #include "editor/SymbolLocation.h"
@@ -102,6 +103,12 @@ public:
     bool processesOpen() const { return m_processes != nullptr; }
     bool isProcesses(QWidget *page) const { return page != nullptr && page == m_processes; }
     ProcessesPanel *processes() const { return m_processes; }
+    // Opens the comparison in the Diff tab, creating it when it is closed.
+    // Only one exists; a new comparison replaces the one it shows.
+    void showDiff(const DiffContent &content, const QList<LineChange> &changes);
+    // Processes and Diff: pages that are not documents. They sit between the
+    // documents and the + tab, and have no file, pin, or save.
+    bool isToolPage(QWidget *page) const { return page != nullptr && (page == m_processes || page == m_diff); }
     CodeEditor *editorFor(quintptr editorId) const;
     QList<CodeEditor *> editors() const;
     // Focuses the open document and moves its cursor. A path that is not open
@@ -128,6 +135,8 @@ signals:
     void signatureRequested(CodeEditor *editor);
     void documentationRequested(CodeEditor *editor, const CompletionItem &item);
     void editorClosed(quintptr editorId);
+    // A text editor was created for a document, including a hex page turned back into text.
+    void editorOpened(CodeEditor *editor);
     void editorRetargeted(CodeEditor *editor);
     void processesCurrent(bool current);
     void processCancelRequested(const QString &key);
@@ -143,6 +152,7 @@ private:
         bool pinned = false;
     };
 
+    void insertToolPage(QWidget *page, const QString &title);
     CodeEditor *createEditor(const DocumentFile &file, const QString &text, const QString &title,
                              const LanguageDefinition *language = nullptr);
     void noteEditorOwner(CodeEditor *editor);
@@ -183,6 +193,7 @@ private:
     SymbolIndex *m_symbols = nullptr;
     ProcessOrchestrator *m_orchestrator = nullptr;
     ProcessesPanel *m_processes = nullptr;
+    DiffView *m_diff = nullptr;
     bool m_adjustingTabs = false;
     const Theme *m_theme;
     // Empty page behind the always-last + tab, which scrolls with the

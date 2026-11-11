@@ -138,6 +138,19 @@ void readService(ServiceSettings &service, const QJsonValue &value, const QStrin
         service.watch.append(QDir(service.workingDirectory).absoluteFilePath(path.toString()));
 }
 
+void readGit(GitSettings &git, const QJsonValue &value)
+{
+    if (value.isBool()) {
+        git.enabled = value.toBool();
+        return;
+    }
+    if (!value.isObject())
+        return;
+    const QJsonObject obj = value.toObject();
+    git.enabled = obj.value(QLatin1String("enabled")).toBool(true);
+    git.depth = qMax(0, obj.value(QLatin1String("depth")).toInt(0));
+}
+
 void readIndent(IndentSettings &indent, const QJsonValue &value)
 {
     if (!value.isObject())
@@ -265,6 +278,7 @@ Project projectFor(const QString &start)
     readService(project.syntax, root.value(QLatin1String("syntax")), directory);
     readService(project.autocomplete, root.value(QLatin1String("autocomplete")), directory);
     project.unlimitedLog = root.value(QLatin1String("unlimitedLog")).toBool(false);
+    readGit(project.git, root.value(QLatin1String("git")));
     return project;
 }
 

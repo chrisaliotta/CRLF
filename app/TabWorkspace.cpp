@@ -107,14 +107,22 @@ TabWorkspace::TabWorkspace(const LanguageRegistry *registry, const Theme *theme,
     });
 
     connect(bar, &QTabBar::tabMoved, this, [this](int, int) {
-        if (m_processes == nullptr || m_adjustingTabs)
+        if (m_adjustingTabs)
             return;
-        const int want = count() - 2;
-        const int have = indexOf(m_processes);
-        if (have == want)
-            return;
+        QList<QWidget *> tools;
+        for (QWidget *page : {static_cast<QWidget *>(m_processes), static_cast<QWidget *>(m_diff)}) {
+            if (page != nullptr)
+                tools.append(page);
+        }
+        std::sort(tools.begin(), tools.end(), [this](QWidget *a, QWidget *b) { return indexOf(a) < indexOf(b); });
         m_adjustingTabs = true;
-        tabBar()->moveTab(have, want);
+        int want = count() - 1 - int(tools.size());
+        for (QWidget *page : std::as_const(tools)) {
+            const int have = indexOf(page);
+            if (have != want)
+                tabBar()->moveTab(have, want);
+            ++want;
+        }
         m_adjustingTabs = false;
     });
 
@@ -162,6 +170,8 @@ QString TabWorkspace::titleFor(QWidget *page) const
 {
     if (page == m_processes)
         return QStringLiteral("Processes");
+    if (page == m_diff)
+        return m_diff->content().title;
     const auto it = m_pages.constFind(page);
     return it == m_pages.cend() ? QString() : it->title;
 }
@@ -252,17 +262,38 @@ void TabWorkspace::showProcesses()
     connect(m_processes, &ProcessesPanel::reloadRequested, this, &TabWorkspace::processReloadRequested);
     connect(m_processes, &ProcessesPanel::restartServicesRequested, this,
             &TabWorkspace::processServicesRestartRequested);
+    insertToolPage(m_processes, QStringLiteral("Processes"));
+}
+
+void TabWorkspace::showDiff(const DiffContent &content, const QList<LineChange> &changes)
+{
+    if (m_diff == nullptr) {
+        m_diff = new DiffView(m_registry, m_theme, this);
+        connect(m_diff, &DiffView::openRequested, this, &TabWorkspace::openFile);
+        m_diff->setContent(content, changes);
+        insertToolPage(m_diff, content.title);
+    } else {
+        m_diff->setContent(content, changes);
+        setTabText(indexOf(m_diff), content.title);
+        setCurrentWidget(m_diff);
+    }
+    setTabToolTip(indexOf(m_diff), content.path);
+    emit statusChanged();
+}
+
+void TabWorkspace::insertToolPage(QWidget *page, const QString &title)
+{
     const int index = count() - 1;
-    insertTab(index, m_processes, QStringLiteral("Processes"));
+    insertTab(index, page, title);
     auto *close = new QToolButton(this);
     close->setObjectName(QStringLiteral("tabCloseButton"));
     close->setText(QStringLiteral("\u2715"));
     close->setToolTip(QStringLiteral("Close Tab"));
     close->setFocusPolicy(Qt::NoFocus);
     close->setFixedSize(18, 18);
-    connect(close, &QToolButton::clicked, this, [this] { closeProcesses(); });
+    connect(close, &QToolButton::clicked, this, [this, page] { closeTab(indexOf(page)); });
     tabBar()->setTabButton(index, QTabBar::RightSide, close);
-    setCurrentWidget(m_processes);
+    setCurrentWidget(page);
 }
 
 void TabWorkspace::closeProcesses()
@@ -310,6 +341,7 @@ CodeEditor *TabWorkspace::createEditor(const DocumentFile &file, const QString &
         if (currentWidget() == editor)
             emit statusChanged();
     });
+    emit editorOpened(editor);
     return editor;
 }
 
@@ -766,7 +798,7 @@ void TabWorkspace::writePage(QWidget *page)
 bool TabWorkspace::saveCurrent()
 {
     QWidget *page = currentWidget();
-    if (page == m_processes)
+    if (isToolPage(page))
         return true;
     if (m_pages[page].file.path().isEmpty())
         return saveCurrentAs(m_saveDirectory);
@@ -780,7 +812,7 @@ bool TabWorkspace::saveCurrent()
 bool TabWorkspace::saveCurrentAs(const QString &directory)
 {
     QWidget *page = currentWidget();
-    if (page == m_processes || page == m_newTabPage)
+    if (isToolPage(page) || page == m_newTabPage)
         return false;
     const QString existing = m_pages[page].file.path();
     QString suggested = existing;
@@ -824,6 +856,12 @@ bool TabWorkspace::closeTab(int index)
         emit processesCurrent(false);
         return true;
     }
+    if (page == m_diff) {
+        removeTab(index);
+        m_diff->deleteLater();
+        m_diff = nullptr;
+        return true;
+    }
     if (isPageModified(page)) {
         setCurrentIndex(index);
         const auto choice = QMessageBox::question(
@@ -854,7 +892,7 @@ bool TabWorkspace::closeTab(int index)
 void TabWorkspace::setCurrentHexMode(bool hex)
 {
     QWidget *page = currentWidget();
-    if (page == m_processes || page == m_newTabPage)
+    if (isToolPage(page) || page == m_newTabPage)
         return;
     const int index = currentIndex();
     const bool modified = isPageModified(page);
@@ -1030,6 +1068,8 @@ void TabWorkspace::setTheme(const Theme *theme)
         else
             static_cast<HexView *>(*it)->setTheme(theme);
     }
+    if (m_diff != nullptr)
+        m_diff->setTheme(theme);
 }
 
 void TabWorkspace::setTabColors(const QColor &active, const QColor &inactive,
@@ -1079,7 +1119,7 @@ void TabWorkspace::setLineNumbersVisible(bool visible)
 
 void TabWorkspace::refreshTabTitle(QWidget *page)
 {
-    if (page == m_processes || !m_pages.contains(page))
+    if (isToolPage(page) || !m_pages.contains(page))
         return;
     Page &entry = m_pages[page];
     if (entry.titleLabel == nullptr)
@@ -1119,7 +1159,7 @@ void TabWorkspace::showTabMenu(const QPoint &pos)
     const int index = tabBar()->tabAt(pos);
     if (index < 0 || widget(index) == m_newTabPage)
         return;
-    if (widget(index) == m_processes) {
+    if (isToolPage(widget(index))) {
         QMenu menu(this);
         menu.addAction(QStringLiteral("Close"), this, [this, index] {
             if (closeTab(index) && documentCount() == 0)

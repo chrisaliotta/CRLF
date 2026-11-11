@@ -1,5 +1,6 @@
 #include "app/CompletionSession.h"
 
+#include "app/ProcessLaunch.h"
 #include "app/ProcessOrchestrator.h"
 #include "io/CommandVariables.h"
 #include "io/WslPath.h"
@@ -18,73 +19,6 @@ QString linuxPath(const QString &windowsPath)
     const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
     return converted.valid() ? converted.path : windowsPath;
 }
-
-} // namespace
-
-#ifdef Q_OS_WIN
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
-
-namespace {
-
-#ifdef Q_OS_WIN
-
-void *createKillJob()
-{
-    HANDLE job = CreateJobObjectW(nullptr, nullptr);
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = {};
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
-    return job;
-}
-
-void assignJobOnCreate(HANDLE *job, QProcess::CreateProcessArguments *args, STARTUPINFOEXW *extended,
-                       LPPROC_THREAD_ATTRIBUTE_LIST *attributes)
-{
-    auto *source = reinterpret_cast<STARTUPINFOW *>(args->startupInfo);
-    extended->StartupInfo = *source;
-    extended->StartupInfo.cb = sizeof(STARTUPINFOEXW);
-
-    SIZE_T size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
-    *attributes = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(), 0, size));
-    InitializeProcThreadAttributeList(*attributes, 1, 0, &size);
-    UpdateProcThreadAttribute(*attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, job, sizeof(HANDLE),
-                              nullptr, nullptr);
-    extended->lpAttributeList = *attributes;
-
-    args->startupInfo = reinterpret_cast<Q_STARTUPINFO *>(extended);
-    args->flags |= EXTENDED_STARTUPINFO_PRESENT;
-}
-
-void freeAttributes(LPPROC_THREAD_ATTRIBUTE_LIST attributes)
-{
-    if (!attributes)
-        return;
-    DeleteProcThreadAttributeList(attributes);
-    HeapFree(GetProcessHeap(), 0, attributes);
-}
-
-void startGroupKill(QObject *parent, const QString &distro, qint64 group)
-{
-    if (distro.isEmpty() || group <= 0)
-        return;
-    auto *killer = new QProcess(parent);
-    killer->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
-    killer->setArguments({QStringLiteral("-d"), distro, QStringLiteral("--"), QStringLiteral("kill"),
-                          QStringLiteral("--"), QString::number(-group)});
-    QObject::connect(killer, &QProcess::finished, killer, &QObject::deleteLater);
-    QObject::connect(killer, &QProcess::errorOccurred, killer, [killer](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart)
-            killer->deleteLater();
-    });
-    killer->start();
-}
-
-#endif
 
 } // namespace
 
@@ -117,7 +51,7 @@ void CompletionSession::start(const QString &command, const QString &workingDire
     m_variables = variables;
     m_token = m_orchestrator == nullptr ? 0 : m_orchestrator->currentToken(QStringLiteral("autocomplete"));
     m_stopRequested = false;
-    launch(true);
+    launch();
 }
 
 void CompletionSession::request(const CompletionRequest &request)
@@ -153,7 +87,7 @@ void CompletionSession::stop()
     stopTree();
 }
 
-void CompletionSession::launch(bool withJob)
+void CompletionSession::launch()
 {
     if (m_process == nullptr) {
         m_process = new QProcess(this);
@@ -177,9 +111,6 @@ void CompletionSession::launch(bool withJob)
         });
     }
 
-    m_distro.clear();
-    m_linuxGroup = 0;
-    m_groupResolved = false;
     m_pending.clear();
     m_editorPaths.clear();
 
@@ -195,60 +126,9 @@ void CompletionSession::launch(bool withJob)
         vars.cwd = linux.path;
     }
 #endif
-    const QString commandText = expandCommand(m_command, vars);
-
-#ifdef Q_OS_WIN
-    if (m_job) {
-        CloseHandle(static_cast<HANDLE>(m_job));
-        m_job = nullptr;
-    }
-    STARTUPINFOEXW extended = {};
-    LPPROC_THREAD_ATTRIBUTE_LIST attributes = nullptr;
-    HANDLE jobHandle = nullptr;
-    if (withJob) {
-        m_job = createKillJob();
-        jobHandle = static_cast<HANDLE>(m_job);
-        withJob = jobHandle != nullptr;
-    }
-    if (withJob) {
-        m_process->setCreateProcessArgumentsModifier(
-            [&extended, &attributes, &jobHandle](QProcess::CreateProcessArguments *args) {
-                assignJobOnCreate(&jobHandle, args, &extended, &attributes);
-            });
-    } else {
-        m_process->setCreateProcessArgumentsModifier({});
-    }
-    if (linux.valid()) {
-        m_distro = linux.distro;
-        const QString script = QStringLiteral("printf 'CRLF_PGID:%s\\n' \"$$\"; ") + commandText;
-        m_process->setProgram(QStringLiteral("C:/Windows/System32/wsl.exe"));
-        m_process->setNativeArguments({});
-        m_process->setArguments({QStringLiteral("-d"), linux.distro, QStringLiteral("--cd"), linux.path,
-                                 QStringLiteral("--"), QStringLiteral("bash"), QStringLiteral("-lc"), script});
-        m_process->setWorkingDirectory(QString());
-    } else {
-        m_process->setProgram(qEnvironmentVariable("ComSpec", QStringLiteral("C:\\Windows\\System32\\cmd.exe")));
-        m_process->setArguments({});
-        m_process->setNativeArguments(QStringLiteral("/d /s /c ") + commandText);
-        m_process->setWorkingDirectory(m_workingDirectory);
-    }
-#else
-    Q_UNUSED(withJob);
-    m_process->setProgram(QStringLiteral("/bin/sh"));
-    m_process->setArguments({QStringLiteral("-c"), commandText});
-    m_process->setWorkingDirectory(m_workingDirectory);
-#endif
     m_process->setProcessChannelMode(QProcess::SeparateChannels);
-    m_process->start();
-#ifdef Q_OS_WIN
-    m_process->setCreateProcessArgumentsModifier({});
-    freeAttributes(attributes);
-    if (withJob && m_process->error() == QProcess::FailedToStart) {
-        launch(false);
-        return;
-    }
-#endif
-    if (m_process->error() == QProcess::FailedToStart)
+    m_launch.startShell(m_process, m_workingDirectory, expandCommand(m_command, vars));
+    if (m_process->state() == QProcess::NotRunning && m_process->error() == QProcess::FailedToStart)
         emit failed(m_process->errorString());
 }
 
@@ -280,21 +160,7 @@ void CompletionSession::write(const CompletionRequest &request)
 
 void CompletionSession::absorbStdout(const QByteArray &bytes)
 {
-    m_pending += bytes;
-    if (!m_distro.isEmpty() && !m_groupResolved) {
-        const int newline = m_pending.indexOf('\n');
-        if (newline < 0)
-            return;
-        const QByteArray first = m_pending.left(newline);
-        m_pending = m_pending.mid(newline + 1);
-        m_groupResolved = true;
-        const QString marker = QStringLiteral("CRLF_PGID:");
-        const QString header = QString::fromUtf8(first).trimmed();
-        if (header.startsWith(marker))
-            m_linuxGroup = header.mid(marker.size()).toLongLong();
-        else
-            m_pending.prepend(first + '\n');
-    }
+    m_pending += m_launch.takeOutput(bytes);
     int newline = m_pending.indexOf('\n');
     while (newline >= 0) {
         takeLine(m_pending.left(newline));
@@ -393,13 +259,7 @@ void CompletionSession::takeLine(const QByteArray &line)
 
 void CompletionSession::stopTree()
 {
-#ifdef Q_OS_WIN
-    startGroupKill(this, m_distro, m_linuxGroup);
-    if (m_job) {
-        CloseHandle(static_cast<HANDLE>(m_job));
-        m_job = nullptr;
-    }
-#endif
+    m_launch.stopTree(this);
     if (m_process == nullptr || m_process->state() == QProcess::NotRunning)
         return;
     // The killed process can take a moment to exit. It is detached so a new

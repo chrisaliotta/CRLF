@@ -7,7 +7,10 @@
 #include "app/ProcessOrchestrator.h"
 #include "app/ExplorerPanel.h"
 #include "app/FindBar.h"
+#include "app/GitClient.h"
 #include "app/OpenWith.h"
+#include "app/SourceControl.h"
+#include "app/SourceControlPanel.h"
 #include "app/OutputPanel.h"
 #include "app/ProcessesPanel.h"
 #include "app/ProblemsPanel.h"
@@ -39,12 +42,14 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPointer>
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTextCursor>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -55,6 +60,7 @@ namespace {
 constexpr auto kPersistSetting = "persistUnsavedEdits";
 constexpr auto kExplorerRootSetting = "explorerRoot";
 constexpr auto kExplorerVisibleSetting = "explorerVisible";
+constexpr auto kSourceControlVisibleSetting = "sourceControlVisible";
 constexpr auto kTerminalVisibleSetting = "terminalVisible";
 constexpr auto kThemeSetting = "theme";
 constexpr auto kFileIconThemeSetting = "fileIconTheme";
@@ -181,6 +187,21 @@ ExplorerPanel QTreeView { background: %1; color: %2; border: none; outline: 0; p
 ExplorerPanel QTreeView::item { padding: 2px 0; }
 ExplorerPanel QTreeView::item:hover { background: %4; }
 ExplorerPanel QTreeView::item:selected { background: %6; color: %2; }
+SourceControlPanel, DiffView { background: %1; }
+#sourceControlTitle { color: %2; font-weight: bold; padding: 6px 12px; }
+#sourceControlEmpty, #diffLabel { color: %2; padding: 0 6px; }
+SourceControlPanel QToolButton, DiffView QToolButton { border: none; border-radius: 4px; background: transparent; color: %2; padding: 2px 6px; }
+SourceControlPanel QToolButton:hover, DiffView QToolButton:hover { background: %4; }
+SourceControlPanel QToolButton:pressed, SourceControlPanel QToolButton:checked, DiffView QToolButton:pressed { background: %5; }
+SourceControlPanel QTreeWidget { background: %1; color: %2; border: none; outline: 0; }
+SourceControlPanel QTreeWidget::item { padding: 2px 0; }
+SourceControlPanel QTreeWidget::item:hover { background: %4; }
+SourceControlPanel QTreeWidget::item:selected { background: %6; }
+SourceControlPanel QPlainTextEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px; }
+SourceControlPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
+SourceControlPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
+#branchButton { border: none; border-radius: 4px; color: %2; padding: 0 6px; }
+#branchButton:hover { background: %4; }
 QSplitter::handle { background: %3; }
 QLineEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px;
             padding: 3px 8px; selection-background-color: %6; }
@@ -378,13 +399,18 @@ MainWindow::MainWindow(QWidget *parent)
     m_syntax = new SyntaxRunner;
     m_completion = new CompletionSession;
     m_runner = new CommandRunner;
+    m_gitClient = new GitClient;
     m_orchestrator->moveToThread(m_thread);
     m_syntax->moveToThread(m_thread);
     m_completion->moveToThread(m_thread);
     m_runner->moveToThread(m_thread);
+    m_gitClient->moveToThread(m_thread);
     m_syntax->setOrchestrator(m_orchestrator);
     m_completion->setOrchestrator(m_orchestrator);
     m_runner->setOrchestrator(m_orchestrator);
+    m_gitClient->setOrchestrator(m_orchestrator);
+    m_sourceControl = new SourceControl(m_orchestrator, m_gitClient, this);
+    m_sourcePanel = new SourceControlPanel(m_sourceControl, this);
     m_runner->setUi(this);
     m_runner->setContextProvider([this](const QString &command) {
         CommandVariables vars = commandVariables();
@@ -477,11 +503,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_projectChanged->setSingleShot(true);
     m_projectChanged->setInterval(200);
     m_explorer->hide();
+    m_sourcePanel->hide();
+
+    m_sidebar = new QSplitter(Qt::Vertical, this);
+    m_sidebar->setHandleWidth(1);
+    m_sidebar->setChildrenCollapsible(false);
+    m_sidebar->addWidget(m_explorer);
+    m_sidebar->addWidget(m_sourcePanel);
+    m_sidebar->hide();
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
     splitter->setHandleWidth(1);
     splitter->setChildrenCollapsible(false);
-    splitter->addWidget(m_explorer);
+    splitter->addWidget(m_sidebar);
     splitter->addWidget(m_tabs);
     splitter->setStretchFactor(1, 1);
 
@@ -524,6 +558,13 @@ MainWindow::MainWindow(QWidget *parent)
     statusBar()->addPermanentWidget(m_languageLabel);
     statusBar()->addPermanentWidget(m_encodingLabel);
     statusBar()->addPermanentWidget(m_eolLabel);
+    m_branchButton = new QToolButton(this);
+    m_branchButton->setObjectName(QStringLiteral("branchButton"));
+    m_branchButton->setAutoRaise(true);
+    m_branchButton->setFocusPolicy(Qt::NoFocus);
+    m_branchButton->setToolTip(QStringLiteral("Branches"));
+    m_branchButton->hide();
+    statusBar()->addWidget(m_branchButton);
     statusBar()->addWidget(m_cursorLabel);
 
     buildMenus();
@@ -551,6 +592,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_explorer->setRootPath(m_scopedRoot, false);
         m_actions.explorer->setChecked(settings.value(kExplorerVisibleSetting).toBool());
     }
+    m_actions.sourceControl->setChecked(settings.value(kSourceControlVisibleSetting, false).toBool());
 
     // Periodic snapshot so unsaved edits also survive crashes and power loss,
     // not just graceful exits.
@@ -594,6 +636,7 @@ MainWindow::~MainWindow()
         m_runner->stopAll();
         m_syntax->cancelAll();
         m_completion->stop();
+        m_gitClient->cancelAll();
         m_orchestrator->shutdown();
         delete m_syntax;
         m_syntax = nullptr;
@@ -601,6 +644,8 @@ MainWindow::~MainWindow()
         m_completion = nullptr;
         delete m_runner;
         m_runner = nullptr;
+        delete m_gitClient;
+        m_gitClient = nullptr;
         m_orchestrator->moveToThread(uiThread);
     }, Qt::BlockingQueuedConnection);
     m_thread->quit();
@@ -624,6 +669,9 @@ void MainWindow::changeEvent(QEvent *event)
     QMainWindow::changeEvent(event);
     if (event->type() == QEvent::WindowStateChange)
         m_titleBar->setMaximized(isMaximized());
+    // Work done in a terminal or another program shows up on return.
+    if (event->type() == QEvent::ActivationChange && isActiveWindow())
+        m_sourceControl->refresh();
 }
 
 bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
@@ -756,6 +804,7 @@ void MainWindow::buildMenus()
 
     QMenu *view = m_menuBar->addMenu(QStringLiteral("&View"));
     view->addAction(m_actions.explorer);
+    view->addAction(m_actions.sourceControl);
     view->addAction(m_actions.terminal);
     view->addAction(m_actions.processes);
     view->addSeparator();
@@ -812,6 +861,22 @@ void MainWindow::buildMenus()
                 [this, def = &definition] { m_tabs->setCurrentLanguage(def); });
     }
 
+    m_gitMenu = m_menuBar->addMenu(QStringLiteral("&Git"));
+    m_gitMenu->addAction(m_actions.gitRefresh);
+    m_gitMenu->addAction(m_actions.gitFetchAll);
+    m_gitMenu->addSeparator();
+    m_gitMenu->addAction(m_actions.gitPull);
+    m_gitMenu->addAction(m_actions.gitPush);
+    m_gitMenu->addAction(m_actions.gitCommit);
+    m_gitMenu->addAction(m_actions.gitBranches);
+    m_gitMenu->addSeparator();
+    m_gitMenu->addAction(m_actions.gitStash);
+    m_gitMenu->addAction(m_actions.gitPopStash);
+    m_gitMenu->addSeparator();
+    m_gitMenu->addAction(m_actions.gitOpenChanges);
+    m_gitMenu->addAction(m_actions.gitFileHistory);
+    m_gitMenu->menuAction()->setVisible(false);
+
     m_runMenu = m_menuBar->addMenu(QStringLiteral("&Run"));
     m_runMenu->menuAction()->setVisible(false);
 
@@ -843,6 +908,12 @@ void MainWindow::connectActions()
         }
         m_explorer->setVisible(visible);
         QSettings().setValue(kExplorerVisibleSetting, visible);
+        updateSidebar();
+    });
+    connect(m_actions.sourceControl, &QAction::toggled, this, [this](bool visible) {
+        m_sourcePanel->setVisible(visible);
+        QSettings().setValue(kSourceControlVisibleSetting, visible);
+        updateSidebar();
     });
     connect(m_actions.terminal, &QAction::toggled, this, [this](bool visible) {
         if (m_syncingTerminal)
@@ -1012,6 +1083,199 @@ void MainWindow::connectActions()
         if (m_tabs->closeTab(index) && m_tabs->documentCount() == 0)
             m_tabs->newDocument();
     });
+    connectSourceControl();
+}
+
+void MainWindow::connectSourceControl()
+{
+    connect(m_sourcePanel, &SourceControlPanel::closeRequested, this,
+            [this] { m_actions.sourceControl->setChecked(false); });
+    connect(m_sourcePanel, &SourceControlPanel::fileActivated, m_tabs, &TabWorkspace::openFile);
+    connect(m_sourcePanel, &SourceControlPanel::diffRequested, this, &MainWindow::openGitDiff);
+    connect(m_branchButton, &QToolButton::clicked, this, [this] {
+        m_sourcePanel->showBranchMenu(gitRoot(), m_branchButton->mapToGlobal(QPoint(0, 0)));
+    });
+
+    const auto badgesChanged = [this] {
+        m_explorer->setGitBadges(m_sourceControl->badges());
+        refreshGitStatus();
+    };
+    connect(m_sourceControl, &SourceControl::repositoriesChanged, this, badgesChanged);
+    connect(m_sourceControl, &SourceControl::statusChanged, this, badgesChanged);
+    connect(m_sourceControl, &SourceControl::repositoriesChanged, this, [this] {
+        m_gitMenu->menuAction()->setVisible(m_sourceControl->enabled());
+        for (CodeEditor *editor : m_tabs->editors())
+            refreshDiffBase(editor);
+    });
+    connect(m_sourceControl, &SourceControl::baseChanged, this, [this](const QString &root) {
+        for (CodeEditor *editor : m_tabs->editors()) {
+            if (m_sourceControl->repositoryFor(editor->filePath()) == root)
+                refreshDiffBase(editor);
+        }
+    });
+    connect(m_sourceControl, &SourceControl::message, this,
+            [this](const QString &text) { statusBar()->showMessage(text, 5000); });
+    connect(m_sourceControl, &SourceControl::operationStarted, this, [this](const QString &root, const QString &title) {
+        const QString log = gitLogName(root);
+        m_gitLogs.insert(log, root);
+        m_output->record(log, QStringLiteral("$ %1\n").arg(title));
+        m_output->setState(log, true, 0);
+    });
+    connect(m_sourceControl, &SourceControl::operationFinished, this,
+            [this](const QString &root, const QString &title, int exitCode, const QString &output) {
+                Q_UNUSED(title);
+                const QString log = gitLogName(root);
+                QString text = output;
+                if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n')))
+                    text += QLatin1Char('\n');
+                m_output->record(log, text);
+                m_output->setState(log, false, exitCode);
+                if (exitCode != 0)
+                    m_output->showCommand(log);
+            });
+    connect(m_output, &OutputPanel::stopRequested, this, [this](const QString &name) {
+        if (m_gitLogs.contains(name))
+            m_sourceControl->cancel(m_gitLogs.value(name));
+    });
+
+    connect(m_tabs, &TabWorkspace::editorOpened, this, &MainWindow::refreshDiffBase);
+    connect(m_tabs, &TabWorkspace::editorRetargeted, this, &MainWindow::refreshDiffBase);
+    connect(m_tabs, &TabWorkspace::sessionRestored, this, [this] {
+        for (CodeEditor *editor : m_tabs->editors())
+            refreshDiffBase(editor);
+    });
+    connect(m_tabs, &TabWorkspace::fileSaved, this, [this](const QString &directory) {
+        const QString root = m_sourceControl->repositoryFor(directory);
+        if (!root.isEmpty())
+            m_sourceControl->refresh(root);
+    });
+    connect(m_explorer, &ExplorerPanel::pathMoved, this, [this] { m_sourceControl->refresh(); });
+
+    connect(m_actions.gitRefresh, &QAction::triggered, m_sourceControl, qOverload<>(&SourceControl::refresh));
+    connect(m_actions.gitFetchAll, &QAction::triggered, m_sourceControl, &SourceControl::fetchAll);
+    connect(m_actions.gitPull, &QAction::triggered, this, [this] { m_sourceControl->pull(gitRoot()); });
+    connect(m_actions.gitPush, &QAction::triggered, this, [this] { m_sourceControl->push(gitRoot()); });
+    connect(m_actions.gitStash, &QAction::triggered, this, [this] { m_sourceControl->stash(gitRoot()); });
+    connect(m_actions.gitPopStash, &QAction::triggered, this, [this] { m_sourceControl->popStash(gitRoot()); });
+    connect(m_actions.gitCommit, &QAction::triggered, this, [this] {
+        m_sourcePanel->setCurrentRoot(gitRoot());
+        m_actions.sourceControl->setChecked(true);
+        m_sourcePanel->focusMessage();
+    });
+    connect(m_actions.gitBranches, &QAction::triggered, this, [this] {
+        m_sourcePanel->showBranchMenu(gitRoot(), mapToGlobal(rect().center()));
+    });
+    connect(m_actions.gitOpenChanges, &QAction::triggered, this, [this] {
+        CodeEditor *editor = m_tabs->currentEditor();
+        const QString root = editor == nullptr ? QString() : m_sourceControl->repositoryFor(editor->filePath());
+        if (root.isEmpty())
+            return;
+        GitDiffRequest request;
+        request.root = root;
+        request.path = m_sourceControl->relativePath(root, editor->filePath());
+        request.leftObject = QLatin1Char(':') + request.path;
+        request.rightWorking = true;
+        request.leftLabel = QStringLiteral("Index");
+        request.rightLabel = QStringLiteral("Working Tree");
+        openGitDiff(request);
+    });
+    connect(m_actions.gitFileHistory, &QAction::triggered, this, [this] {
+        CodeEditor *editor = m_tabs->currentEditor();
+        const QString root = editor == nullptr ? QString() : m_sourceControl->repositoryFor(editor->filePath());
+        if (!root.isEmpty())
+            m_sourcePanel->showHistory(root, m_sourceControl->relativePath(root, editor->filePath()));
+    });
+}
+
+void MainWindow::updateSidebar()
+{
+    m_sidebar->setVisible(m_explorer->isVisibleTo(m_sidebar) || m_sourcePanel->isVisibleTo(m_sidebar));
+}
+
+QString MainWindow::gitRoot() const
+{
+    const QString path = m_tabs->fileFor(m_tabs->currentWidget()).path();
+    const QString root = path.isEmpty() ? QString() : m_sourceControl->repositoryFor(path);
+    return root.isEmpty() ? m_sourcePanel->currentRoot() : root;
+}
+
+void MainWindow::refreshGitStatus()
+{
+    const QString root = gitRoot();
+    for (QAction *action : {m_actions.gitPull, m_actions.gitPush, m_actions.gitCommit, m_actions.gitBranches,
+                            m_actions.gitStash, m_actions.gitPopStash})
+        action->setEnabled(!root.isEmpty());
+    const QString path = m_tabs->fileFor(m_tabs->currentWidget()).path();
+    const bool tracked = !path.isEmpty() && !m_sourceControl->repositoryFor(path).isEmpty();
+    m_actions.gitOpenChanges->setEnabled(tracked && m_tabs->currentEditor() != nullptr);
+    m_actions.gitFileHistory->setEnabled(tracked && m_tabs->currentEditor() != nullptr);
+    const GitStatus *status = root.isEmpty() ? nullptr : m_sourceControl->status(root);
+    m_branchButton->setVisible(status != nullptr);
+    if (status == nullptr)
+        return;
+    QString text = QStringLiteral("\u2387 ") + (status->branch.isEmpty() ? status->head.left(7) : status->branch);
+    if (status->ahead > 0)
+        text += QStringLiteral(" \u2191%1").arg(status->ahead);
+    if (status->behind > 0)
+        text += QStringLiteral(" \u2193%1").arg(status->behind);
+    if (!status->changes.isEmpty())
+        text += QStringLiteral(" \u2022%1").arg(status->changes.size());
+    m_branchButton->setText(text);
+    m_branchButton->setToolTip(QStringLiteral("%1 — branches").arg(QDir::toNativeSeparators(root)));
+}
+
+void MainWindow::refreshDiffBase(CodeEditor *editor)
+{
+    const QString path = editor->filePath();
+    const QString root = path.isEmpty() ? QString() : m_sourceControl->repositoryFor(path);
+    if (root.isEmpty()) {
+        editor->clearDiffBase();
+        return;
+    }
+    QPointer<CodeEditor> alive(editor);
+    m_sourceControl->readObject(root, QLatin1Char(':') + m_sourceControl->relativePath(root, path),
+                                [alive, path](bool found, const QByteArray &bytes) {
+                                    if (alive.isNull() || alive->filePath() != path)
+                                        return;
+                                    if (!found) {
+                                        alive->clearDiffBase();
+                                        return;
+                                    }
+                                    DocumentFile file;
+                                    alive->setDiffBase(file.decode(bytes));
+                                });
+}
+
+void MainWindow::openGitDiff(GitDiffRequest request)
+{
+    const QString path = m_sourceControl->absolutePath(request.root, request.path);
+    if (request.rightWorking) {
+        for (CodeEditor *editor : m_tabs->editors()) {
+            if (editor->filePath().compare(path, Qt::CaseInsensitive) == 0) {
+                request.hasWorkingText = true;
+                request.workingText = editor->toPlainText();
+                break;
+            }
+        }
+    }
+    const QString title = QStringLiteral("%1 (%2 \u2194 %3)")
+                              .arg(QFileInfo(path).fileName(), request.leftLabel, request.rightLabel);
+    m_sourceControl->loadDiff(request, [this, request, path, title](const QString &left, const QString &right,
+                                                                     const QList<LineChange> &changes) {
+        DiffContent content;
+        content.title = title;
+        content.path = path;
+        content.leftLabel = request.leftLabel;
+        content.rightLabel = request.rightLabel;
+        content.left = left;
+        content.right = right;
+        m_tabs->showDiff(content, changes);
+    });
+}
+
+QString MainWindow::gitLogName(const QString &root)
+{
+    return QStringLiteral("git: ") + QDir(root).dirName();
 }
 
 void MainWindow::openFileDialog()
@@ -1177,6 +1441,8 @@ void MainWindow::applyTheme(const Theme *theme)
 {
     m_tabs->setTheme(theme);
     m_bottom->setColors(theme->foreground, theme->background, theme->selection, theme->terminal);
+    m_explorer->setGitColors(theme->gitAdded, theme->gitModified, theme->gitDeleted, theme->gitConflicted);
+    m_sourcePanel->setToneColors(theme->gitAdded, theme->gitModified, theme->gitDeleted, theme->gitConflicted);
     setStyleSheet(chromeStyleSheet(*theme));
     // After the stylesheet, so polish does not clear the scroll buttons' fill.
     m_tabs->setTabColors(theme->foreground, theme->gutterForeground, chromeBorder(*theme),
@@ -1188,8 +1454,10 @@ void MainWindow::applyTheme(const Theme *theme)
 
 void MainWindow::refreshStatus()
 {
-    if (m_tabs->isProcesses(m_tabs->currentWidget())) {
-        setWindowTitle(QStringLiteral("Processes - %1").arg(QCoreApplication::applicationName()));
+    refreshGitStatus();
+    if (m_tabs->isToolPage(m_tabs->currentWidget())) {
+        setWindowTitle(QStringLiteral("%1 - %2").arg(m_tabs->titleFor(m_tabs->currentWidget()),
+                                                     QCoreApplication::applicationName()));
         m_actions.hexMode->setChecked(false);
         m_actions.byteColumns->setEnabled(false);
         m_actions.setTextEditingEnabled(false);
@@ -1243,6 +1511,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         m_bottom->closeSessions();
         QMetaObject::invokeMethod(m_runner, [this] { m_runner->stopAll(); }, Qt::QueuedConnection);
         QMetaObject::invokeMethod(m_syntax, [this] { m_syntax->cancelAll(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(m_gitClient, [this] { m_gitClient->cancelAll(); }, Qt::QueuedConnection);
         event->accept();
         return;
     }
@@ -1256,6 +1525,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_bottom->closeSessions();
     QMetaObject::invokeMethod(m_runner, [this] { m_runner->stopAll(); }, Qt::QueuedConnection);
     QMetaObject::invokeMethod(m_syntax, [this] { m_syntax->cancelAll(); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_gitClient, [this] { m_gitClient->cancelAll(); }, Qt::QueuedConnection);
     event->accept();
 }
 
@@ -1437,6 +1707,9 @@ void MainWindow::cancelProcess(const QString &key)
         const QString name = key.mid(8);
         QMetaObject::invokeMethod(m_runner, [runner = m_runner, name] { runner->stop(name); },
                                   Qt::QueuedConnection);
+    } else if (key.startsWith(QLatin1String("git:"))) {
+        QMetaObject::invokeMethod(m_gitClient, [client = m_gitClient, key] { client->cancel(key); },
+                                  Qt::QueuedConnection);
     }
 }
 
@@ -1605,6 +1878,8 @@ void MainWindow::applyProject(const Project &project, bool restart)
     m_tabs->setExternalNavigation(project.externalNavigation);
     m_tabs->setSymbolProject(m_explorer->rootPath(), project.hide);
     m_tabs->setIndent(project.indent);
+    m_sourceControl->setProject(project.git, m_explorer->rootPath().isEmpty() ? groupDirectory : m_explorer->rootPath(),
+                                project.hide);
     const bool syntaxEnabled = project.syntax.enabled && !project.syntax.command.isEmpty();
     const bool syntaxChanged = syntaxEnabled != m_syntaxEnabled || project.syntax.command != m_syntaxCommand
                               || project.syntax.workingDirectory != m_syntaxDirectory;

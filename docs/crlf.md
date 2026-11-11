@@ -2,7 +2,7 @@
 
 `.crlf` is the project file. One file is in use at a time. It is JSON. The parser in `io/ProjectCommands.cpp` is the list of keys that do anything. A key that is not in that list is kept when the file is rewritten and is otherwise ignored.
 
-Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md).
+Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md). Source control is in [git.md](git.md).
 
 ## Which file is in use
 
@@ -24,7 +24,7 @@ A bare array is a list of commands and nothing else.
 ]
 ```
 
-An object is the full file. `commands` is the same list. Every other key below is read only from the object. Putting `indent`, `hide`, `syntax`, or `autocomplete` next to a bare array does not parse: a bare array has no place to put them.
+An object is the full file. `commands` is the same list. Every other key below is read only from the object. Putting `indent`, `hide`, `syntax`, `autocomplete`, or `git` next to a bare array does not parse: a bare array has no place to put them.
 
 ```json
 {
@@ -37,7 +37,8 @@ An object is the full file. `commands` is the same list. Every other key below i
   "externalNavigation": true,
   "syntax": {},
   "autocomplete": {},
-  "unlimitedLog": false
+  "unlimitedLog": false,
+  "git": {}
 }
 ```
 
@@ -53,6 +54,7 @@ An object is the full file. `commands` is the same list. Every other key below i
 | `syntax` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
 | `autocomplete` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
 | `unlimitedLog` | boolean | `false` | [Process logs](#process-logs) |
+| `git` | object: `enabled`, `depth`. Or a boolean | Off | [Source control](#source-control) |
 
 A value of the wrong type is read as if the key were left out. JSON has no comments, so this document is where the file is explained.
 
@@ -266,6 +268,23 @@ The first sets `enabled` and leaves `command` empty. The second has a command an
 
 Set it before reproducing a problem in a noisy process such as the autocomplete session, so the start of the log is still there afterwards.
 
+## Source control
+
+`git` tracks the git repositories in the scoped folder: the Source Control panel, explorer badges, gutter change bars, the Diff tab, and the Git menu. Leaving the key out leaves it off. [git.md](git.md) describes all of it.
+
+| Field | Meaning |
+|---|---|
+| `enabled` | `false` turns it off. An object that omits it is on, unlike `syntax` and `autocomplete` |
+| `depth` | How many folder levels below the scoped folder are searched for repositories. The default is 0: the scoped folder and the repository that contains it. A value below 0 is read as 0 |
+
+`"git": true` is on with `depth` 0. The walk skips folders whose names start with `.`, `node_modules`, and names in `hide`, and it keeps searching inside a repository, so nested repositories are found.
+
+```json
+"git": { "depth": 2 }
+```
+
+With the explorer on `C:/work`, this tracks the repository holding `C:/work` if there is one, and repositories such as `C:/work/api` and `C:/work/clients/web`. A repository at `C:/work/clients/web/vendor` is three levels down and is not tracked.
+
 ## A whole file
 
 One object that uses every key. Paths are relative to the directory that contains `.crlf`.
@@ -321,6 +340,7 @@ One object that uses every key. Paths are relative to the directory that contain
     "enabled": true,
     "command": "./scripts/autocomplete.sh"
   },
-  "unlimitedLog": false
+  "unlimitedLog": false,
+  "git": { "enabled": true, "depth": 1 }
 }
 ```

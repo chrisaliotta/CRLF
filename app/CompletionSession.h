@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/ProcessLaunch.h"
 #include "editor/CompletionItem.h"
 #include "io/CommandVariables.h"
 
@@ -62,7 +63,7 @@ signals:
     void failed(const QString &message);
 
 private:
-    void launch(bool withJob = true);
+    void launch();
     void stopTree();
     void write(const CompletionRequest &request);
     void flushHeldOpens();
@@ -71,13 +72,10 @@ private:
 
     ProcessOrchestrator *m_orchestrator = nullptr;
     QProcess *m_process = nullptr;
-    void *m_job = nullptr;
+    ProcessLaunch m_launch;
     QString m_command;
     QString m_workingDirectory;
     CommandVariables m_variables;
-    QString m_distro;
-    qint64 m_linuxGroup = 0;
-    bool m_groupResolved = false;
     QByteArray m_pending;
     int m_token = 0;
     bool m_stopRequested = false;

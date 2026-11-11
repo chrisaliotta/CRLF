@@ -52,6 +52,19 @@ Actions::Actions(QObject *parent)
 
     foldAll = make(QStringLiteral("&Fold All"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft));
     unfoldAll = make(QStringLiteral("&Unfold All"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketRight));
+
+    sourceControl = make(QStringLiteral("&Source Control"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
+    sourceControl->setCheckable(true);
+    gitRefresh = make(QStringLiteral("&Refresh"), QKeySequence());
+    gitFetchAll = make(QStringLiteral("&Fetch All"), QKeySequence());
+    gitPull = make(QStringLiteral("P&ull"), QKeySequence());
+    gitPush = make(QStringLiteral("&Push"), QKeySequence());
+    gitCommit = make(QStringLiteral("&Commit..."), QKeySequence());
+    gitBranches = make(QStringLiteral("&Branches..."), QKeySequence());
+    gitStash = make(QStringLiteral("&Stash Changes"), QKeySequence());
+    gitPopStash = make(QStringLiteral("P&op Stash"), QKeySequence());
+    gitOpenChanges = make(QStringLiteral("Open &Changes"), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_D));
+    gitFileHistory = make(QStringLiteral("File &History"), QKeySequence());
 }
 
 void Actions::setTextEditingEnabled(bool enabled)

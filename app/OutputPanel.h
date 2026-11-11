@@ -21,6 +21,8 @@ public:
     // The next chunk of output may open the panel. Does not show it now.
     void allowReveal();
     void appendOutput(const QString &name, const QString &text);
+    // Adds to the log without opening the panel.
+    void record(const QString &name, const QString &text);
     QString currentName() const;
     void setState(const QString &name, bool running, int exitCode);
     // Further output stays in the log and does not open the panel.

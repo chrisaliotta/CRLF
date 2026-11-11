@@ -2,6 +2,7 @@
 
 #include "app/FileIconTheme.h"
 #include "app/ProcessOrchestrator.h"
+#include "io/NamePattern.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -18,16 +19,6 @@ namespace {
 bool samePath(const QString &left, const QString &right)
 {
     return QDir::cleanPath(left).compare(QDir::cleanPath(right), Qt::CaseInsensitive) == 0;
-}
-
-bool patternMatches(const QString &pattern, const QString &name)
-{
-    if (!pattern.contains(QLatin1Char('*')) && !pattern.contains(QLatin1Char('?')))
-        return name.compare(pattern, Qt::CaseInsensitive) == 0;
-    const QRegularExpression expression(
-        QRegularExpression::wildcardToRegularExpression(pattern),
-        QRegularExpression::CaseInsensitiveOption);
-    return expression.match(name).hasMatch();
 }
 
 } // namespace
@@ -740,7 +731,7 @@ int ExplorerModel::groupFor(const QString &directory, const QString &fileName) c
         if (!groupAppliesTo(m_groups.at(i), directory))
             continue;
         for (const QString &pattern : m_groups.at(i).files) {
-            if (patternMatches(pattern, fileName))
+            if (namePatternMatches(pattern, fileName))
                 return i;
         }
     }

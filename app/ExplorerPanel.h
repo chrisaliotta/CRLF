@@ -1,7 +1,10 @@
 #pragma once
 
+#include "git/GitTypes.h"
 #include "io/ProjectCommands.h"
 
+#include <QColor>
+#include <QHash>
 #include <QWidget>
 
 class DirectoryFilter;
@@ -39,6 +42,11 @@ public:
     void setHidden(const QStringList &patterns);
     // Expands the folders above `path` and selects that file.
     void reveal(const QString &path);
+    // Source-control letters keyed by lower-case absolute path. A changed
+    // file's name takes its badge's color, and the letter is drawn at the
+    // right edge of the row.
+    void setGitBadges(const QHash<QString, GitBadge> &badges);
+    void setGitColors(const QColor &added, const QColor &modified, const QColor &deleted, const QColor &conflicted);
     // Empty until the user has chosen a folder.
     QString rootPath() const { return m_rootPath; }
 
@@ -103,4 +111,7 @@ private:
     QString m_typedName;
     // File to select once each parent directory has been listed.
     QString m_revealPath;
+    QHash<QString, GitBadge> m_gitBadges;
+    // By GitTone.
+    QColor m_gitColors[4];
 };
