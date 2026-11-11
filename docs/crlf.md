@@ -36,9 +36,27 @@ An object is the full file. `commands` is the same list. Every other key below i
   "navigation": true,
   "externalNavigation": true,
   "syntax": {},
-  "autocomplete": {}
+  "autocomplete": {},
+  "unlimitedLog": false
 }
 ```
+
+| Key | Type | When it is left out | Section |
+|---|---|---|---|
+| `commands` | array of objects | No menu commands | [Commands](#commands) |
+| `groups` | array of objects | No virtual folders | [Virtual folders](#virtual-folders) |
+| `hide` | array of strings | Nothing is hidden | [Hidden names](#hidden-names) |
+| `icons` | object: `theme` string, `rules` array of objects | View > File Icons decides | [Icons](#icons) |
+| `indent` | object: `style`, `size`, `keep`, `types` array of objects | One tab character, four columns wide | [Indent](#indent) |
+| `navigation` | boolean | `true` | [Navigation](#navigation) |
+| `externalNavigation` | boolean | `true` | [Navigation](#navigation) |
+| `syntax` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
+| `autocomplete` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
+| `unlimitedLog` | boolean | `false` | [Process logs](#process-logs) |
+
+A value of the wrong type is read as if the key were left out. JSON has no comments, so this document is where the file is explained.
+
+The `.crlf` at the root of this repository uses every key and is the file CRLF reads when this folder is open. Its `syntax` and `autocomplete` entries carry the right commands and are switched off, because the scripts need `bash` and a C++ toolchain (`clang`, `clangd`) that a Windows checkout does not have.
 
 New Virtual Folder and View > File Icons > Templates write the object form. If the file was a bare array, that write turns it into an object whose `commands` array is the old list. Other keys already in an object are left as they were. A file that is not JSON is left unchanged, and the status bar says "Couldn't write .crlf".
 
@@ -206,6 +224,7 @@ Ctrl+click still opens a definition in the project. A name imported from a packa
 | `enabled` | Must be `true` for the feature to run. An object that omits it is off |
 | `command` | Shell command. Required in practice: an enabled entry with an empty command does not start |
 | `cwd` | Working directory, relative to the `.crlf` directory. The default is that directory |
+| `watch` | Array of file paths, relative to `cwd`. Saving one of them restarts the services |
 
 `"syntax": true` sets `enabled` and leaves `command` empty, so no check runs. The same is true for `autocomplete`. The command has to be in the object, with `enabled` set to `true`.
 
@@ -217,9 +236,12 @@ Ctrl+click still opens a definition in the project. A name imported from a packa
 },
 "autocomplete": {
   "enabled": true,
-  "command": "./scripts/autocomplete.sh"
+  "command": "./scripts/autocomplete.sh",
+  "watch": ["scripts/autocomplete.sh", "scripts/autocomplete.py"]
 }
 ```
+
+Saving the `.crlf` file, or any file listed under `watch` by either service, stops the autocomplete session and starts it again, and runs every open editor's check again. List each script the command runs, including scripts it calls in turn, such as `autocomplete.py` above.
 
 `syntax` reads the editor buffer on standard input and writes a JSON array of spans. `autocomplete` stays running and speaks one JSON object per line. A working directory inside a WSL distro runs the command in that distro, so `./scripts/syntax.sh` has to be a path that distro can execute. The contracts are in [diagnostics.md](diagnostics.md) and [autocomplete.md](autocomplete.md).
 
@@ -233,6 +255,16 @@ These two do not start a process:
 ```
 
 The first sets `enabled` and leaves `command` empty. The second has a command and leaves `enabled` off.
+
+## Process logs
+
+`unlimitedLog` set to `true` keeps every line a process writes to its log on the Processes page. Missing, or `false`, keeps the last 2,000 lines of each log. It is read only from the object form.
+
+```json
+"unlimitedLog": true
+```
+
+Set it before reproducing a problem in a noisy process such as the autocomplete session, so the start of the log is still there afterwards.
 
 ## A whole file
 
@@ -288,6 +320,7 @@ One object that uses every key. Paths are relative to the directory that contain
   "autocomplete": {
     "enabled": true,
     "command": "./scripts/autocomplete.sh"
-  }
+  },
+  "unlimitedLog": false
 }
 ```

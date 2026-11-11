@@ -66,12 +66,15 @@ struct ProjectIcons
 // syntax checker (docs/diagnostics.md) or the autocomplete session
 // (docs/autocomplete.md). `enabled` is false when the .crlf file has no key
 // for it. `command` is expanded when the program starts. `workingDirectory`
-// is absolute: the .crlf directory, or its `cwd`.
+// is absolute: the .crlf directory, or its `cwd`. `watch` holds absolute file
+// paths, resolved against `workingDirectory`; a change to one restarts the
+// services.
 struct ServiceSettings
 {
     bool enabled = false;
     QString command;
     QString workingDirectory;
+    QStringList watch;
 };
 
 // One entry from a project's .crlf file. workingDirectory is absolute:

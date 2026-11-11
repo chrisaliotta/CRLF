@@ -160,6 +160,9 @@ private:
     QString keptIndent(const QTextBlock &block) const;
     // Adds or removes one indent from each line in the selection.
     void indentLines(int direction);
+    // Shift+Home: extends the selection to the line's first non-whitespace
+    // character, or to column 0 when the caret is already there.
+    void selectToLineStart();
 
     FoldingLayout *m_layout = nullptr;
     Gutter *m_gutter = nullptr;

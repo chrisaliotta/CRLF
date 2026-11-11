@@ -4,8 +4,11 @@
 #include "app/TerminalView.h"
 #include "io/WslPath.h"
 
+#include <QApplication>
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -16,6 +19,11 @@ namespace {
 const QString kWsl = QStringLiteral("C:/Windows/System32/wsl.exe");
 const QString kPowerShell = QStringLiteral("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
 
+constexpr int kMarginX = 6;
+constexpr int kMarginY = 4;
+constexpr int kTerminalPaddingX = 12;
+constexpr int kTerminalPaddingY = 8;
+
 } // namespace
 
 TerminalPanel::TerminalPanel(QWidget *parent)
@@ -24,6 +32,15 @@ TerminalPanel::TerminalPanel(QWidget *parent)
     setAttribute(Qt::WA_StyledBackground, true);
 
     m_sessionsCombo = new QComboBox(this);
+    m_sessionsCombo->setEditable(true);
+    m_sessionsCombo->setInsertPolicy(QComboBox::NoInsert);
+    m_sessionsCombo->lineEdit()->setReadOnly(true);
+    m_sessionsCombo->lineEdit()->setCursor(Qt::ArrowCursor);
+    m_sessionsCombo->lineEdit()->installEventFilter(this);
+    m_openList = new QTimer(this);
+    m_openList->setSingleShot(true);
+    m_openList->setInterval(QApplication::doubleClickInterval());
+    connect(m_openList, &QTimer::timeout, m_sessionsCombo, &QComboBox::showPopup);
     auto *newSession = new QToolButton(this);
     newSession->setText(QStringLiteral("+"));
     newSession->setToolTip(QStringLiteral("New terminal"));
@@ -40,7 +57,7 @@ TerminalPanel::TerminalPanel(QWidget *parent)
     m_stack = new QStackedWidget(this);
 
     auto *header = new QHBoxLayout;
-    header->setContentsMargins(6, 4, 6, 4);
+    header->setContentsMargins(kMarginX, kMarginY, kMarginX, kMarginY);
     header->setSpacing(8);
     header->addWidget(m_sessionsCombo, 1);
     header->addWidget(newSession);
@@ -95,6 +112,63 @@ void TerminalPanel::closeSessions()
         session.pty->stop();
 }
 
+bool TerminalPanel::eventFilter(QObject *, QEvent *event)
+{
+    QLineEdit *name = m_sessionsCombo->lineEdit();
+    if (name->isReadOnly()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            m_openList->start();
+            return true;
+        }
+        if (event->type() == QEvent::MouseButtonDblClick) {
+            m_openList->stop();
+            beginRename();
+            return true;
+        }
+        return false;
+    }
+    if (event->type() == QEvent::FocusOut) {
+        endRename(true);
+        return false;
+    }
+    if (event->type() != QEvent::KeyPress)
+        return false;
+    const int key = static_cast<QKeyEvent *>(event)->key();
+    if (key != Qt::Key_Return && key != Qt::Key_Enter && key != Qt::Key_Escape)
+        return false;
+    endRename(key != Qt::Key_Escape);
+    focusCurrent();
+    return true;
+}
+
+QString TerminalPanel::nameFor(int index) const
+{
+    const Session &session = m_sessions.at(index);
+    return session.alias.isEmpty() ? uniqueLabel(session.label, index) : session.alias;
+}
+
+void TerminalPanel::beginRename()
+{
+    QLineEdit *name = m_sessionsCombo->lineEdit();
+    name->setReadOnly(false);
+    name->setCursor(Qt::IBeamCursor);
+    name->setFocus();
+    name->selectAll();
+}
+
+void TerminalPanel::endRename(bool commit)
+{
+    QLineEdit *name = m_sessionsCombo->lineEdit();
+    name->setReadOnly(true);
+    name->setCursor(Qt::ArrowCursor);
+    const int index = m_sessionsCombo->currentIndex();
+    if (commit) {
+        m_sessions[index].alias = name->text().trimmed();
+        m_sessionsCombo->setItemText(index, nameFor(index));
+    }
+    name->setText(m_sessionsCombo->itemText(index));
+}
+
 QString TerminalPanel::transcript() const
 {
     const int index = m_sessionsCombo->currentIndex();
@@ -141,15 +215,16 @@ void TerminalPanel::openSession()
 {
     const Launch launch = launchFor(m_directory ? m_directory() : QString());
     auto *view = new TerminalView;
+    view->setContentsMargins(kTerminalPaddingX, kTerminalPaddingY, kTerminalPaddingX, kTerminalPaddingY);
     view->setColors(m_foreground, m_background, m_selection, m_palette);
     auto *pty = new ConPtySession(this);
     connect(pty, &ConPtySession::readyRead, view, &TerminalView::pushBytes);
     connect(view, &TerminalView::inputGenerated, pty, &ConPtySession::writeInput);
     connect(view, &TerminalView::resized, pty, &ConPtySession::resize);
 
-    m_sessions.append({pty, view});
+    m_sessions.append({pty, view, launch.label, QString()});
     m_stack->addWidget(view);
-    m_sessionsCombo->addItem(uniqueLabel(launch.label, -1));
+    m_sessionsCombo->addItem(nameFor(m_sessions.size() - 1));
     m_sessionsCombo->setCurrentIndex(m_sessionsCombo->count() - 1);
     updateButtons();
 
@@ -169,7 +244,8 @@ void TerminalPanel::restartCurrent()
     session.pty->stop();
     session.view->reset();
     const Launch launch = launchFor(m_directory ? m_directory() : QString());
-    m_sessionsCombo->setItemText(index, uniqueLabel(launch.label, index));
+    session.label = launch.label;
+    m_sessionsCombo->setItemText(index, nameFor(index));
     session.view->syncSize();
     session.pty->start(launch.program, launch.arguments, launch.workingDirectory, session.view->rows(),
                        session.view->cols());

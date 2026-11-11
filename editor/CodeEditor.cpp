@@ -51,6 +51,15 @@ bool looksLikeTypeName(const QString &name)
     return false;
 }
 
+// The number of spaces and tabs at the start of `text`.
+int leadingWhitespace(const QString &text)
+{
+    int length = 0;
+    while (length < text.size() && (text.at(length) == QLatin1Char(' ') || text.at(length) == QLatin1Char('\t')))
+        ++length;
+    return length;
+}
+
 enum class Attribute { None, Class, Id };
 
 // What the quoted string holding `column` names, on this line: a `class` or
@@ -735,11 +744,7 @@ QString CodeEditor::indentUnit() const
 
 QString CodeEditor::indentUnitAt(const QTextBlock &origin) const
 {
-    const QString originText = origin.text();
-    int originLead = 0;
-    while (originLead < originText.size()
-           && (originText.at(originLead) == QLatin1Char(' ') || originText.at(originLead) == QLatin1Char('\t')))
-        ++originLead;
+    const int originLead = leadingWhitespace(origin.text());
 
     bool tabs = false;
     bool sawIndent = false;
@@ -750,13 +755,8 @@ QString CodeEditor::indentUnitAt(const QTextBlock &origin) const
     for (QTextBlock block = originLead == 0 ? origin.previous() : origin; block.isValid();
          block = block.previous()) {
         const QString text = block.text();
-        int length = 0;
-        bool tab = false;
-        while (length < text.size()
-               && (text.at(length) == QLatin1Char(' ') || text.at(length) == QLatin1Char('\t'))) {
-            tab = tab || text.at(length) == QLatin1Char('\t');
-            ++length;
-        }
+        const int length = leadingWhitespace(text);
+        const bool tab = text.left(length).contains(QLatin1Char('\t'));
         if (length == 0) {
             if (!text.trimmed().isEmpty())
                 break;
@@ -784,11 +784,7 @@ QString CodeEditor::keptIndent(const QTextBlock &block) const
     if (!sample.isValid())
         return {};
     const QString text = sample.text();
-    int length = 0;
-    while (length < text.size()
-           && (text.at(length) == QLatin1Char(' ') || text.at(length) == QLatin1Char('\t')))
-        ++length;
-    return text.left(length);
+    return text.left(leadingWhitespace(text));
 }
 
 void CodeEditor::indentLines(int direction)
@@ -836,6 +832,15 @@ void CodeEditor::indentLines(int direction)
     cursor.endEditBlock();
 }
 
+void CodeEditor::selectToLineStart()
+{
+    QTextCursor cursor = textCursor();
+    const int indent = leadingWhitespace(cursor.block().text());
+    const int column = cursor.positionInBlock() == indent ? 0 : indent;
+    cursor.setPosition(cursor.block().position() + column, QTextCursor::KeepAnchor);
+    setTextCursor(cursor);
+}
+
 void CodeEditor::keyPressEvent(QKeyEvent *event)
 {
     if (m_signature != nullptr && m_signature->isVisible() && event->modifiers() == Qt::ControlModifier
@@ -876,6 +881,10 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
     }
     if ((tab && textCursor().hasSelection()) || backtab) {
         indentLines(tab ? 1 : -1);
+        return;
+    }
+    if (event->key() == Qt::Key_Home && (event->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier) {
+        selectToLineStart();
         return;
     }
     const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)

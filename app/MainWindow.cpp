@@ -169,6 +169,7 @@ ProcessesPanel QHeaderView::section { background: %1; color: %2; padding: 4px 8p
 ProcessesPanel QPlainTextEdit { background: %7; color: %2; border: none; }
 OutputPanel QComboBox, TerminalPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
 OutputPanel QComboBox QAbstractItemView, TerminalPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
+TerminalPanel QComboBox QLineEdit { background: transparent; border: none; padding: 0; }
 ExplorerPanel { background: %1; }
 #explorerTitle { color: %2; font-weight: bold; padding: 6px 12px; }
 #explorerLoading { color: %2; }
@@ -471,7 +472,10 @@ MainWindow::MainWindow(QWidget *parent)
             [this](const QString &path, quintptr editorId, int line, int column) {
                 m_tabs->goToDiagnostic(path, editorId, line, column);
             });
-    m_commandWatcher = new QFileSystemWatcher(this);
+    m_projectWatcher = new QFileSystemWatcher(this);
+    m_projectChanged = new QTimer(this);
+    m_projectChanged->setSingleShot(true);
+    m_projectChanged->setInterval(200);
     m_explorer->hide();
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
@@ -975,11 +979,8 @@ void MainWindow::connectActions()
         }
         refreshCompletionStatus();
     });
-    connect(m_commandWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString &path) {
-        if (QFileInfo::exists(path))
-            m_commandWatcher->addPath(path);
-        reloadCommands();
-    });
+    connect(m_projectWatcher, &QFileSystemWatcher::fileChanged, m_projectChanged, qOverload<>(&QTimer::start));
+    connect(m_projectChanged, &QTimer::timeout, this, [this] { reloadCommands(true); });
     connect(m_runner, &CommandRunner::outputReceived, this,
             [this](const QString &name, const QString &text) {
                 if (m_editorCommands.contains(name) && m_output->currentName() != name)
@@ -1559,7 +1560,7 @@ void MainWindow::applySyntax(quintptr editorId, int revision, const QList<Diagno
     m_bottom->problems()->setFile(key, editor->filePath(), m_tabs->titleFor(editor), editorId, spans);
 }
 
-void MainWindow::reloadCommands()
+void MainWindow::reloadCommands(bool restart)
 {
     QString start = m_explorer->rootPath();
     if (start.isEmpty() && m_tabs->documentCount() > 0)
@@ -1568,23 +1569,23 @@ void MainWindow::reloadCommands()
     const int generation = ++m_commandGeneration;
     const QString owner = start.isEmpty() ? QString() : start;
     m_orchestrator->submit(QStringLiteral("project"), QStringLiteral("Project"), owner, 0,
-                           owner.isEmpty() ? QStringLiteral(".crlf") : owner, [this, start, generation] {
+                           owner.isEmpty() ? QStringLiteral(".crlf") : owner, [this, start, generation, restart] {
         const Project project = projectFor(start);
-        QMetaObject::invokeMethod(this, [this, project, generation] {
+        QMetaObject::invokeMethod(this, [this, project, generation, restart] {
             if (generation != m_commandGeneration)
                 return;
-            applyProject(project);
+            applyProject(project, restart);
         }, Qt::QueuedConnection);
     });
 }
 
-void MainWindow::applyProject(const Project &project)
+void MainWindow::applyProject(const Project &project, bool restart)
 {
-    if (!m_projectFile.isEmpty())
-        m_commandWatcher->removePath(m_projectFile);
+    if (!m_projectWatcher->files().isEmpty())
+        m_projectWatcher->removePaths(m_projectWatcher->files());
     m_projectFile = project.filePath;
     if (!m_projectFile.isEmpty())
-        m_commandWatcher->addPath(m_projectFile);
+        m_projectWatcher->addPaths(QStringList{m_projectFile} + project.syntax.watch + project.autocomplete.watch);
 
     QMetaObject::invokeMethod(m_runner, [runner = m_runner, commands = project.commands] {
         runner->setProject(commands);
@@ -1630,8 +1631,10 @@ void MainWindow::applyProject(const Project &project)
         m_tabs->setCompletionEnabled(m_autocompleteEnabled);
     if (!m_autocompleteEnabled)
         QMetaObject::invokeMethod(m_completion, [this] { m_completion->stop(); }, Qt::QueuedConnection);
-    else if (autocompleteChanged)
+    else if (autocompleteChanged && !restart)
         startCompletion(false);
+    if (restart)
+        restartServices();
     refreshCompletionStatus();
     m_commandTexts.clear();
     for (const ProjectCommand &command : project.commands)

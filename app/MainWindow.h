@@ -31,6 +31,7 @@ class QLabel;
 class QMenu;
 class QMenuBar;
 class QThread;
+class QTimer;
 class TabWorkspace;
 class TitleBar;
 
@@ -76,9 +77,10 @@ private:
     void persistSession();
     // Reloads the .crlf discovered from the explorer root, or from the active
     // file when no folder is scoped, and places each command on the menu
-    // path it names.
-    void reloadCommands();
-    void applyProject(const Project &project);
+    // path it names. `restart` restarts the services once the file is read,
+    // because the .crlf or a script it watches changed.
+    void reloadCommands(bool restart = false);
+    void applyProject(const Project &project, bool restart);
     void finishStartup(const QStringList &paths);
     CommandVariables commandVariables() const;
     CommandVariables variablesFor(QWidget *page) const;
@@ -167,7 +169,10 @@ private:
     QList<ProcessRecord> m_liveProcesses;
     QList<ProcessRecord> m_recentProcesses;
     QHash<quintptr, QString> m_diagnosticKeys;
-    QFileSystemWatcher *m_commandWatcher = nullptr;
+    // The .crlf and every file its services list under `watch`. One save
+    // fires several changes, so they are gathered by m_projectChanged.
+    QFileSystemWatcher *m_projectWatcher = nullptr;
+    QTimer *m_projectChanged = nullptr;
     QString m_projectFile;
     int m_commandGeneration = 0;
     QString m_scopedRoot;

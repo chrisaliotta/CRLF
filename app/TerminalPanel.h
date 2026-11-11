@@ -10,10 +10,13 @@
 class ConPtySession;
 class QComboBox;
 class QStackedWidget;
+class QTimer;
 class QToolButton;
 class TerminalView;
 
 // Several shells. Each keeps running while another is on screen.
+// Double-clicking the session name renames it; an empty name restores the
+// shell's own label.
 class TerminalPanel : public QWidget
 {
     Q_OBJECT
@@ -31,11 +34,18 @@ public:
     QString transcript() const;
     int sessionCount() const { return m_sessions.size(); }
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
+    // `label` names the shell that was launched. `alias` is the name the
+    // user gave it, and replaces the label while it is not empty.
     struct Session
     {
         ConPtySession *pty = nullptr;
         TerminalView *view = nullptr;
+        QString label;
+        QString alias;
     };
 
     struct Launch
@@ -48,6 +58,10 @@ private:
 
     Launch launchFor(const QString &directory) const;
     QString uniqueLabel(const QString &base, int ignoreIndex) const;
+    QString nameFor(int index) const;
+    void beginRename();
+    // `commit` keeps the typed name; otherwise the name shown before is restored.
+    void endRename(bool commit);
     void openSession();
     void restartCurrent();
     void closeCurrent();
@@ -61,6 +75,8 @@ private:
     QList<QColor> m_palette;
     QList<Session> m_sessions;
     QComboBox *m_sessionsCombo = nullptr;
+    // A click on the name opens the list once a double-click can no longer follow.
+    QTimer *m_openList = nullptr;
     QStackedWidget *m_stack = nullptr;
     QToolButton *m_restart = nullptr;
     QToolButton *m_closeSession = nullptr;

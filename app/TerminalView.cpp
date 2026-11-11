@@ -240,10 +240,11 @@ void TerminalView::reset()
 
 void TerminalView::syncSize()
 {
-    if (width() < m_cellWidth || height() < m_cellHeight)
+    const QRect grid = contentsRect();
+    if (grid.width() < m_cellWidth || grid.height() < m_cellHeight)
         return;
-    const int cols = qMax(1, width() / m_cellWidth);
-    const int rows = qMax(1, height() / m_cellHeight);
+    const int cols = qMax(1, grid.width() / m_cellWidth);
+    const int rows = qMax(1, grid.height() / m_cellHeight);
     if (rows == m_rows && cols == m_cols)
         return;
     m_rows = rows;
@@ -280,6 +281,7 @@ void TerminalView::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
     painter.fillRect(rect(), m_background);
+    painter.translate(contentsRect().topLeft());
     const int first = firstLine();
     const int cursorLine = m_scrollback.size() + m_cursorRow;
     for (int row = 0; row < m_rows; ++row) {
@@ -434,7 +436,8 @@ QVariant TerminalView::inputMethodQuery(Qt::InputMethodQuery query) const
         return true;
     if (query == Qt::ImCursorRectangle) {
         const int row = m_scrollback.size() + m_cursorRow - firstLine();
-        return QRect(m_cursorCol * m_cellWidth, row * m_cellHeight, m_cellWidth, m_cellHeight);
+        return QRect(m_cursorCol * m_cellWidth, row * m_cellHeight, m_cellWidth, m_cellHeight)
+            .translated(contentsRect().topLeft());
     }
     return QWidget::inputMethodQuery(query);
 }
@@ -636,8 +639,9 @@ bool TerminalView::cellAt(int line, int col, VTermScreenCell *cell) const
 
 TerminalView::Point TerminalView::pointAt(const QPoint &pos) const
 {
-    const int line = qBound(0, firstLine() + pos.y() / m_cellHeight, m_scrollback.size() + m_rows - 1);
-    const int col = qBound(0, pos.x() / m_cellWidth, m_cols - 1);
+    const QPoint cell = pos - contentsRect().topLeft();
+    const int line = qBound(0, firstLine() + cell.y() / m_cellHeight, m_scrollback.size() + m_rows - 1);
+    const int col = qBound(0, cell.x() / m_cellWidth, m_cols - 1);
     return {line, col};
 }
 

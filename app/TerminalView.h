@@ -10,7 +10,8 @@
 class QTimer;
 
 // A cell grid for one shell. Bytes from the pseudoconsole are VT; keys go back
-// out as inputGenerated.
+// out as inputGenerated. The grid fills contentsRect(), so contents margins
+// pad it with the background color.
 class TerminalView : public QWidget
 {
     Q_OBJECT

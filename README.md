@@ -14,6 +14,7 @@ custom menu commands that will run scripts or shell commands.
 - Save and Save As. Scoping a folder sets the directory Save As suggests; a successful save remembers that file's directory for the next one
 - Find and replace along the top of the window, with wrap-around, match highlighting, and Find All results that jump to each match. Go to Line is Ctrl+G
 - Tab follows the indentation already used above the cursor. When no line shows one, `.crlf` sets spaces or a tab character, the width, and a different rule per file extension. Shift+Tab removes one level. `indent.keep` copies the prior line's own indentation when you press Enter
+- Shift+Home selects back to the line's first non-whitespace character. Pressing it again extends the selection to column 0, and a third press returns to the indentation
 - Word wrap, and zoom in, out, or reset (Ctrl+0)
 - Ctrl+click a type, function, method, component, or variable to jump to its definition. Ctrl+hover underlines a name that can be opened. `"navigation": false` in `.crlf` turns the links off. Opening a definition in another file selects that file in the explorer
 - Stylesheet classes, ids, custom properties, Sass variables, mixins, and keyframes link to their definitions, including a class named in a `class` or `className` attribute. A package import, or a stylesheet name the project does not define, is drawn in a different color and opened from `node_modules` when clicked. `"externalNavigation": false` in `.crlf` turns those external links off
@@ -78,6 +79,8 @@ A `.crlf` file in the explorer folder, or in a parent folder up to the drive or 
 - `key` is an optional function key from F1 through F35, with no modifiers. The first command to claim a key keeps it
 - The command string may use `${file}`, `${fileName}`, `${fileBase}`, `${fileExt}`, `${fileDir}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`, `${buffer}`, `${terminal}`, `${language}`, `${project}`, `${folder}`, and `${cwd}`, filled from the focused document when the command starts. `${buffer}` and `${terminal}` are paths to temporary UTF-8 files: the editor's current text, and the current terminal's plain text. [docs/commands.md](docs/commands.md) lists each name
 - Output opens in a panel at the bottom of the window, one log per command. Clear wipes the log that is showing. Stop is shown only while that command's process is still running, and it kills the process tree. Closing the panel hides it and leaves the process running
+- Terminal sessions are listed in the box above the terminal. Double-click a session's name to rename it; Enter keeps the name, Escape cancels, and an empty name restores the shell's own label
+- Saving the `.crlf`, or a script listed under a service's `watch` key, restarts autocomplete and runs the syntax checks again. See [docs/crlf.md](docs/crlf.md)
 - `"syntax"` in the same file runs an external script against the editor buffer and marks what it reports. The Problems page lists those marks by directory and file. [docs/commands.md](docs/commands.md) describes the key. `scripts/syntax.sh` is the Linux script that drives `clang`, `clang++`, C# when `csc` or the .NET SDK is installed, and JavaScript when `node` is installed
 
 ### Appearance

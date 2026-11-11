@@ -134,6 +134,8 @@ void readService(ServiceSettings &service, const QJsonValue &value, const QStrin
     if (!cwd.isEmpty())
         service.workingDirectory = QDir(directory).filePath(cwd);
     service.workingDirectory = QDir(service.workingDirectory).absolutePath();
+    for (const QJsonValue &path : obj.value(QLatin1String("watch")).toArray())
+        service.watch.append(QDir(service.workingDirectory).absoluteFilePath(path.toString()));
 }
 
 void readIndent(IndentSettings &indent, const QJsonValue &value)

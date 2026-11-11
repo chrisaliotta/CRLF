@@ -1,0 +1,40 @@
+{
+  "commands": [
+    {
+      "name": "Build Installer",
+      "command": "scripts\\build.cmd",
+      "menu": "Tools/Build",
+      "key": "F7"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Project",
+      "icon": "config",
+      "files": [".crlf", ".gitignore", "CMakeLists.txt", "LICENSE"]
+    }
+  ],
+  "hide": ["build", "*.user"],
+  "icons": {
+    "rules": []
+  },
+  "indent": {
+    "style": "spaces",
+    "size": 4,
+    "keep": true,
+    "types": [
+      { "extensions": ["json", "crlf", "md"], "size": 2 }
+    ]
+  },
+  "navigation": true,
+  "externalNavigation": false,
+  "syntax": {
+    "enabled": false,
+    "command": "./scripts/syntax.sh \"${file}\""
+  },
+  "autocomplete": {
+    "enabled": false,
+    "command": "./scripts/autocomplete.sh"
+  },
+  "unlimitedLog": false
+}
