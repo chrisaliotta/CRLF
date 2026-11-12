@@ -10,9 +10,15 @@ and its own state. See docs/agent.md.
     python crlf_agent.py --provider anthropic --model <model>
     python crlf_agent.py --provider ollama --model qwen3-coder
 
-The API key is read from the provider's environment variable
-(OPENAI_API_KEY, ANTHROPIC_API_KEY, XAI_API_KEY), or the one --api-key-env
-names. Standard output is the protocol; the log is standard error.
+The API key is read from the file --api-key-file names, or else from the
+provider's environment variable (OPENAI_API_KEY, ANTHROPIC_API_KEY,
+XAI_API_KEY), or the one --api-key-env names. Standard output is the
+protocol; the log is standard error.
+
+--model, --max-tokens, --reasoning-effort, and --thinking are where a
+session starts. The session offers the provider's models and the settings
+the chosen model takes as ACP config options, and the client changes them
+with session/set_config_option.
 """
 
 import argparse
@@ -139,14 +145,50 @@ def system_prompt(cwd, crlf_client):
 
 
 class Session:
-    def __init__(self, agent, cwd):
+    def __init__(self, agent, cwd, adapter, models, settings):
         self.agent = agent
         self.id = "session-" + uuid.uuid4().hex[:12]
         self.cwd = cwd
+        self.adapter = adapter
+        # [(id, display name)], as the provider listed them.
+        self.models = models
+        # {"model": id, option id: value}. The command line's values start
+        # it; a setting it does not name takes the adapter's default.
+        self.settings = settings
         self.history = []
         self.cancel = threading.Event()
         self.tools = Tools(self, agent.crlf_client)
         self.tool_call = None
+
+    def config_options(self):
+        """The ACP config options for the model in use, each with its
+        current value. A value the list does not have, such as a model or a
+        token count from the command line, is added to it."""
+        model = {"id": "model", "name": "Model", "category": "model", "type": "select",
+                 "description": "The model that answers",
+                 "options": [{"value": id, "name": name} for id, name in self.models]}
+        options = [model] + self.adapter.config_options(self.settings["model"])
+        defaults = self.adapter.defaults(self.settings["model"])
+        for option in options:
+            current = self.settings.setdefault(option["id"], defaults.get(option["id"]))
+            if all(choice["value"] != current for choice in option["options"]):
+                option["options"].append({"value": current, "name": current})
+            option["currentValue"] = current
+        return options
+
+    def set_config_option(self, id, value):
+        """Returns the options after the change. The value comes from the
+        client, so it is checked against what was offered."""
+        offered = {option["id"]: option for option in self.config_options()}
+        if id not in offered or all(choice["value"] != value for choice in offered[id]["options"]):
+            raise RpcError(-32602, "%r is not a value of %s" % (value, id))
+        self.settings[id] = value
+        options = self.config_options()
+        if id == "model":
+            # Another model can take other settings, so the client is told the whole list again.
+            status("ready: %s" % value)
+            self.update({"sessionUpdate": "config_option_update", "configOptions": options})
+        return options
 
     # The context tools.py calls.
 
@@ -173,14 +215,16 @@ class Session:
         system = system_prompt(self.cwd, self.agent.crlf_client)
         for _ in range(MAX_STEPS):
             try:
-                reply = self.agent.model.stream(
-                    system, self.history, self.tools.schemas(),
+                # The settings are read for each reply, so a change made during a turn applies to the next one.
+                reply = self.adapter.stream(
+                    system, self.history, self.tools.schemas(), dict(self.settings),
                     lambda text: self.say("agent_message_chunk", text),
                     lambda text: self.say("agent_thought_chunk", text),
                     self.cancel)
             except providers.Cancelled:
                 return "cancelled"
-            self.history.append({"role": "assistant", "content": reply.text, "tool_calls": reply.tool_calls})
+            self.history.append({"role": "assistant", "content": reply.text, "tool_calls": reply.tool_calls,
+                                 "provider_state": reply.provider_state})
             if not reply.tool_calls:
                 return "max_tokens" if reply.stop == "max_tokens" else "end_turn"
             for call in reply.tool_calls:
@@ -221,7 +265,6 @@ class Agent:
         self.options = options
         self.connection = Connection()
         self.sessions = {}
-        self.model = None
         self.crlf_client = False
 
     def initialize(self, params):
@@ -231,18 +274,28 @@ class Agent:
             "agentCapabilities": {"loadSession": False,
                                   "promptCapabilities": {"image": False, "audio": False, "embeddedContext": True}},
             "authMethods": [],
-            "agentInfo": {"name": "crlf-agent", "title": "%s (%s)" % (self.options.model, self.options.provider),
-                          "version": "1.0.0"},
+            "agentInfo": {"name": "crlf-agent", "title": "CRLF agent (%s)" % self.options.provider,
+                          "version": "1.1.0"},
         }
 
     def new_session(self, params):
-        if self.model is None:
-            self.model = providers.create(self.options.provider, self.options.model, self.options.base_url,
-                                          self.options.api_key_env, self.options.max_tokens)
-        session = Session(self, params["cwd"])
+        # Read the key for every session, so a rotated key file is used without restarting the agent.
+        adapter = providers.create(self.options.provider, self.options.base_url,
+                                   api_key_env=self.options.api_key_env, api_key_file=self.options.api_key_file)
+        try:
+            models = adapter.models()
+        except providers.ProviderError as error:
+            log("Could not list the models, so only %s is offered: %s" % (self.options.model, error))
+            models = [(self.options.model, self.options.model)]
+        settings = {"model": self.options.model}
+        for id, value in (("max_tokens", self.options.max_tokens), ("reasoning_effort", self.options.reasoning_effort),
+                          ("thinking", self.options.thinking)):
+            if value is not None:
+                settings[id] = str(value)
+        session = Session(self, params["cwd"], adapter, models, settings)
         self.sessions[session.id] = session
-        status("ready: %s" % self.model.label())
-        return {"sessionId": session.id}
+        status("ready: %s" % self.options.model)
+        return {"sessionId": session.id, "configOptions": session.config_options()}
 
     def prompt(self, id, params):
         session = self.sessions[params["sessionId"]]
@@ -275,12 +328,18 @@ class Agent:
                 self.connection.respond(id, {})
             elif method == "session/new":
                 self.connection.respond(id, self.new_session(params))
+            elif method == "session/set_config_option":
+                session = self.sessions[params["sessionId"]]
+                self.connection.respond(id, {"configOptions": session.set_config_option(params["configId"],
+                                                                                        params["value"])})
             elif method == "session/prompt":
                 threading.Thread(target=self.prompt, args=(id, params), daemon=True).start()
             else:
                 self.connection.fail(id, -32601, "Method not found: %s" % method)
         except providers.ProviderError as error:
             self.connection.fail(id, -32603, str(error))
+        except RpcError as error:
+            self.connection.fail(id, error.code, str(error))
 
     def run(self):
         for raw in sys.stdin.buffer:
@@ -292,10 +351,15 @@ class Agent:
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--provider", required=True, choices=sorted(providers.PRESETS))
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", required=True, help="The model a session starts with. The client can pick another")
     parser.add_argument("--base-url", help="Server address, for openai-compatible or another port")
     parser.add_argument("--api-key-env", help="Environment variable that holds the API key")
-    parser.add_argument("--max-tokens", type=int, help="Longest reply the model may write")
+    parser.add_argument("--api-key-file", help="File that holds the API key, relative to the working directory. "
+                                               "It is used instead of the environment variable")
+    parser.add_argument("--max-tokens", type=int, help="Longest reply the model may write, to start with")
+    parser.add_argument("--reasoning-effort", help="Reasoning level to start with, for OpenAI and xAI: "
+                                                   "minimal, low, medium, or high")
+    parser.add_argument("--thinking", help="Thinking to start with, for Anthropic: off, 4k, 16k, 32k, or adaptive")
     Agent(parser.parse_args()).run()
 
 

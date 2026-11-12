@@ -15,6 +15,7 @@
 namespace {
 
 constexpr auto kAgentSetting = "agent";
+constexpr auto kShowThinkingSetting = "agentShowThinking";
 
 bool sameAgent(const AgentSettings &a, const AgentSettings &b)
 {
@@ -53,8 +54,15 @@ AgentController::AgentController(AgentSession *session, AgentHost *host, AgentPa
     connect(m_session, &AgentSession::ready, this, [this](const QString &name) {
         m_ready = true;
         m_panel->setStatus(QStringLiteral("%1 is ready").arg(name));
-        if (!m_queued.isEmpty())
-            send(m_queued.takeFirst());
+        m_restored.clear();
+        m_restoring = true;
+        restoreNextOption();
+    }, Qt::QueuedConnection);
+    connect(m_session, &AgentSession::configOptionsChanged, this, [this](const QList<AgentConfigOption> &options) {
+        m_options = options;
+        m_panel->setConfigOptions(options);
+        if (m_restoring)
+            restoreNextOption();
     }, Qt::QueuedConnection);
     connect(m_session, &AgentSession::updated, m_panel, &AgentPanel::applyUpdate, Qt::QueuedConnection);
     connect(m_session, &AgentSession::requested, m_host, &AgentHost::handle, Qt::QueuedConnection);
@@ -67,9 +75,11 @@ AgentController::AgentController(AgentSession *session, AgentHost *host, AgentPa
         m_started = false;
         m_ready = false;
         m_busy = false;
+        m_restoring = false;
         m_queued.clear();
         m_panel->setBusy(false);
         m_panel->dismissAll();
+        m_panel->setConfigOptions({});
         m_panel->setStatus(QStringLiteral("%1 exited. The next message starts it again.").arg(m_running.name));
     }, Qt::QueuedConnection);
     connect(m_session, &AgentSession::terminalOutput, m_output, &OutputPanel::record, Qt::QueuedConnection);
@@ -84,6 +94,13 @@ AgentController::AgentController(AgentSession *session, AgentHost *host, AgentPa
         restart();
     });
     connect(m_panel, &AgentPanel::restartRequested, this, &AgentController::restart);
+    connect(m_panel, &AgentPanel::configOptionChosen, this, [this](const QString &id, const QVariant &value) {
+        QSettings().setValue(optionSetting(id), value);
+        setOption(id, value);
+    });
+    m_panel->setShowThinking(QSettings().value(kShowThinkingSetting, true).toBool());
+    connect(m_panel, &AgentPanel::showThinkingToggled, this,
+            [](bool show) { QSettings().setValue(kShowThinkingSetting, show); });
     connect(m_panel, &AgentPanel::promptSubmitted, this, &AgentController::submit);
     connect(m_panel, &AgentPanel::cancelRequested, this, &AgentController::cancelTurn);
     connect(m_panel, &AgentPanel::locationActivated, this, [this](const QString &path, int line) {
@@ -142,9 +159,11 @@ void AgentController::stop()
     m_started = false;
     m_ready = false;
     m_busy = false;
+    m_restoring = false;
     m_queued.clear();
     m_panel->setBusy(false);
     m_panel->dismissAll();
+    m_panel->setConfigOptions({});
     QMetaObject::invokeMethod(m_session, [session = m_session] { session->stop(); }, Qt::QueuedConnection);
 }
 
@@ -168,9 +187,11 @@ void AgentController::start()
     m_running = *current();
     m_started = true;
     m_ready = false;
+    m_restoring = false;
     m_busy = !m_queued.isEmpty();
     m_panel->setBusy(m_busy);
     m_panel->dismissAll();
+    m_panel->setConfigOptions({});
     m_host->begin(m_running.process.workingDirectory, m_running.permissions);
     m_panel->setStatus(QStringLiteral("Starting %1\u2026").arg(m_running.name));
     const AgentLaunch launch{m_running.name, m_running.process.command, m_running.process.workingDirectory,
@@ -220,7 +241,8 @@ void AgentController::send(const AgentPrompt &prompt)
 void AgentController::cancelTurn()
 {
     m_panel->dismissAll();
-    if (!m_ready) {
+    // Nothing has been sent yet while the agent starts or takes its settings.
+    if (!m_ready || m_restoring) {
         m_queued.clear();
         m_busy = false;
         m_panel->setBusy(false);
@@ -240,6 +262,42 @@ void AgentController::ended(const QString &stopReason)
         m_panel->addNote(note);
     if (!m_queued.isEmpty())
         send(m_queued.takeFirst());
+}
+
+void AgentController::setOption(const QString &id, const QVariant &value)
+{
+    QMetaObject::invokeMethod(m_session, [session = m_session, id, value] { session->setConfigOption(id, value); },
+                              Qt::QueuedConnection);
+}
+
+void AgentController::restoreNextOption()
+{
+    for (const AgentConfigOption &option : std::as_const(m_options)) {
+        if (m_restored.contains(option.id))
+            continue;
+        const QVariant stored = QSettings().value(optionSetting(option.id));
+        if (!stored.isValid())
+            continue;
+        // The settings store hands a bool back as text.
+        const bool boolean = option.type == QLatin1String("boolean");
+        const QVariant wanted = boolean ? QVariant(stored.toBool()) : QVariant(stored.toString());
+        bool offered = boolean;
+        for (const AgentConfigChoice &choice : option.choices)
+            offered = offered || choice.value == wanted.toString();
+        if (!offered || wanted == option.currentValue)
+            continue;
+        m_restored.insert(option.id);
+        setOption(option.id, wanted);
+        return;
+    }
+    m_restoring = false;
+    if (!m_queued.isEmpty())
+        send(m_queued.takeFirst());
+}
+
+QString AgentController::optionSetting(const QString &id) const
+{
+    return QStringLiteral("agentOptions/%1/%2").arg(m_running.name, id);
 }
 
 void AgentController::watchCurrent()

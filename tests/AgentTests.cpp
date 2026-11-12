@@ -106,6 +106,37 @@ private slots:
 
         QCOMPARE(readUpdate(json(R"({"sessionUpdate":"available_commands_update"})")).kind, AgentUpdateKind::Ignored);
     }
+
+    // The panel draws one control per option from this list and knows
+    // nothing else about it: a flat select, a grouped select flattened in
+    // order, and a boolean. A type the editor cannot draw is left out, and
+    // the agent's own update carries the same list.
+    void readsConfigOptions()
+    {
+        const QJsonObject update = json(R"({"sessionUpdate":"config_option_update","configOptions":[
+            {"id":"model","name":"Model","category":"model","type":"select","currentValue":"b",
+             "options":[{"value":"a","name":"A","description":"fast"},{"value":"b","name":"B"}]},
+            {"id":"effort","name":"Effort","type":"select","currentValue":"high",
+             "options":[{"group":"g1","name":"Usual","options":[{"value":"low","name":"Low"}]},
+                        {"group":"g2","name":"More","options":[{"value":"high","name":"High"}]}]},
+            {"id":"brave","name":"Brave","type":"boolean","currentValue":true},
+            {"id":"slider","name":"Slider","type":"range","currentValue":3}]})");
+        const AgentUpdate read = readUpdate(update);
+        QCOMPARE(read.kind, AgentUpdateKind::ConfigOptions);
+        const QList<AgentConfigOption> options = read.configOptions;
+        QCOMPARE(options.size(), 3);
+        QCOMPARE(options.at(0).id, QStringLiteral("model"));
+        QCOMPARE(options.at(0).category, QStringLiteral("model"));
+        QCOMPARE(options.at(0).currentValue.toString(), QStringLiteral("b"));
+        QCOMPARE(options.at(0).choices.size(), 2);
+        QCOMPARE(options.at(0).choices.at(0).description, QStringLiteral("fast"));
+        QCOMPARE(options.at(1).choices.size(), 2);
+        QCOMPARE(options.at(1).choices.at(1).value, QStringLiteral("high"));
+        QCOMPARE(options.at(1).choices.at(1).group, QStringLiteral("More"));
+        QCOMPARE(options.at(2).type, QStringLiteral("boolean"));
+        QCOMPARE(options.at(2).currentValue.typeId(), int(QMetaType::Bool));
+        QVERIFY(options.at(2).currentValue.toBool());
+    }
 };
 
 QTEST_GUILESS_MAIN(AgentTests)

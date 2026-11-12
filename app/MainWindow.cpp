@@ -212,7 +212,8 @@ AgentPanel QTextBrowser { background: %7; color: %2; border: none; padding: 6px 
 AgentPanel QPlainTextEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px; }
 AgentPanel QToolButton { border: none; border-radius: 4px; background: transparent; color: %2; padding: 2px 6px; }
 AgentPanel QToolButton:hover { background: %4; }
-AgentPanel QToolButton:pressed { background: %5; }
+AgentPanel QToolButton:pressed, AgentPanel QToolButton:checked { background: %5; }
+#agentOptionLabel { color: %9; }
 AgentPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
 AgentPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 AgentPanel QCheckBox { color: %2; }

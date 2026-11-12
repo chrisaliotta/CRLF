@@ -56,7 +56,9 @@ File > Open Folder (Ctrl+Shift+O), or View > Explorer (Ctrl+B). The tree is scop
 
 View > Agent (Ctrl+Shift+A) opens a chat with an AI coding agent. The editor holds none of the AI: an agent is a program listed under `agents` in `.crlf`, and CRLF speaks the [Agent Client Protocol](https://agentclientprotocol.com) with it. See [docs/agent.md](docs/agent.md).
 
-- `scripts/agent/crlf_agent.py` ships beside the program and talks to OpenAI, Anthropic, xAI Grok, Ollama, LM Studio, or any OpenAI-compatible server. The key comes from the provider's environment variable. Claude Code behind its ACP adapter, and other ACP agents, work the same way
+- `scripts/agent/crlf_agent.py` ships beside the program and talks to OpenAI, Anthropic, xAI Grok, Ollama, LM Studio, or any OpenAI-compatible server. The key comes from a key file (`--api-key-file`) or the provider's environment variable. Claude Code behind its ACP adapter, and other ACP agents, work the same way
+- The panel shows whatever settings the agent offers. The shipped agent offers the provider's models, reasoning level, verbosity, Anthropic's thinking budget, and the reply size. Each choice is remembered per agent
+- Thinking, in the panel's header, shows the model's thinking in full as it streams: Claude's extended thinking, and the reasoning summary of an OpenAI reasoning model
 - The agent reads files through the editor, so it sees unsaved edits. Each write is shown as a card with the lines it changes; Open Diff shows it in the Diff tab, and nothing is saved until Accept
 - Commands the agent runs ask first, appear on the Processes page, and write to an Output log. The agent can also see the open files, the Problems list, git status, and the terminal's text
 - `permissions` on each agent sets `read`, `write`, and `terminal` to `allow`, `ask`, `review`, or `deny`. A path outside the agent's folder always asks
@@ -118,7 +120,7 @@ cmake --build build
 
 Or open `CMakeLists.txt` in Qt Creator and press Run.
 
-The unit tests build with the program (`-DCRLF_BUILD_TESTS=OFF` skips them). Run them with Qt's `bin` folder on `PATH`; `GitClientTests` needs `git` too, and `AgentSessionTests` needs `python`:
+The unit tests build with the program (`-DCRLF_BUILD_TESTS=OFF` skips them). Run them with Qt's `bin` folder on `PATH`; `GitClientTests` needs `git` too, and `AgentSessionTests` and `ReferenceAgentTests` need `python`:
 
 ```
 ctest --test-dir build --output-on-failure
@@ -152,7 +154,7 @@ and sessions in `%APPDATA%\CRLF` are kept.
 | `agent/` | No widgets: JSON-RPC (`JsonRpc`), the Agent Client Protocol messages (`AcpTypes`), and the access check (`AgentPolicy`) |
 | `git/` | No widgets: git status, branch, and log parsers (`GitParse`), repository search (`GitDiscovery`), and the line diff (`LineDiff`) |
 | `scripts/agent/` | The reference agent: the ACP loop (`crlf_agent.py`), the model providers (`providers.py`), and its tools (`tools.py`) |
-| `tests/` | `GitTests` (parsers, search, diff), `GitClientTests` (a real git against a temporary repository), `AgentTests` (the access policy and protocol messages), and `AgentSessionTests` (a whole turn with `fake_acp_agent.py`) |
+| `tests/` | `GitTests` (parsers, search, diff), `GitClientTests` (a real git against a temporary repository), `AgentTests` (the access policy and protocol messages), `AgentSessionTests` (a whole turn with `fake_acp_agent.py`), and `reference_agent_tests.py` (the shipped agent against scripted providers) |
 | `editor/` | `CodeEditor` (QPlainTextEdit subclass), `Gutter`, `FoldController`, `FoldingLayout`, `BlockData`, and definition navigation: `SymbolIndex`, `ImportAliases`, `ExternalLookup`, `TailwindNames` |
 | `hex/` | `HexView` |
 | `syntax/` | JSON-driven `LanguageDefinition`/`LanguageRegistry`, `Theme`, `Highlighter` |

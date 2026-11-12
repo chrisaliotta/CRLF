@@ -28,12 +28,16 @@ AgentSession::AgentSession(QObject *parent)
 {
     qRegisterMetaType<AgentUpdate>();
     qRegisterMetaType<AgentRequest>();
+    qRegisterMetaType<QList<AgentConfigOption>>();
     connect(m_process, &JsonLineProcess::started, this, [this] {
         m_orchestrator->setActivity(kKey, QStringLiteral("starting"));
         QJsonObject capabilities{
             {QStringLiteral("fs"),
              QJsonObject{{QStringLiteral("readTextFile"), true}, {QStringLiteral("writeTextFile"), true}}},
-            {QStringLiteral("terminal"), true}};
+            {QStringLiteral("terminal"), true},
+            {QStringLiteral("session"),
+             QJsonObject{{QStringLiteral("configOptions"),
+                          QJsonObject{{QStringLiteral("boolean"), QJsonObject()}}}}}};
         QJsonObject info{{QStringLiteral("name"), QCoreApplication::applicationName()},
                          {QStringLiteral("version"), QCoreApplication::applicationVersion()}};
         call(QStringLiteral("initialize"),
@@ -116,6 +120,29 @@ void AgentSession::replyError(const QJsonValue &id, int code, const QString &mes
     m_process->write(rpcError(id, code, message));
 }
 
+void AgentSession::setConfigOption(const QString &id, const QVariant &value)
+{
+    QJsonObject params{{QStringLiteral("sessionId"), m_sessionId},
+                       {QStringLiteral("configId"), id},
+                       {QStringLiteral("value"), QJsonValue::fromVariant(value)}};
+    if (value.typeId() == QMetaType::Bool)
+        params.insert(QLatin1String("type"), QStringLiteral("boolean"));
+    call(QStringLiteral("session/set_config_option"), params, [this](const RpcMessage &response) {
+        if (!response.error.isEmpty()) {
+            emit failed(errorText(response));
+            emit configOptionsChanged(m_configOptions);
+            return;
+        }
+        takeConfigOptions(readConfigOptions(response.result.toObject().value(QLatin1String("configOptions")).toArray()));
+    });
+}
+
+void AgentSession::takeConfigOptions(const QList<AgentConfigOption> &options)
+{
+    m_configOptions = options;
+    emit configOptionsChanged(options);
+}
+
 void AgentSession::createTerminal(const AgentRequest &request)
 {
     const QString id = m_terminals->create(request.params, m_workingDirectory);
@@ -150,6 +177,10 @@ void AgentSession::take(const QJsonObject &message)
     if (rpc.method != QLatin1String("session/update"))
         return;
     AgentUpdate update = readUpdate(rpc.params.value(QLatin1String("update")).toObject());
+    if (update.kind == AgentUpdateKind::ConfigOptions) {
+        takeConfigOptions(update.configOptions);
+        return;
+    }
     for (AgentToolLocation &location : update.locations)
         location.path = editorPath(m_workingDirectory, location.path);
     emit updated(update);
@@ -219,7 +250,9 @@ void AgentSession::sessionCreated(const RpcMessage &response)
                         : QStringLiteral("%1 did not start a session: %2").arg(m_agentName, errorText(response)));
         return;
     }
-    m_sessionId = response.result.toObject().value(QLatin1String("sessionId")).toString();
+    const QJsonObject result = response.result.toObject();
+    m_sessionId = result.value(QLatin1String("sessionId")).toString();
+    takeConfigOptions(readConfigOptions(result.value(QLatin1String("configOptions")).toArray()));
     m_orchestrator->setActivity(kKey, QStringLiteral("ready"));
     emit ready(m_agentName);
 }
@@ -229,6 +262,7 @@ void AgentSession::reset()
     m_terminals->releaseAll();
     m_pending.clear();
     m_sessionId.clear();
+    m_configOptions.clear();
 }
 
 QString agentPath(const QString &workingDirectory, const QString &path)

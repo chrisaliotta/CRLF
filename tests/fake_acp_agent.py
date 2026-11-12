@@ -1,7 +1,8 @@
 """A scripted ACP agent for AgentSessionTests.
 
 One prompt reads the attached file through the editor, runs `echo hello`
-through terminal/create, and reports both in a message chunk.
+through terminal/create, and reports both in a message chunk. The session
+offers one setting, `model`, with the values small and large.
 """
 
 import json
@@ -9,6 +10,12 @@ import sys
 import urllib.parse
 
 next_id = 0
+model = "small"
+
+
+def config_options():
+    return [{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": model,
+             "options": [{"value": "small", "name": "Small"}, {"value": "large", "name": "Large"}]}]
 
 
 def send(message):
@@ -44,7 +51,14 @@ while True:
         send({"id": message["id"], "result": {"protocolVersion": 1, "agentInfo": {"name": "fake", "title": "Fake"},
                                               "agentCapabilities": {"promptCapabilities": {"embeddedContext": True}}}})
     elif method == "session/new":
-        send({"id": message["id"], "result": {"sessionId": "s1"}})
+        send({"id": message["id"], "result": {"sessionId": "s1", "configOptions": config_options()}})
+    elif method == "session/set_config_option":
+        params = message["params"]
+        if params["configId"] != "model" or params["value"] not in ("small", "large"):
+            send({"id": message["id"], "error": {"code": -32602, "message": "not offered"}})
+        else:
+            model = params["value"]
+            send({"id": message["id"], "result": {"configOptions": config_options()}})
     elif method == "session/prompt":
         blocks = message["params"]["prompt"]
         link = next(b for b in blocks if b["type"] == "resource_link")

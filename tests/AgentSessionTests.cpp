@@ -3,7 +3,8 @@
 // link reaches the agent, the agent's fs/read_text_file comes back to the
 // editor with an editor path and takes the editor's reply, an approved
 // terminal/create runs a command whose exit code and output the agent reads
-// back, and the turn ends with the agent's stop reason. The agent is
+// back, and the turn ends with the agent's stop reason. A second case sets
+// one of the session's config options. The agent is
 // tests/fake_acp_agent.py, so the test needs python on PATH.
 
 #include "app/AgentSession.h"
@@ -72,6 +73,46 @@ private slots:
                 text += update.text;
         }
         QCOMPARE(text, QStringLiteral("content=in the buffer|output=hello|exit=0"));
+        session.stop();
+    }
+
+    // The settings row is drawn from what the agent reports: the list that
+    // comes with the new session, the list it returns for a choice, and,
+    // for a value it refuses, the list as it still stands.
+    void setsAConfigOption()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString root = QDir(directory.path()).absolutePath();
+
+        ProcessOrchestrator orchestrator;
+        AgentSession session;
+        session.setOrchestrator(&orchestrator);
+        QSignalSpy ready(&session, &AgentSession::ready);
+        QSignalSpy options(&session, &AgentSession::configOptionsChanged);
+        QSignalSpy failed(&session, &AgentSession::failed);
+        const auto model = [&options](int index) {
+            const QList<AgentConfigOption> list = options.at(index).at(0).value<QList<AgentConfigOption>>();
+            return list.size() == 1 && list.first().id == QLatin1String("model") ? list.first().currentValue.toString()
+                                                                               : QString();
+        };
+
+        const AgentLaunch launch{QStringLiteral("Fake"), QStringLiteral("python \"%1\"").arg(QStringLiteral(FAKE_AGENT)),
+                                 root, CommandVariables()};
+        orchestrator.submit(QStringLiteral("agent"), launch.name, root, 0, launch.command,
+                            [&session, launch] { session.start(launch); }, ProcessLane::Hold);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 30000);
+        QCOMPARE(options.size(), 1);
+        QCOMPARE(model(0), QStringLiteral("small"));
+
+        session.setConfigOption(QStringLiteral("model"), QStringLiteral("large"));
+        QTRY_COMPARE_WITH_TIMEOUT(options.size(), 2, 30000);
+        QCOMPARE(model(1), QStringLiteral("large"));
+
+        session.setConfigOption(QStringLiteral("model"), QStringLiteral("huge"));
+        QTRY_COMPARE_WITH_TIMEOUT(options.size(), 3, 30000);
+        QCOMPARE(failed.size(), 1);
+        QCOMPARE(model(2), QStringLiteral("large"));
         session.stop();
     }
 };

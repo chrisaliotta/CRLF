@@ -63,6 +63,43 @@ AgentUpdate readUpdate(const QJsonObject &update)
             result.plan.append({entry.value(QLatin1String("content")).toString(),
                                 entry.value(QLatin1String("status")).toString()});
         }
+    } else if (kind == QLatin1String("config_option_update")) {
+        result.kind = AgentUpdateKind::ConfigOptions;
+        result.configOptions = readConfigOptions(update.value(QLatin1String("configOptions")).toArray());
+    }
+    return result;
+}
+
+QList<AgentConfigOption> readConfigOptions(const QJsonArray &options)
+{
+    const auto choice = [](const QJsonObject &entry, const QString &group) {
+        return AgentConfigChoice{entry.value(QLatin1String("value")).toString(),
+                                 entry.value(QLatin1String("name")).toString(),
+                                 entry.value(QLatin1String("description")).toString(), group};
+    };
+    QList<AgentConfigOption> result;
+    for (const QJsonValue &value : options) {
+        const QJsonObject source = value.toObject();
+        AgentConfigOption option;
+        option.type = source.value(QLatin1String("type")).toString();
+        if (option.type != QLatin1String("select") && option.type != QLatin1String("boolean"))
+            continue;
+        option.id = source.value(QLatin1String("id")).toString();
+        option.name = source.value(QLatin1String("name")).toString();
+        option.description = source.value(QLatin1String("description")).toString();
+        option.category = source.value(QLatin1String("category")).toString();
+        option.currentValue = source.value(QLatin1String("currentValue")).toVariant();
+        for (const QJsonValue &entryValue : source.value(QLatin1String("options")).toArray()) {
+            const QJsonObject entry = entryValue.toObject();
+            if (!entry.contains(QLatin1String("group"))) {
+                option.choices.append(choice(entry, QString()));
+                continue;
+            }
+            const QString group = entry.value(QLatin1String("name")).toString();
+            for (const QJsonValue &member : entry.value(QLatin1String("options")).toArray())
+                option.choices.append(choice(member.toObject(), group));
+        }
+        result.append(option);
     }
     return result;
 }

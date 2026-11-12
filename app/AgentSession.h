@@ -70,6 +70,9 @@ public:
     void stop();
     void reply(const QJsonValue &id, const QJsonValue &result);
     void replyError(const QJsonValue &id, int code, const QString &message);
+    // session/set_config_option. `value` is a choice's value, or a bool.
+    // The agent's reply is the whole list, sent on as configOptionsChanged.
+    void setConfigOption(const QString &id, const QVariant &value);
     // Answers an approved terminal/create.
     void createTerminal(const AgentRequest &request);
     // From the Processes page.
@@ -78,6 +81,10 @@ public:
 signals:
     // session/new answered. The agent is ready for a prompt.
     void ready(const QString &agentName);
+    // The settings the agent offers and their values: before ready for a
+    // new session, after each setConfigOption, and when the agent changes
+    // them itself. A refused change sends the list as it still stands.
+    void configOptionsChanged(const QList<AgentConfigOption> &options);
     void updated(const AgentUpdate &update);
     void requested(const AgentRequest &request);
     // `stopReason` is the agent's, or "error" when the turn failed.
@@ -97,6 +104,7 @@ private:
     void initialized(const RpcMessage &response);
     void sessionCreated(const RpcMessage &response);
     void reset();
+    void takeConfigOptions(const QList<AgentConfigOption> &options);
 
     JsonLineProcess *m_process = nullptr;
     AgentTerminals *m_terminals = nullptr;
@@ -107,6 +115,7 @@ private:
     QString m_agentName;
     // promptCapabilities.embeddedContext from initialize.
     bool m_embeddedContext = false;
+    QList<AgentConfigOption> m_configOptions;
     int m_nextId = 0;
     QHash<int, Handler> m_pending;
 };

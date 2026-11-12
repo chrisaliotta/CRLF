@@ -83,3 +83,6 @@ CMakeLists.txt.user*
 .uic/
 /build*/
 /.qtcreator/
+
+# API keys for the agents in .crlf
+.keys/

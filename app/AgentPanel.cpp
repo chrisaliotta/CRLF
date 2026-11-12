@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QFileInfo>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -19,8 +20,21 @@
 namespace {
 
 constexpr int kRenderDelayMs = 50;
-constexpr int kThoughtLength = 400;
 constexpr int kToolTextLength = 200;
+
+// A fence still streaming would turn the rest of the page into code.
+QString closedFences(const QString &text)
+{
+    return text.count(QStringLiteral("```")) % 2 == 1 ? text + QStringLiteral("\n```") : text;
+}
+
+QString quoted(const QString &text)
+{
+    QStringList lines = text.split(QLatin1Char('\n'));
+    for (QString &line : lines)
+        line.prepend(QStringLiteral("> "));
+    return lines.join(QLatin1Char('\n'));
+}
 
 QString escaped(const QString &text)
 {
@@ -74,6 +88,19 @@ AgentPanel::AgentPanel(QWidget *parent)
     title->setObjectName(QStringLiteral("agentTitle"));
     m_agents = new QComboBox(this);
     m_agents->setToolTip(QStringLiteral("The agents listed under `agents` in .crlf"));
+    m_thinking = new QToolButton(this);
+    m_thinking->setText(QStringLiteral("Thinking"));
+    m_thinking->setToolTip(QStringLiteral("Show the agent's thinking as it streams"));
+    m_thinking->setCheckable(true);
+    m_thinking->setAutoRaise(true);
+    m_options = new QWidget(this);
+    m_optionLayout = new QGridLayout(m_options);
+    m_optionLayout->setContentsMargins(10, 0, 8, 0);
+    m_optionLayout->setHorizontalSpacing(6);
+    m_optionLayout->setVerticalSpacing(4);
+    m_optionLayout->setColumnStretch(1, 1);
+    m_optionLayout->setColumnStretch(3, 1);
+    m_options->hide();
     auto *restart = new QToolButton(this);
     restart->setText(QStringLiteral("New"));
     restart->setToolTip(QStringLiteral("Start a new session"));
@@ -110,6 +137,7 @@ AgentPanel::AgentPanel(QWidget *parent)
     header->setSpacing(6);
     header->addWidget(title);
     header->addWidget(m_agents, 1);
+    header->addWidget(m_thinking);
     header->addWidget(restart);
     header->addWidget(close);
 
@@ -122,6 +150,7 @@ AgentPanel::AgentPanel(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
     layout->addLayout(header);
+    layout->addWidget(m_options);
     layout->addWidget(m_status);
     layout->addWidget(m_transcript, 1);
     layout->addWidget(m_cards);
@@ -137,6 +166,10 @@ AgentPanel::AgentPanel(QWidget *parent)
     connect(m_render, &QTimer::timeout, this, &AgentPanel::render);
     connect(m_agents, &QComboBox::textActivated, this, &AgentPanel::agentChosen);
     connect(restart, &QToolButton::clicked, this, &AgentPanel::restartRequested);
+    connect(m_thinking, &QToolButton::clicked, this, [this](bool checked) {
+        scheduleRender();
+        emit showThinkingToggled(checked);
+    });
     connect(close, &QToolButton::clicked, this, &AgentPanel::closeRequested);
     connect(m_send, &QPushButton::clicked, this, [this] {
         if (m_busy)
@@ -161,6 +194,61 @@ QString AgentPanel::currentAgent() const
     return m_agents->currentText();
 }
 
+void AgentPanel::setConfigOptions(const QList<AgentConfigOption> &options)
+{
+    while (QLayoutItem *item = m_optionLayout->takeAt(0)) {
+        item->widget()->deleteLater();
+        delete item;
+    }
+    // Two settings to a row. The model list gets a row to itself.
+    int row = 0;
+    int column = 0;
+    for (const AgentConfigOption &option : options) {
+        const QString id = option.id;
+        if (option.type == QLatin1String("boolean")) {
+            auto *box = new QCheckBox(option.name, m_options);
+            box->setToolTip(option.description);
+            box->setChecked(option.currentValue.toBool());
+            connect(box, &QCheckBox::clicked, this, [this, id](bool checked) { emit configOptionChosen(id, checked); });
+            m_optionLayout->addWidget(box, row, column * 2, 1, 2);
+        } else {
+            auto *label = new QLabel(option.name, m_options);
+            label->setObjectName(QStringLiteral("agentOptionLabel"));
+            auto *combo = new QComboBox(m_options);
+            combo->setToolTip(option.description.isEmpty() ? option.name : option.description);
+            combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+            combo->setMinimumContentsLength(6);
+            for (const AgentConfigChoice &choice : option.choices) {
+                combo->addItem(choice.name, choice.value);
+                combo->setItemData(combo->count() - 1, choice.description, Qt::ToolTipRole);
+            }
+            combo->setCurrentIndex(combo->findData(option.currentValue.toString()));
+            connect(combo, &QComboBox::activated, this,
+                    [this, id, combo](int index) { emit configOptionChosen(id, combo->itemData(index)); });
+            const bool wide = option.category == QLatin1String("model");
+            if (wide && column != 0) {
+                ++row;
+                column = 0;
+            }
+            m_optionLayout->addWidget(label, row, column * 2);
+            m_optionLayout->addWidget(combo, row, column * 2 + 1, 1, wide ? 3 : 1);
+            if (wide)
+                column = 1;
+        }
+        if (++column == 2) {
+            ++row;
+            column = 0;
+        }
+    }
+    m_options->setVisible(!options.isEmpty());
+}
+
+void AgentPanel::setShowThinking(bool show)
+{
+    m_thinking->setChecked(show);
+    scheduleRender();
+}
+
 void AgentPanel::setStatus(const QString &text)
 {
     m_status->setText(text);
@@ -171,6 +259,7 @@ void AgentPanel::setBusy(bool busy)
 {
     m_busy = busy;
     m_send->setText(busy ? QStringLiteral("Stop") : QStringLiteral("Send"));
+    scheduleRender();
 }
 
 void AgentPanel::clearTranscript()
@@ -215,6 +304,7 @@ void AgentPanel::applyUpdate(const AgentUpdate &update)
         break;
     }
     case AgentUpdateKind::UserText:
+    case AgentUpdateKind::ConfigOptions:
     case AgentUpdateKind::Ignored:
         return;
     }
@@ -358,23 +448,19 @@ QString AgentPanel::markdown() const
     QStringList blocks;
     for (const Entry &entry : m_entries) {
         switch (entry.kind) {
-        case Entry::Kind::User: {
-            QStringList lines = entry.text.split(QLatin1Char('\n'));
-            for (QString &line : lines)
-                line.prepend(QStringLiteral("> "));
-            blocks.append(QStringLiteral("**You**\n\n") + lines.join(QLatin1Char('\n')));
+        case Entry::Kind::User:
+            blocks.append(QStringLiteral("**You**\n\n") + quoted(entry.text));
             break;
-        }
-        case Entry::Kind::Agent: {
-            QString text = entry.text;
-            // A fence still streaming would turn the rest of the page into code.
-            if (text.count(QStringLiteral("```")) % 2 == 1)
-                text += QStringLiteral("\n```");
-            blocks.append(text);
+        case Entry::Kind::Agent:
+            blocks.append(closedFences(entry.text));
             break;
-        }
         case Entry::Kind::Thought:
-            blocks.append(QStringLiteral("*Thinking: %1*").arg(escaped(clipped(entry.text, kThoughtLength))));
+            // Shown in full, or as one line for as long as it is the newest
+            // thing the agent is doing.
+            if (m_thinking->isChecked())
+                blocks.append(QStringLiteral("*Thinking*\n\n") + quoted(closedFences(entry.text.trimmed())));
+            else if (m_busy && &entry == &m_entries.last())
+                blocks.append(QStringLiteral("*Thinking\u2026*"));
             break;
         case Entry::Kind::Tool: {
             QString line = QStringLiteral("%1 **%2**").arg(statusMark(entry.status), escaped(entry.title));

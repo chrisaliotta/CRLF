@@ -253,6 +253,10 @@ if(CRLF_BUILD_TESTS)
     target_compile_definitions(AgentSessionTests PRIVATE FAKE_AGENT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_acp_agent.py")
     target_link_libraries(AgentSessionTests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME AgentSessionTests COMMAND AgentSessionTests)
+
+    # The reference agent against scripted providers. Needs python on PATH.
+    add_test(NAME ReferenceAgentTests
+        COMMAND python "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_agent_tests.py")
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg vterm)
 target_compile_definitions(${PROJECT_NAME} PRIVATE

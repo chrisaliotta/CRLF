@@ -284,7 +284,7 @@ A path outside `cwd` always asks, even when the setting is `allow`.
 "agents": [
   {
     "name": "Claude",
-    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5"
+    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file .keys/anthropic"
   },
   {
     "name": "Local",
@@ -294,7 +294,9 @@ A path outside `cwd` always asks, even when the setting is `allow`.
 ]
 ```
 
-Claude reads the key from `ANTHROPIC_API_KEY` in the environment CRLF was started from. Local talks to Ollama on this machine, writes files without review, and asks before each command. The model names are examples; use the ones your provider offers.
+Claude reads its key from `.keys/anthropic` beside `.crlf`; keep that folder out of git, and put a new key in the file to rotate it. Without `--api-key-file`, the reference agent reads `ANTHROPIC_API_KEY` from the environment CRLF was started from. Local talks to Ollama on this machine, writes files without review, and asks before each command. The model names are examples; use the ones your provider offers.
+
+For the reference agent, `--model` is only where a session starts, along with `--max-tokens`, `--reasoning-effort` (OpenAI and xAI), and `--thinking` (Anthropic: `off`, `4k`, `16k`, `32k`, or `adaptive`). The Agent panel lists the provider's models and these settings, and remembers what you pick there for each agent `name`. [agent.md](agent.md#settings) describes them.
 
 ## Process logs
 

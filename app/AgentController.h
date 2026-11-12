@@ -5,6 +5,7 @@
 
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 
 #include <functional>
@@ -48,6 +49,13 @@ private:
     void cancelTurn();
     void ended(const QString &stopReason);
     void watchCurrent();
+    void setOption(const QString &id, const QVariant &value);
+    // Sends the next remembered setting that the new session offers and
+    // does not already have, one at a time, because one choice (the model)
+    // can change what the others offer. Queued prompts wait for the last.
+    void restoreNextOption();
+    // Where the choice for one of the running agent's settings is kept.
+    QString optionSetting(const QString &id) const;
 
     AgentSession *m_session;
     AgentHost *m_host;
@@ -65,4 +73,8 @@ private:
     bool m_ready = false;
     bool m_busy = false;
     QList<AgentPrompt> m_queued;
+    // What the session last said it offers.
+    QList<AgentConfigOption> m_options;
+    bool m_restoring = false;
+    QSet<QString> m_restored;
 };

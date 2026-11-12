@@ -9,11 +9,13 @@
 
 class QCheckBox;
 class QComboBox;
+class QGridLayout;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 class QTextBrowser;
 class QTimer;
+class QToolButton;
 class QVBoxLayout;
 
 // One button on a card. `closes` false leaves the card up, as Open Diff does.
@@ -36,6 +38,12 @@ public:
 
     void setAgents(const QStringList &names, const QString &current);
     QString currentAgent() const;
+    // One control per setting the agent offers, in its order: a list for a
+    // select, a check box for a boolean. An empty list hides the row.
+    void setConfigOptions(const QList<AgentConfigOption> &options);
+    // On: the agent's thinking is drawn in full as it streams. Off: one
+    // "Thinking" line while it streams, and nothing afterwards.
+    void setShowThinking(bool show);
     void setStatus(const QString &text);
     // While busy, Send is Stop.
     void setBusy(bool busy);
@@ -54,6 +62,8 @@ public:
 signals:
     void agentChosen(const QString &name);
     void restartRequested();
+    void configOptionChosen(const QString &id, const QVariant &value);
+    void showThinkingToggled(bool show);
     void promptSubmitted(const QString &text, bool attachCurrentFile);
     void cancelRequested();
     void closeRequested();
@@ -90,6 +100,9 @@ private:
     void closeCard(QWidget *widget);
 
     QComboBox *m_agents = nullptr;
+    QToolButton *m_thinking = nullptr;
+    QWidget *m_options = nullptr;
+    QGridLayout *m_optionLayout = nullptr;
     QLabel *m_status = nullptr;
     QTextBrowser *m_transcript = nullptr;
     QWidget *m_cards = nullptr;
