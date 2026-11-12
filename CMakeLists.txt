@@ -68,6 +68,8 @@ set(APP_SOURCES
     app/ExplorerPanel.cpp
     app/ExplorerModel.h
     app/ExplorerModel.cpp
+    app/FolderWatch.h
+    app/FolderWatch.cpp
     app/FileIconTheme.h
     app/FileIconTheme.cpp
     app/TemplateDialog.h
@@ -263,8 +265,19 @@ if(CRLF_BUILD_TESTS)
     add_executable(ProjectTests tests/ProjectTests.cpp io/ProjectCommands.cpp io/ProjectMerge.cpp
         io/WorkspaceSeed.cpp io/CommandVariables.cpp io/WslPath.cpp agent/AgentPolicy.cpp)
     target_include_directories(ProjectTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(ProjectTests PRIVATE
+        SHIPPED_APPLICATION_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/default.crlf")
     target_link_libraries(ProjectTests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
     add_test(NAME ProjectTests COMMAND ProjectTests)
+
+    # The explorer's tree against a real folder: what a re-read keeps, and
+    # that a change made on disk reaches the tree.
+    add_executable(ExplorerModelTests tests/ExplorerModelTests.cpp app/ExplorerModel.cpp app/FolderWatch.cpp
+        app/FileIconTheme.cpp app/ProcessOrchestrator.cpp io/NamePattern.cpp io/WslPath.cpp
+        syntax/LanguageRegistry.cpp syntax/LanguageDefinition.cpp)
+    target_include_directories(ExplorerModelTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(ExplorerModelTests PRIVATE Qt6::Widgets Qt6::Svg Qt6::Test)
+    add_test(NAME ExplorerModelTests COMMAND ExplorerModelTests)
 
     # The reference agent against scripted providers. Needs python on PATH.
     add_test(NAME ReferenceAgentTests
@@ -307,6 +320,9 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/resources/default.crlf"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/application.crlf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/resources/blank.crlf"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/blank.crlf"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -339,12 +355,16 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/fonts/"
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/icons/"
     DESTINATION icons
     FILES_MATCHING PATTERN "*.json" PATTERN "*.ttf" PATTERN "*.txt" PATTERN "*.svg" PATTERN "*.png")
-# Beside styles and themes, one level above bin. This copy is only the seed:
-# the first run copies it to the application folder, which is the one the
-# user edits, so each install may replace it.
+# Beside styles and themes, one level above bin. These copies are only the
+# seed: a run copies each one the application folder lacks into it, and that
+# folder is the one the user edits, so each install may replace them.
+# application.crlf sets up the shipped scripts and agents; blank.crlf sets
+# nothing.
 install(FILES "${CMAKE_SOURCE_DIR}/resources/default.crlf"
     DESTINATION .
     RENAME application.crlf)
+install(FILES "${CMAKE_SOURCE_DIR}/resources/blank.crlf"
+    DESTINATION .)
 install(FILES "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
@@ -363,7 +383,7 @@ qt_generate_deploy_app_script(
 install(SCRIPT ${deploy_script})
 
 file(TO_NATIVE_PATH "${CMAKE_INSTALL_PREFIX}" INSTALLER_STAGING_DIR)
-file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/resources/images/CRLF_basic.ico" INSTALLER_ICON)
+file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/resources/images/CRLF_v2.ico" INSTALLER_ICON)
 file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/installer" INSTALLER_OUTPUT_DIR)
 configure_file(packaging/${PROJECT_NAME}.iss.in ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.iss @ONLY)
 

@@ -1,6 +1,6 @@
 # The .crlf files
 
-`.crlf` is a file extension and a folder name. A project's settings are every `<name>.crlf` file in its root, merged into one. The folder named `.crlf` beside them holds what the project keeps for the editor and its agents. The editor has settings of its own in `application.crlf`, which apply where a project has none or asks for them.
+`.crlf` is a file extension and a folder name. A project's settings are every `<name>.crlf` file in its root, merged into one. The folder named `.crlf` beside them holds what the project keeps for the editor and its agents. The editor has settings of its own in an application file, `application.crlf` unless another is chosen, which apply where a project has none or asks for them.
 
 Each file is JSON. The parser in `io/ProjectCommands.cpp` is the list of keys that do anything, and `io/ProjectMerge.cpp` is how several files become one. A key that is not in that list is kept when a file is rewritten and is otherwise ignored.
 
@@ -12,6 +12,7 @@ Menus, variables, and how a command runs are in [commands.md](commands.md). Chec
 project/                       a workspace
   workspace.crlf               settings (any name with the .crlf extension)
   local.crlf                   optional, merged with the others
+  application.crlf             optional: the workspace's copy of the application settings, merged last
   .crlf/
     data/                      the agent's code index, and its own .gitignore
     rules/                     agent rule files
@@ -19,7 +20,9 @@ project/                       a workspace
     scripts/, temp/            free for the project's own use
 
 %APPDATA%\CRLF\CRLF\           the application folder
-  application.crlf             the user's settings for every folder
+  application.crlf             settings for every folder: the shipped scripts and agents, set up
+  blank.crlf                   application settings that set nothing
+  <name>.crlf                  any others the user adds; one of them is the active file
   .crlf/
     scripts/                   the user's own scripts, shared by every workspace
     keys/                      API key files shared by every workspace
@@ -28,7 +31,7 @@ project/                       a workspace
 <install folder>\scripts\      shipped scripts, refreshed by each upgrade
 ```
 
-The editor reads the `<name>.crlf` files and nothing else in this layout. It creates the application folder's `.crlf` subfolders on first run and does not create a workspace's `.crlf` folder. The reference agent creates `.crlf/data` and reads `.crlf/rules`; see [agent-tools.md](agent-tools.md). `.crlf/keys`, `.crlf/scripts`, and `.crlf/temp` are conventions: a command names them by path. Payload files for `${buffer}` and `${terminal}` stay in the system temp folder.
+The editor reads the `<name>.crlf` files and nothing else in this layout. It creates the application folder's `.crlf` subfolders, and creates a workspace's `.crlf` folder only for [Copy Application Files to Workspace](#copy-application-files-to-workspace). The reference agent creates `.crlf/data` and reads `.crlf/rules`; see [agent-tools.md](agent-tools.md). `.crlf/keys`, `.crlf/scripts`, and `.crlf/temp` are conventions: a command names them by path. Payload files for `${buffer}` and `${terminal}` stay in the system temp folder.
 
 ## Which files are in use
 
@@ -37,23 +40,25 @@ The search starts at the folder the explorer is scoped to. When no folder is sco
 ```mermaid
 flowchart TD
   start[Open a folder or file] --> found{"Project root found?"}
-  found -->|no| appOnly[application.crlf alone]
+  found -->|no| appOnly[The active application file alone]
   found -->|yes| inherit{"A workspace file sets inherit?"}
   inherit -->|no| wsOnly[Workspace files only]
-  inherit -->|yes| both[Workspace files, then application.crlf last]
+  inherit -->|yes| both[Workspace files, then the active application file last]
 ```
 
-- **No project root.** `application.crlf` is used alone.
+- **No project root.** The active application file is used alone.
 - **Workspace files without `inherit`.** The application settings are not read.
-- **`inherit` set.** `application.crlf` is merged after the workspace files, whole or limited to the keys `inherit` lists. See [Application settings](#application-settings).
+- **`inherit` set.** The active application file is merged after the workspace files, whole or limited to the keys `inherit` lists. See [Application settings](#application-settings).
 
 The workspace files are taken in file-name order, ignoring case, so `local.crlf` is read before `workspace.crlf`. The order matters because the earlier file wins; see [Merging the files](#merging-the-files).
 
+One name is an exception. A file named `application.crlf` in a project root is the workspace's own copy of the application settings, put there by [Copy Application Files to Workspace](#copy-application-files-to-workspace). It is the base the workspace's other files adjust, so it is read after all of them, although its name sorts first. A root with `application.crlf`, `local.crlf`, and `workspace.crlf` is read as `local.crlf`, `workspace.crlf`, `application.crlf`. It is a workspace file like the others: it applies without `inherit`, and the application folder's file is still merged after it only when `inherit` is set.
+
 The files are read again when the explorer folder changes, when the current tab changes, when a document is saved, when a file in use changes on disk, when a file is added to the project root or removed from it, when a virtual folder or an icon mapping is saved from the UI, and after Copy Application Files to Workspace. The read runs off the UI thread. A newer read replaces an older one that has not been applied yet.
 
-The watcher holds the settings files in use, the files listed under `watch` by `syntax` and `autocomplete`, and the project root folder. A change to one of the files restarts the services. A change to the folder reloads the settings and restarts a service only when its own settings changed. `application.crlf` is watched while it is in use. The application folder itself is not watched, because the session file is rewritten there every 30 seconds.
+The watcher holds the settings files in use, the files listed under `watch` by `syntax` and `autocomplete`, and the project root folder. A change to one of the files restarts the services. A change to the folder reloads the settings and restarts a service only when its own settings changed. The active application file is watched while it is in use. The application folder itself is not watched, because the session file is rewritten there every 30 seconds.
 
-A file that is not JSON, or that is neither an array nor an object, is skipped. The status bar says "Couldn't read" and the file's name, such as "Couldn't read local.crlf", and the other files still apply. The file stays watched, so fixing it reloads the project. When every workspace file is unreadable, nothing applies; `application.crlf` is not used in their place.
+A file that is not JSON, or that is neither an array nor an object, is skipped. The status bar says "Couldn't read" and the file's name, such as "Couldn't read local.crlf", and the other files still apply. The file stays watched, so fixing it reloads the project. When every workspace file is unreadable, nothing applies; the application file is not used in their place.
 
 ## Merging the files
 
@@ -120,13 +125,37 @@ A type under `indent.types` takes the fields it leaves out from the merged stand
 
 ## Application settings
 
-`application.crlf` holds the settings a user wants in every folder: their own commands, their agents, their indent rule. It lives in the application folder, `%APPDATA%\CRLF\CRLF`, beside the saved session. View > Edit Defaults > Commands opens it. It takes the same keys as a workspace file, except that `inherit` means nothing in it.
+An application file holds the settings a user wants in every folder: commands, agents, an indent rule. The application files live in the application folder, `%APPDATA%\CRLF\CRLF`, beside the saved session. One of them is active, and that is the one this document means by "the application file". Each takes the same keys as a workspace file, except that `inherit` means nothing in it.
 
 The application folder also has a `.crlf` folder with `scripts`, `keys`, and `rules`, for the files those settings use. `${appDir}` is that folder's path in a command.
 
-**First run.** When `application.crlf` is absent, the editor creates the three folders and copies the file in: from the file named `.crlf` beside the program when there is one, which is where an earlier version kept these settings, and otherwise from the `application.crlf` shipped beside the program. Nothing is copied once the file exists, so an upgrade does not replace it. A relative path in settings carried over from the old file no longer resolves against the program folder; see [Paths](#paths).
+### The shipped files
 
-The shipped `resources/default.crlf` is `{ "commands": [] }`. Each build and each install copies it beside the program as `application.crlf`, replacing the copy there. That copy is only the source for the first run.
+Two application files ship with the editor.
+
+| File | What it sets |
+|---|---|
+| `application.crlf` | The shipped scripts, set up. It is the active file on a new install |
+| `blank.crlf` | Nothing. Choose it to run with no application settings |
+
+`application.crlf` as shipped (`resources/default.crlf` in this repository) has:
+
+- **Four agents**, Claude, GPT, Grok, and Local, each running the shipped `${programDir}/scripts/agent/crlf_agent.py`. Each has a `windows` command line that starts `python` and a `wsl` one that starts `python3`. Claude, GPT, and Grok read their key from `${appDir}/keys/anthropic`, `${appDir}/keys/openai`, and `${appDir}/keys/xai`; Local talks to Ollama and needs none. Each reads the workspace's rules and then the application's. An agent works once its key file exists. The model names are examples to replace with the ones the account offers.
+- **`syntax` and `autocomplete`**, running the shipped `syntax.sh` and `autocomplete.sh` with `bash`. The scripts are bash scripts, so only a `wsl` command line is given: they run for a project inside a WSL distro, and in a Windows folder neither starts. Neither lists its scripts under `watch`, which does not take variables; Reload on the Processes page reads an edited script again.
+- **No menu commands.**
+
+Each build and each install puts both files beside the program. A run copies each one the application folder does not have into it, and creates the three `.crlf` folders. A file already in the application folder is never replaced, so an edit survives an upgrade, and an upgrade does not bring a newer shipped version of a file that is already there. To get the shipped `application.crlf` again, delete or rename the one in the application folder and start the editor.
+
+**Settings from an earlier version.** Before the application folder, these settings were a file named `.crlf` beside the program. On the first run with the application folder, that file is copied in as `previous.crlf` and made the active file, so the same settings keep applying. `application.crlf` is there to switch to. An old file that was never edited, and so still holds only the empty command list it shipped with, is left behind, and `application.crlf` is active. A relative path in `previous.crlf` no longer resolves against the program folder; see [Paths](#paths). A folder that an earlier build already filled keeps the `application.crlf` it was given then, which holds those earlier settings and not the shipped scripts.
+
+### Choosing the active file
+
+View > Edit Defaults > Application Settings lists every `<name>.crlf` file in the application folder, with the active one checked. Choosing another makes it active and reads the project again. Any file placed in that folder appears in the list, so a user can keep several setups and switch between them.
+
+- **Edit Active File** opens it in a tab.
+- **Open Application Folder** shows the folder in File Explorer.
+
+The choice is remembered by file name. When the chosen file is no longer there, `application.crlf` is used.
 
 ### inherit
 
@@ -217,26 +246,28 @@ The write produces the object form. A bare array becomes an object whose `comman
 
 ## Copy Application Files to Workspace
 
-File > Copy Application Files to Workspace gives the scoped folder its own copy of the application setup. It is enabled while the explorer is scoped to a folder. Use it to make a workspace self-contained: a project whose scripts are edited and committed with it, or a project in a WSL distro that has drive mounting turned off.
+File > Copy Application Files to Workspace gives the scoped folder its own copy of the application setup. It is enabled while the explorer is scoped to a folder. Use it to make a workspace self-contained: a project whose settings and scripts are edited and committed with it, or a project in a WSL distro that has drive mounting turned off.
 
 A dialog names the folder and has one check box, Replace existing files, which is off each time the dialog opens. Copy starts the copy; Cancel closes the dialog.
 
 | What | Copied from | Into |
 |---|---|---|
-| Settings | `application.crlf`, only when the folder has no `<name>.crlf` file | `workspace.crlf` |
+| Application settings | The active application file, whatever its name | `application.crlf` in the folder's root |
+| The workspace's own settings | Created empty, only when the folder has no other `<name>.crlf` file | `workspace.crlf` |
 | Scripts | The install folder's `scripts`, then the application's `.crlf/scripts` | `.crlf/scripts/` |
 | Rules | The application's `.crlf/rules` | `.crlf/rules/` |
 | Keys | Never copied | |
 
-- **The created `workspace.crlf`** is the text of `application.crlf` with three paths replaced: `${programDir}/scripts` and `${appDir}/scripts` become `.crlf/scripts`, and `${appDir}/rules` becomes `.crlf/rules`. The new file then runs the copied scripts. `${appDir}/keys` is left as written.
+- **The copied `application.crlf`** is the text of the active application file with three paths replaced: `${programDir}/scripts` and `${appDir}/scripts` become `.crlf/scripts`, and `${appDir}/rules` becomes `.crlf/rules`. The copy then runs the copied scripts. `${appDir}/keys` is left as written.
+- **How the two files combine.** `workspace.crlf` is read first and `application.crlf` after it, as [Which files are in use](#which-files-are-in-use) describes. Put the workspace's own settings in `workspace.crlf`; what it sets wins, and the copy supplies the rest. Neither sets `inherit`, so the application folder's file no longer applies to this folder.
 - **What the replacement misses.** Only those three spellings, with forward slashes, are replaced; `${programDir}\\scripts` is not. The new paths are relative to the working directory, so an entry with its own `cwd` no longer finds its script. Edit such an entry by hand.
-- **An existing settings file** is never replaced or edited, with the box on or off.
+- **`workspace.crlf` and the workspace's other settings files** are never replaced or edited, with the box on or off.
 - **An application script replaces a shipped one** of the same relative path. Folders named `__pycache__` are not copied.
-- **Replace existing files off.** A script or rule file already in the workspace is skipped.
-- **Replace existing files on.** Script and rule files are overwritten with the application's copies. A file only the workspace has is left alone. Nothing is deleted.
+- **Replace existing files off.** An `application.crlf`, script, or rule file already in the workspace is skipped.
+- **Replace existing files on.** Those files are overwritten with the application's copies. A file only the workspace has is left alone. Nothing is deleted.
 - **Keys stay behind** because a workspace is usually a git repository, and a copied key could be committed.
 
-The copy runs off the UI thread, as the Processes row Copy Application Files. When it ends, the status bar says "Copied 5 files, replaced 0, skipped 1", with ", couldn't write 2" added when the file system refused a file, and the project reloads. The settings file counts: copied when it was created, skipped when the folder already had one.
+The copy runs off the UI thread, as the Processes row Copy Application Files. When it ends, the status bar says "Copied 6 files, replaced 0, skipped 1", with ", couldn't write 2" added when the file system refused a file, and the project reloads. The two settings files count. `workspace.crlf` is copied when it was created and skipped when the folder already had settings of its own.
 
 The copies are a snapshot. A later upgrade refreshes the shipped scripts in the install folder, not the workspace's copies. Running the command again with Replace existing files brings them up to date.
 

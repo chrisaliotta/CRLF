@@ -44,34 +44,63 @@ void copyInto(const QMap<QString, QString> &files, const QString &folder, bool r
     }
 }
 
-// application.crlf as a workspace file: it runs the copied scripts and reads
-// the copied rules. Key files stay in the application folder, so
-// ${appDir}/keys is left as written.
-bool createWorkspaceFile(const QString &applicationFolder, const QString &target)
+bool writeFile(const QString &path, const QByteArray &text)
 {
-    QFile source(QDir(applicationFolder).filePath(QLatin1String(kApplicationFile)));
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(text) == text.size();
+}
+
+// The application file as the workspace's own: it runs the copied scripts
+// and reads the copied rules. Key files stay in the application folder, so
+// ${appDir}/keys is left as written.
+QByteArray workspaceCopy(const QString &applicationFile)
+{
+    QFile source(applicationFile);
     (void)source.open(QIODevice::ReadOnly);
     QByteArray text = source.readAll();
     text.replace("${programDir}/scripts", ".crlf/scripts");
     text.replace("${appDir}/scripts", ".crlf/scripts");
     text.replace("${appDir}/rules", ".crlf/rules");
-    QFile created(QDir(target).filePath(QLatin1String(kWorkspaceFile)));
-    return created.open(QIODevice::WriteOnly) && created.write(text) == text.size();
+    return text;
+}
+
+// The two settings files in the root. application.crlf is the copy, and is
+// replaced on request like a script. workspace.crlf is the user's: it is
+// created empty when the folder has no settings of its own, and an existing
+// one is left as it is.
+void copySettings(const QString &applicationFile, const QString &target, bool replaceExisting, SeedCounts &counts)
+{
+    const QDir root(target);
+    const QString copy = root.filePath(QLatin1String(kApplicationFile));
+    const bool exists = QFileInfo::exists(copy);
+    // settingsFiles puts application.crlf last, so anything else is the workspace's own.
+    const QStringList files = settingsFiles(target);
+    const bool hasOwn = files.size() > (exists ? 1 : 0);
+
+    if (exists && !replaceExisting)
+        ++counts.skipped;
+    else if (!writeFile(copy, workspaceCopy(applicationFile)))
+        ++counts.failed;
+    else
+        ++(exists ? counts.replaced : counts.copied);
+
+    if (hasOwn)
+        ++counts.skipped;
+    else if (!writeFile(root.filePath(QLatin1String(kWorkspaceFile)), QByteArrayLiteral("{\n}\n")))
+        ++counts.failed;
+    else
+        ++counts.copied;
 }
 
 } // namespace
 
-SeedCounts seedWorkspace(const QString &applicationFolder, const QString &shippedScripts, const QString &target,
+SeedCounts seedWorkspace(const QString &applicationFile, const QString &shippedScripts, const QString &target,
                          bool replaceExisting)
 {
     SeedCounts counts;
-    if (!settingsFiles(target).isEmpty())
-        ++counts.skipped;
-    else if (createWorkspaceFile(applicationFolder, target))
-        ++counts.copied;
-    else
-        ++counts.failed;
+    copySettings(applicationFile, target, replaceExisting, counts);
 
+    const QString applicationFolder = QFileInfo(applicationFile).absolutePath();
     const QDir application(QDir(applicationFolder).filePath(QLatin1String(kProjectFolder)));
     const QDir workspace(QDir(target).filePath(QLatin1String(kProjectFolder)));
     QMap<QString, QString> scripts;

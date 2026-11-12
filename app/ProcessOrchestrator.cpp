@@ -20,6 +20,7 @@ struct Submission
     std::function<void()> work;
     ProcessLane lane = ProcessLane::Pool;
     QPointer<QObject> deliverTo;
+    bool recorded = true;
 };
 
 } // namespace
@@ -38,6 +39,7 @@ struct ProcessOrchestrator::Task
     std::function<void()> work;
     ProcessLane lane = ProcessLane::Pool;
     QPointer<QObject> deliverTo;
+    bool recorded = true;
     int token = 0;
     bool sleeping = false;
     QDeadlineTimer deadline;
@@ -63,7 +65,7 @@ ProcessOrchestrator::~ProcessOrchestrator()
 
 void ProcessOrchestrator::submit(const QString &key, const QString &name, const QString &owner,
                                  int debounceMs, const QString &detail, std::function<void()> work,
-                                 ProcessLane lane, QObject *deliverTo)
+                                 ProcessLane lane, QObject *deliverTo, bool recorded)
 {
     auto submission = std::make_shared<Submission>();
     submission->key = key;
@@ -74,6 +76,7 @@ void ProcessOrchestrator::submit(const QString &key, const QString &name, const 
     submission->work = std::move(work);
     submission->lane = lane;
     submission->deliverTo = deliverTo;
+    submission->recorded = recorded;
     QMetaObject::invokeMethod(this, [this, submission] { submitOnThread(*submission); },
                               Qt::QueuedConnection);
 }
@@ -224,6 +227,7 @@ void ProcessOrchestrator::submitOnThread(const Submission &submission)
     task->work = submission.work;
     task->lane = submission.lane;
     task->deliverTo = submission.deliverTo;
+    task->recorded = submission.recorded;
     task->token = token;
     task->timer->stop();
 
@@ -325,12 +329,14 @@ void ProcessOrchestrator::removeTask(const QString &key, const QString &outcome)
         return;
     if (!task->partial.isEmpty())
         task->log += task->partial + QLatin1Char('\n');
-    ProcessRecord record = recordFor(task);
-    record.status = outcome;
-    record.serial = ++m_serial;
-    m_recent.prepend(record);
-    while (m_recent.size() > 20)
-        m_recent.removeLast();
+    if (task->recorded) {
+        ProcessRecord record = recordFor(task);
+        record.status = outcome;
+        record.serial = ++m_serial;
+        m_recent.prepend(record);
+        while (m_recent.size() > 20)
+            m_recent.removeLast();
+    }
     task->timer->stop();
     task->timer->deleteLater();
     m_order.removeOne(key);

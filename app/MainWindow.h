@@ -95,6 +95,12 @@ private:
     // Runs `save` on the pool with the folder whose workspace files take an
     // edited setting, then reloads the project.
     void saveProjectSetting(std::function<bool(const QString &directory)> save);
+    // The application file in use: the one chosen under View > Edit
+    // Defaults > Application Settings, or application.crlf.
+    QString applicationFile() const;
+    // One checkable item per <name>.crlf file in the application folder,
+    // then the items that open the active file and the folder.
+    void fillApplicationMenu(QMenu *menu);
     // File > Copy Application Files to Workspace, for the scoped folder.
     void copyApplicationFiles();
     void finishStartup(const QStringList &paths);

@@ -16,6 +16,7 @@ class ProcessOrchestrator;
 class QLabel;
 class QModelIndex;
 class QStackedWidget;
+class QTimer;
 class QToolButton;
 class QTreeView;
 
@@ -43,6 +44,10 @@ public:
     // Lists `directory` again, after files were written there outside the
     // panel.
     void refresh(const QString &directory);
+    // Lists every folder the tree shows again. The tree follows changes on
+    // its own; this catches what a watch can miss, when the window comes
+    // back to the front.
+    void refreshListed();
     // Expands the folders above `path` and selects that file.
     void reveal(const QString &path);
     // Source-control letters keyed by lower-case absolute path. A changed
@@ -77,9 +82,12 @@ private:
     void setGroupRecursive(int groupIndex, bool recursive);
     void commitGroups(const QList<FileGroup> &groups);
     void deletePath(const QString &path);
-    void createFile(const QString &directory);
-    void insertNewFile(const QString &directory);
-    void finishNewFile(int hint);
+    // New File and New Folder: the entry is made on disk under a stand-in
+    // name, and its row opens for the name to be typed.
+    void createEntry(const QString &directory, bool folder);
+    void insertNewEntry(const QString &directory);
+    void finishNewEntry(int hint);
+    bool removeNewEntry(const QString &path);
     void showRootReady();
     void continueReveal();
     void showRootFailed();
@@ -99,6 +107,9 @@ private:
     // The tree shows this model; m_model stays the file-system source.
     DirectoryFilter *m_filter = nullptr;
     QTreeView *m_tree = nullptr;
+    // Reads the listed folders again every few seconds, for a root whose
+    // changes are not reported, such as a WSL share.
+    QTimer *m_poll = nullptr;
     // Expand All keeps descending as folders finish loading; any collapse
     // or rescope ends it.
     bool m_expandingAll = false;
@@ -106,8 +117,10 @@ private:
     bool m_clipboardCut = false;
     // Set for the duration of a drag so the source row can be drawn faded.
     QString m_dragPath;
-    // Set while a New File row is waiting for its name. The original path is
-    // the placeholder on disk; the current path follows a successful rename.
+    // Set while a New File or New Folder row is waiting for its name. The
+    // original path is the stand-in on disk; the current path follows a
+    // successful rename.
+    bool m_newIsFolder = false;
     QString m_pendingDirectory;
     QString m_newFileOriginal;
     QString m_newFilePath;

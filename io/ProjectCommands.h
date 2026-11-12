@@ -125,13 +125,21 @@ struct ProjectCommand
 constexpr char kProjectFolder[] = ".crlf";
 // The file the editor creates when a project has none.
 constexpr char kWorkspaceFile[] = "workspace.crlf";
-// The user's own settings, in the application folder.
+// The application's settings as shipped, in the application folder: the
+// shipped scripts and agents, set up. It is also the name of a workspace's
+// own copy of the application settings, which is merged after the
+// workspace's other files.
 constexpr char kApplicationFile[] = "application.crlf";
+// Shipped beside it: application settings that set nothing.
+constexpr char kBlankFile[] = "blank.crlf";
+// The defaults a user had beside the program before the application folder.
+constexpr char kPreviousFile[] = "previous.crlf";
 
 // The settings of one project: every <name>.crlf file in the project root,
-// merged in file-name order with the first definition winning, and
-// application.crlf after them when a workspace file sets `inherit`. With no
-// workspace file, application.crlf applies alone. See io/ProjectMerge.h.
+// merged in file-name order with the first definition winning, and the
+// active application file after them when a workspace file sets `inherit`.
+// With no workspace file, the active application file applies alone. See
+// io/ProjectMerge.h.
 struct Project
 {
     // The project root: the nearest folder, walking up, that holds a
@@ -174,36 +182,45 @@ IndentRule indentForFileName(const IndentSettings &settings, const QString &file
 // folder. It is where the session is kept: %APPDATA%\CRLF\CRLF.
 QString applicationFolder();
 
-// The <name>.crlf files in `directory`, as absolute paths in name order,
-// ignoring case.
+// The <name>.crlf files in `directory`, as absolute paths in merge order: by
+// name, ignoring case, with application.crlf after the others.
 QStringList settingsFiles(const QString &directory);
 
-// First run: copies application.crlf into `applicationFolder` and creates
-// its .crlf/scripts, .crlf/keys, and .crlf/rules. The copy comes from the
-// file named .crlf beside the program, which was the application's settings
-// before, or from the application.crlf shipped there when that is absent.
-// Does nothing once application.crlf exists.
-void seedApplicationFolder(const QString &applicationFolder, const QString &programFolder);
+// The application file in use: `name` in `applicationFolder`, or
+// application.crlf when no file of that name is there.
+QString activeApplicationFile(const QString &applicationFolder, const QString &name);
+
+// Gives `applicationFolder` the files shipped beside the program that it
+// does not have yet (application.crlf and blank.crlf), and its .crlf/scripts,
+// .crlf/keys, and .crlf/rules. A file already there is never replaced.
+//
+// On the first run, a file named .crlf beside the program, which was the
+// application's settings before, is copied as previous.crlf, unless it
+// still holds only the empty command list it shipped with. The return value
+// is then that name, for the caller to make the active file, so the user's
+// settings keep applying. Otherwise it is empty.
+QString seedApplicationFolder(const QString &applicationFolder, const QString &programFolder);
 
 // `start` is a file or directory. Parents are searched up to the drive root
 // for the project root. A legacy file named `.crlf` there is renamed to
 // workspace.crlf, or to legacy.crlf when that name is taken; when the rename
 // fails, the file is read under its old name.
 //
-// Relative `cwd`, `watch`, and group paths resolve against the project root,
-// in application.crlf entries too. With no project root they resolve against
-// `start` when it is a folder, and `applicationFolder` otherwise.
-Project projectFor(const QString &start, const QString &applicationFolder);
+// `applicationFile` is the active application file. Relative `cwd`, `watch`,
+// and group paths resolve against the project root, in its entries too.
+// With no project root they resolve against `start` when it is a folder,
+// and the application file's folder otherwise.
+Project projectFor(const QString &start, const QString &applicationFile);
 
 // Writes `groups` for the project rooted at `directory`. The first workspace
 // file that has the key takes the list, and the key is removed from the
 // later ones. With no such file, workspace.crlf in `directory` takes it; a
 // folder with no settings file gets a workspace.crlf that also sets
 // `inherit`, so the application's settings keep applying there.
-// An entry inherited from application.crlf and left as it was is not written,
-// and application.crlf is never changed. Returns false when the file to
+// An entry inherited from `applicationFile` and left as it was is not
+// written, and that file is never changed. Returns false when the file to
 // write is not JSON or cannot be written.
-bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups, const QString &applicationFolder);
+bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups, const QString &applicationFile);
 
 // Writes `icons` the same way. An empty theme and no rules removes the key.
-bool saveProjectIcons(const QString &directory, const ProjectIcons &icons, const QString &applicationFolder);
+bool saveProjectIcons(const QString &directory, const ProjectIcons &icons, const QString &applicationFile);

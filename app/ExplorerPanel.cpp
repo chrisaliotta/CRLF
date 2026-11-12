@@ -42,6 +42,8 @@
 
 namespace {
 
+constexpr int kPollIntervalMs = 3000;
+
 QString directoryName(const QString &path)
 {
     const QString name = QDir(path).dirName();
@@ -339,7 +341,7 @@ ExplorerPanel::ExplorerPanel(QWidget *parent)
         if (!m_pendingDirectory.isEmpty() && samePath(path, m_pendingDirectory)) {
             const QString directory = m_pendingDirectory;
             m_pendingDirectory.clear();
-            insertNewFile(directory);
+            insertNewEntry(directory);
         }
         if (!m_revealPath.isEmpty())
             continueReveal();
@@ -347,6 +349,15 @@ ExplorerPanel::ExplorerPanel(QWidget *parent)
     connect(m_model, &ExplorerModel::listingFailed, this, [this](const QString &path) {
         if (samePath(path, m_rootPath))
             showRootFailed();
+    });
+
+    // Reading a folder nobody is looking at would be wasted work, and on a
+    // WSL share each read wakes the distro.
+    m_poll = new QTimer(this);
+    m_poll->setInterval(kPollIntervalMs);
+    connect(m_poll, &QTimer::timeout, this, [this] {
+        if (isVisible() && window()->isActiveWindow())
+            m_model->refreshListed();
     });
 
     m_filter = new DirectoryFilter(this);
@@ -364,7 +375,7 @@ ExplorerPanel::ExplorerPanel(QWidget *parent)
             m_typedName = line->text().trimmed();
     });
     connect(delegate, &QAbstractItemDelegate::closeEditor, this,
-            [this](QWidget *, QAbstractItemDelegate::EndEditHint hint) { finishNewFile(int(hint)); });
+            [this](QWidget *, QAbstractItemDelegate::EndEditHint hint) { finishNewEntry(int(hint)); });
     m_tree->setHeaderHidden(true);
     // The platform default (20) steps each nested folder quite far to the right.
     m_tree->setIndentation(12);
@@ -471,6 +482,11 @@ void ExplorerPanel::refresh(const QString &directory)
     m_model->refresh(QDir::cleanPath(directory));
 }
 
+void ExplorerPanel::refreshListed()
+{
+    m_model->refreshListed();
+}
+
 void ExplorerPanel::setOrchestrator(ProcessOrchestrator *orchestrator)
 {
     m_model->setOrchestrator(orchestrator);
@@ -491,6 +507,10 @@ void ExplorerPanel::setRootPath(const QString &path, bool warnIfMissing)
     m_stack->setCurrentWidget(m_loading);
     m_model->setRootPath(path);
     m_tree->setRootIndex(m_filter->mapFromSource(m_model->rootIndex()));
+    if (m_model->watched())
+        m_poll->stop();
+    else
+        m_poll->start();
 }
 
 void ExplorerPanel::showRootReady()
@@ -669,7 +689,10 @@ void ExplorerPanel::showContextMenu(const QPoint &pos)
                                            : onFolder ? path
                                                       : QFileInfo(path).absolutePath();
         menu.addAction(QStringLiteral("New File"), this, [this, newFileDirectory] {
-            createFile(newFileDirectory);
+            createEntry(newFileDirectory, false);
+        })->setEnabled(!newFileDirectory.isEmpty());
+        menu.addAction(QStringLiteral("New Folder"), this, [this, newFileDirectory] {
+            createEntry(newFileDirectory, true);
         })->setEnabled(!newFileDirectory.isEmpty());
         menu.addAction(QStringLiteral("New Virtual Folder"), this, [this, newFileDirectory] {
             createVirtualFolder(newFileDirectory);
@@ -875,8 +898,9 @@ void ExplorerPanel::confirmAndMove(const QString &source, const QString &directo
     emit pathMoved(source, destination);
 }
 
-void ExplorerPanel::createFile(const QString &directory)
+void ExplorerPanel::createEntry(const QString &directory, bool folder)
 {
+    m_newIsFolder = folder;
     const QModelIndex sourceParent = m_model->index(directory);
     const QModelIndex parent = m_filter->mapFromSource(sourceParent);
     if (!sourceParent.isValid())
@@ -892,30 +916,30 @@ void ExplorerPanel::createFile(const QString &directory)
             m_model->fetchMore(sourceParent);
         return;
     }
-    insertNewFile(directory);
+    insertNewEntry(directory);
 }
 
-void ExplorerPanel::insertNewFile(const QString &directory)
+void ExplorerPanel::insertNewEntry(const QString &directory)
 {
     const QModelIndex directoryIndex = m_model->index(directory);
-    QString name = QStringLiteral("untitled");
+    const QString base = m_newIsFolder ? QStringLiteral("untitled folder") : QStringLiteral("untitled");
+    QString name = base;
     for (int n = 2; m_model->containsName(directoryIndex, name); ++n)
-        name = QStringLiteral("untitled %1").arg(n);
+        name = QStringLiteral("%1 %2").arg(base).arg(n);
     const QString path = QDir(directory).filePath(name);
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
+    const bool created = m_newIsFolder ? QDir(directory).mkdir(name) : QFile(path).open(QIODevice::WriteOnly);
+    if (!created) {
         warn(QStringLiteral("Could not create \"%1\".").arg(name));
         return;
     }
-    file.close();
 
-    // Asking the model for the path inserts the row. A file created beside
-    // the model is otherwise invisible until the folder is scoped again.
+    // Asking the model for the path inserts the row now, ahead of the
+    // listing that follows the change on disk.
     const QModelIndex index = m_filter->mapFromSource(m_model->index(path));
     if (index.isValid() && index.parent().isValid() && index.parent() != m_tree->rootIndex())
         m_tree->expand(index.parent());
     if (!index.isValid()) {
-        QFile::remove(path);
+        removeNewEntry(path);
         warn(QStringLiteral("Could not create \"%1\".").arg(name));
         return;
     }
@@ -933,11 +957,16 @@ void ExplorerPanel::insertNewFile(const QString &directory)
         return;
     }
     line->clear();
-    line->setPlaceholderText(QStringLiteral("File name"));
+    line->setPlaceholderText(m_newIsFolder ? QStringLiteral("Folder name") : QStringLiteral("File name"));
     line->setFocus();
 }
 
-void ExplorerPanel::finishNewFile(int hint)
+bool ExplorerPanel::removeNewEntry(const QString &path)
+{
+    return m_newIsFolder ? QDir().rmdir(path) : QFile::remove(path);
+}
+
+void ExplorerPanel::finishNewEntry(int hint)
 {
     const QString original = m_newFileOriginal;
     const QString current = m_newFilePath;
@@ -955,12 +984,14 @@ void ExplorerPanel::finishNewFile(int hint)
         if (index.isValid())
             m_model->remove(index);
         else
-            QFile::remove(original);
+            removeNewEntry(original);
         if (!cancelled && !typed.isEmpty())
             warn(QStringLiteral("Could not create \"%1\".").arg(typed));
         return;
     }
-    emit fileActivated(current);
+    // A new file opens as a document. A new folder is only shown.
+    if (!m_newIsFolder)
+        emit fileActivated(current);
 }
 
 void ExplorerPanel::deletePath(const QString &path)

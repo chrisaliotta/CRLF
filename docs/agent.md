@@ -21,7 +21,7 @@ The first three run the reference agent that ships beside the program; the model
 
 View > Agent (Ctrl+Shift+A) opens the panel. The picker at its top lists the entries in merge order: the workspace files' first, then those inherited from `application.crlf`. The chosen agent starts when the panel opens, or when the first message is sent, and runs until the project changes it, another agent is picked, or New starts a fresh session. One agent runs at a time.
 
-An entry can live in a workspace file or in `application.crlf`. The application's entries are offered in every folder that has no settings of its own, and in a workspace that inherits `agents`; a name defined in both is the workspace's. An application entry names its script and key with `${programDir}` and `${appDir}`; see [crlf.md](crlf.md#application-settings).
+An entry can live in a workspace file or in the application file. The `application.crlf` that ships already lists four agents that run the reference agent: Claude, GPT, Grok, and Local. Each works once its key file exists in the application folder, such as `%APPDATA%\CRLF\CRLF\.crlf\keys\openai`; Local needs none. The application's entries are offered in every folder that has no settings of its own, and in a workspace that inherits `agents`; a name defined in both is the workspace's. An application entry names its script and key with `${programDir}` and `${appDir}`; see [crlf.md](crlf.md#application-settings).
 
 ## The panel
 

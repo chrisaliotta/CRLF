@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
     app.setOrganizationName(QStringLiteral(APP_NAME));
     app.setApplicationName(QStringLiteral(APP_NAME));
     app.setApplicationVersion(QStringLiteral(APP_VERSION));
-    app.setWindowIcon(QIcon(QStringLiteral(":/images/CRLF_basic_light.png")));
+    app.setWindowIcon(QIcon(QStringLiteral(":/images/CRLF_v2.png")));
 
     loadBundledFonts();
     app.setFont(QFont(QStringLiteral("Ubuntu"), 10));

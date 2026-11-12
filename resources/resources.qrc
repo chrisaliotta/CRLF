@@ -1,6 +1,5 @@
 <RCC>
     <qresource prefix="/">
-        <file>images/CRLF_basic.png</file>
-        <file>images/CRLF_basic_light.png</file>
+        <file>images/CRLF_v2.png</file>
     </qresource>
 </RCC>

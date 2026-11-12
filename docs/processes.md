@@ -64,7 +64,8 @@ Restart Services, on Active, needs no selection. It starts autocomplete again an
 | Agent file read or write | Pool, for a file that is not open | An open file's text, and its replacement |
 | Symbol scan | Pool. The editor's 200ms timer is the `Sleep` record | `applyDisk` and the index update |
 | External lookup and opening a definition | Pool | Opening the tab |
-| Explorer listing | Pool | The model update |
+| Explorer listing | Pool. The first read of a folder is a History row; reading it again is not, because that repeats on its own | The model update: the first read fills the folder, a later read changes only the rows that differ |
+| Explorer changes on disk | `FolderWatch`: one Windows directory handle on the scoped folder, reporting its whole subtree to the UI thread. Each folder it names is read again on the pool 200ms later. A WSL share reports nothing, so its listed folders are read again every 3 seconds while the explorer is showing and the window is in front | Gathering the folder names, and the model update |
 | Open file, restore session, `projectFor` | Pool | Applying the text or the project |
 | First-run copy of `application.crlf`, the legacy `.crlf` rename | Pool, in the same task as `projectFor` | Retargeting an open tab and the status bar message |
 | Saving `groups` or `icons` into a workspace file, Copy Application Files to Workspace | Pool | The dialog, the status bar message, and the reload |

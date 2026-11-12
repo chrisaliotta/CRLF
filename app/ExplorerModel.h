@@ -5,14 +5,21 @@
 #include <QAbstractItemModel>
 #include <QFileIconProvider>
 #include <QList>
+#include <QSet>
 
 class FileIconTheme;
+class FolderWatch;
 class ProcessOrchestrator;
+class QTimer;
 
 // The scoped folder is the model's only top-level node, and its children are
 // the rows the tree shows. Listings are read on a worker thread: QFileSystemModel
 // resolves a UNC path through "My Computer" and, when \\wsl.localhost itself is
 // not a directory, that resolution lands on C:.
+//
+// The tree follows the disk. A FolderWatch on the root names each folder
+// whose entries changed, whoever changed them, and the listed ones are read
+// again a moment later.
 class ExplorerModel : public QAbstractItemModel
 {
     Q_OBJECT
@@ -52,7 +59,8 @@ public:
     bool isListed(const QModelIndex &index) const;
     bool containsName(const QModelIndex &directory, const QString &name) const;
 
-    // Inserts a file row when its parent directory is already listed.
+    // Inserts the row of a file or folder that exists on disk, when its
+    // parent directory is already listed.
     QModelIndex index(const QString &path);
     // The row already in the tree, including a file inside a virtual folder.
     QModelIndex existingIndex(const QString &path) const;
@@ -60,9 +68,18 @@ public:
     bool remove(const QModelIndex &index);
     // Drops a row whose file is already gone.
     void discard(const QString &path);
-    // Reads the directory again. A collapsed folder is dropped so the next
-    // expand reads it again.
+    // Reads the directory again and applies what differs: rows for new
+    // entries, and the rows of missing ones dropped. Rows that are still
+    // there keep their children, so the tree stays expanded and selected as
+    // it was.
     void refresh(const QString &directory);
+    // Refreshes every directory that has been listed. A collapsed folder is
+    // not among them: collapsing drops its rows.
+    void refreshListed();
+    // True when changes under the root are reported as they happen. False
+    // for a root that cannot be watched, such as a WSL share; the panel then
+    // calls refreshListed on a timer.
+    bool watched() const { return m_watched; }
     void markStale(const QModelIndex &index);
     // The tree reports this. An open directory uses the theme's folderExpanded icon.
     void setExpanded(const QModelIndex &index, bool expanded);
@@ -96,6 +113,13 @@ private:
 
     void startListing(Node *node);
     void completeListing(const QString &path, int generation, bool ok, const QList<Entry> &entries);
+    // Brings an already listed directory's rows in line with `entries`.
+    void mergeListing(Node *directory, const QList<Entry> &entries);
+    // Adds one row where the listing order puts it: folders first, then
+    // virtual folders, then files, each by name.
+    Node *insertEntry(Node *directory, const Entry &entry);
+    int directoryRow(Node *parent, const QString &name) const;
+    void collectListed(Node *node, QStringList &paths) const;
     void clearChildren(Node *node);
     void deleteNode(Node *node);
     Node *nodeAt(const QModelIndex &index) const;
@@ -120,4 +144,10 @@ private:
     QString m_projectDirectory;
     QList<FileGroup> m_groups;
     QFileIconProvider m_icons;
+    FolderWatch *m_watch = nullptr;
+    bool m_watched = false;
+    // Folders the watch named since the timer started. One build or branch
+    // switch names the same folder many times.
+    QSet<QString> m_changed;
+    QTimer *m_changedTimer = nullptr;
 };

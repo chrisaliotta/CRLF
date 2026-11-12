@@ -59,9 +59,12 @@ public:
     explicit ProcessOrchestrator(QObject *parent = nullptr);
     ~ProcessOrchestrator() override;
 
+    // `recorded` false keeps the finished task out of History. It is for
+    // work that repeats on its own, such as re-reading a watched folder,
+    // which would otherwise push everything else off that list.
     void submit(const QString &key, const QString &name, const QString &owner, int debounceMs,
                 const QString &detail, std::function<void()> work, ProcessLane lane = ProcessLane::Pool,
-                QObject *deliverTo = nullptr);
+                QObject *deliverTo = nullptr, bool recorded = true);
     void cancel(const QString &key);
 
     // Drops the record when `token` is still the one submit() issued. A newer

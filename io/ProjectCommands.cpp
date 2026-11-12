@@ -356,17 +356,12 @@ QList<QJsonObject> readableObjects(const QList<SettingsFile> &files)
     return objects;
 }
 
-QString applicationFile(const QString &applicationFolder)
-{
-    return QDir(applicationFolder).filePath(QLatin1String(kApplicationFile));
-}
-
-// What the workspace files in `files` take from application.crlf. A save
+// What the workspace files in `files` take from the application file. A save
 // leaves these out, so an inherited entry is not copied into the workspace.
-QJsonObject inheritedBy(const QList<SettingsFile> &files, const QString &applicationFolder)
+QJsonObject inheritedBy(const QList<SettingsFile> &files, const QString &applicationFile)
 {
     QJsonObject application;
-    loadProjectObject(applicationFile(applicationFolder), &application);
+    loadProjectObject(applicationFile, &application);
     return inheritedSettings(readableObjects(files), application);
 }
 
@@ -420,7 +415,14 @@ QStringList settingsFiles(const QString &directory)
 {
     const QDir dir(directory);
     QStringList names = dir.entryList({QStringLiteral("*.crlf")}, QDir::Files | QDir::Hidden);
-    std::sort(names.begin(), names.end(), [](const QString &a, const QString &b) {
+    // A workspace's copy of the application settings is its base: every
+    // other file in the folder is read before it, and so wins over it.
+    const auto isApplication = [](const QString &name) {
+        return name.compare(QLatin1String(kApplicationFile), Qt::CaseInsensitive) == 0;
+    };
+    std::sort(names.begin(), names.end(), [&isApplication](const QString &a, const QString &b) {
+        if (isApplication(a) != isApplication(b))
+            return isApplication(b);
         return a.compare(b, Qt::CaseInsensitive) < 0;
     });
     QStringList paths;
@@ -429,23 +431,45 @@ QStringList settingsFiles(const QString &directory)
     return paths;
 }
 
-void seedApplicationFolder(const QString &applicationFolder, const QString &programFolder)
+QString activeApplicationFile(const QString &applicationFolder, const QString &name)
 {
-    const QString target = applicationFile(applicationFolder);
-    if (QFileInfo::exists(target))
-        return;
     const QDir folder(applicationFolder);
-    for (const char *name : {"scripts", "keys", "rules"})
-        folder.mkpath(QLatin1String(kProjectFolder) + QLatin1Char('/') + QLatin1String(name));
-    // Before application.crlf, the user's defaults were the file named .crlf
-    // beside the program. An upgrade leaves that file there, so it is kept.
-    const QDir program(programFolder);
-    const QString previous = program.filePath(QLatin1String(kProjectFolder));
-    QFile::copy(QFileInfo(previous).isFile() ? previous : program.filePath(QLatin1String(kApplicationFile)), target);
+    const bool named = !name.isEmpty() && QFileInfo(folder.filePath(name)).isFile();
+    return folder.filePath(named ? name : QString::fromLatin1(kApplicationFile));
 }
 
-Project projectFor(const QString &start, const QString &applicationFolder)
+QString seedApplicationFolder(const QString &applicationFolder, const QString &programFolder)
 {
+    const QDir folder(applicationFolder);
+    const QDir program(programFolder);
+    const bool firstRun = !folder.exists(QLatin1String(kApplicationFile));
+    for (const char *name : {"scripts", "keys", "rules"})
+        folder.mkpath(QLatin1String(kProjectFolder) + QLatin1Char('/') + QLatin1String(name));
+    // QFile::copy leaves a file that is already there as it is.
+    for (const char *name : {kApplicationFile, kBlankFile})
+        QFile::copy(program.filePath(QLatin1String(name)), folder.filePath(QLatin1String(name)));
+
+    // Before the application folder, the user's defaults were the file named
+    // .crlf beside the program. An upgrade leaves that file there. One that
+    // was never edited still holds what shipped then, an empty command list,
+    // and is not worth keeping in place of the configured file.
+    const QString previous = program.filePath(QLatin1String(kProjectFolder));
+    if (!firstRun || !QFileInfo(previous).isFile())
+        return {};
+    QJsonObject settings;
+    loadProjectObject(previous, &settings);
+    const bool untouched = settings.isEmpty()
+                           || (settings.size() == 1 && settings.value(QLatin1String("commands")).toArray().isEmpty()
+                               && settings.contains(QLatin1String("commands")));
+    if (untouched)
+        return {};
+    QFile::copy(previous, folder.filePath(QLatin1String(kPreviousFile)));
+    return QString::fromLatin1(kPreviousFile);
+}
+
+Project projectFor(const QString &start, const QString &applicationFile)
+{
+    const QString applicationFolder = QFileInfo(applicationFile).absolutePath();
     Project project;
     project.directory = findProjectDirectory(start, applicationFolder);
     QList<SettingsFile> files;
@@ -456,7 +480,7 @@ Project projectFor(const QString &start, const QString &applicationFolder)
     const QList<QJsonObject> workspace = readableObjects(files);
     QJsonObject application;
     if (project.directory.isEmpty() || inheritsApplication(workspace)) {
-        files += loadSettings({applicationFile(applicationFolder)});
+        files += loadSettings({applicationFile});
         application = files.last().root;
     }
 
@@ -505,11 +529,11 @@ IndentRule indentForFileName(const IndentSettings &settings, const QString &file
     return settings.standard;
 }
 
-bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups, const QString &applicationFolder)
+bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups, const QString &applicationFile)
 {
     const QList<SettingsFile> files = loadSettings(settingsFiles(directory));
     Project inherited;
-    readGroups(inherited, inheritedBy(files, applicationFolder).value(QLatin1String("groups")).toArray());
+    readGroups(inherited, inheritedBy(files, applicationFile).value(QLatin1String("groups")).toArray());
     QJsonArray unchanged;
     for (const FileGroup &group : std::as_const(inherited.groups))
         unchanged.append(groupObject(group));
@@ -524,11 +548,11 @@ bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups,
                          stored.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(stored));
 }
 
-bool saveProjectIcons(const QString &directory, const ProjectIcons &icons, const QString &applicationFolder)
+bool saveProjectIcons(const QString &directory, const ProjectIcons &icons, const QString &applicationFile)
 {
     const QList<SettingsFile> files = loadSettings(settingsFiles(directory));
     ProjectIcons inherited;
-    readIcons(inherited, inheritedBy(files, applicationFolder).value(QLatin1String("icons")));
+    readIcons(inherited, inheritedBy(files, applicationFile).value(QLatin1String("icons")));
     QJsonArray unchanged;
     for (const IconRule &rule : std::as_const(inherited.rules))
         unchanged.append(iconRuleObject(rule));

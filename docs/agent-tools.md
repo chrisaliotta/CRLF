@@ -982,7 +982,7 @@ The folders are looked for when the session starts:
 - A name the model gives is read only when it is in that list, so a rule cannot name a file outside the folders.
 - `${appDir}/rules` is the `rules` folder under `%APPDATA%\CRLF\CRLF\.crlf`, shared by every workspace. Inside a WSL distro the variable is a `/mnt/<drive>/...` path.
 
-This entry suits `application.crlf`, where one agent serves every workspace; see [crlf.md](crlf.md#application-settings).
+This entry suits `application.crlf`, where one agent serves every workspace; see [crlf.md](crlf.md#application-settings). The `application.crlf` that ships has four entries of this shape already, so an agent is available once its key file is in the application folder's `.crlf/keys`; see [The shipped files](crlf.md#the-shipped-files).
 
 ### Committing rules
 

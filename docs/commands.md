@@ -8,7 +8,7 @@ CRLF looks for files with the `.crlf` extension, such as `workspace.crlf`. The s
 
 The first folder that holds a `<name>.crlf` file is the project root. Every such file in it is read, in name order, and merged; the earlier file wins a shared command name. When the walk finds no project root, CRLF uses `application.crlf` in the application folder, `%APPDATA%\CRLF\CRLF`. A workspace replaces those settings unless one of its files sets `inherit`. Saving a file in use, or switching to a document that resolves to a different project, reloads the menus. A command that is no longer defined is stopped. The rules are in [crlf.md](crlf.md#which-files-are-in-use).
 
-View > Edit Defaults > Commands opens `application.crlf` as text. Themes and Syntax, on the same menu, open the theme and syntax files beside the program. Saving `application.crlf` reloads commands only while that file is in use.
+View > Edit Defaults > Application Settings lists the application files and checks the active one; Edit Active File, on that menu, opens it as text. Themes and Syntax, under Edit Defaults, open the theme and syntax files beside the program. Saving the active application file reloads commands only while that file is in use. See [crlf.md](crlf.md#choosing-the-active-file).
 
 Each file is a JSON array of commands, or an object with a `commands` array and the other keys. An entry needs `name` and `command`. A second entry with the same `name` is ignored, because the name identifies the running process and its output log. A file that is neither an array nor an object is skipped, and the status bar says "Couldn't read" and its name; the other files still apply.
 

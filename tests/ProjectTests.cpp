@@ -235,7 +235,7 @@ private slots:
         writeFile(work.filePath(QStringLiteral("local.crlf")), R"([{"name": "Build", "command": "mine"}])");
         writeFile(work.filePath(QStringLiteral("broken.crlf")), "{ not json");
 
-        const Project project = projectFor(m_work, m_application);
+        const Project project = projectFor(m_work, appFile());
         QCOMPARE(project.directory, m_work);
         QCOMPARE(project.files, QStringList({work.filePath(QStringLiteral("broken.crlf")),
                                              work.filePath(QStringLiteral("local.crlf")),
@@ -257,7 +257,7 @@ private slots:
                       "agents": [{"name": "GPT", "command": "agent", "watch": ["tools/agent.py"]}],
                       "groups": [{"name": "Docs", "path": "docs", "files": ["*.md"]}]})");
 
-        const Project project = projectFor(m_work, m_application);
+        const Project project = projectFor(m_work, appFile());
         QCOMPARE(project.files, QStringList({QDir(m_work).filePath(QLatin1String(kWorkspaceFile)),
                                              QDir(m_application).filePath(QLatin1String(kApplicationFile))}));
         QCOMPARE(project.commands.at(0).workingDirectory, QDir(m_work).filePath(QStringLiteral("build")));
@@ -275,7 +275,7 @@ private slots:
     {
         writeFile(QDir(m_application).filePath(QLatin1String(kApplicationFile)),
                   R"({"commands": [{"name": "Build", "command": "make", "cwd": "build"}]})");
-        const Project project = projectFor(QString(), m_application);
+        const Project project = projectFor(QString(), appFile());
         QCOMPARE(project.directory, QString());
         QCOMPARE(project.files, QStringList({QDir(m_application).filePath(QLatin1String(kApplicationFile))}));
         QCOMPARE(project.commands.at(0).workingDirectory, QDir(m_application).filePath(QStringLiteral("build")));
@@ -284,7 +284,7 @@ private slots:
         // project: the search passes it and finds the folder above.
         const QDir above(QDir(m_directory->path()).absolutePath());
         writeFile(above.filePath(QStringLiteral("outer.crlf")), R"([{"name": "Outer", "command": "o"}])");
-        const Project opened = projectFor(m_application, m_application);
+        const Project opened = projectFor(m_application, appFile());
         QCOMPARE(opened.directory, above.path());
         QCOMPARE(commandNames(opened), QStringList({QStringLiteral("Outer")}));
     }
@@ -299,7 +299,7 @@ private slots:
         const QDir work(m_work);
         writeFile(work.filePath(QStringLiteral(".crlf")), R"({"commands": [{"name": "Build", "command": "b"}]})");
 
-        const Project project = projectFor(m_work, m_application);
+        const Project project = projectFor(m_work, appFile());
         QVERIFY(!QFileInfo::exists(work.filePath(QStringLiteral(".crlf"))));
         QCOMPARE(project.renamedFrom, work.filePath(QStringLiteral(".crlf")));
         QCOMPARE(project.renamedTo, work.filePath(QStringLiteral("workspace.crlf")));
@@ -307,7 +307,7 @@ private slots:
         QCOMPARE(commandNames(project), QStringList({QStringLiteral("Build")}));
 
         // The next load finds nothing to rename.
-        QCOMPARE(projectFor(m_work, m_application).renamedFrom, QString());
+        QCOMPARE(projectFor(m_work, appFile()).renamedFrom, QString());
     }
 
     // A project that already has workspace.crlf keeps it. The legacy file
@@ -320,7 +320,7 @@ private slots:
         writeFile(work.filePath(QStringLiteral("workspace.crlf")),
                   R"({"commands": [{"name": "Build", "command": "new"}]})");
 
-        const Project project = projectFor(m_work, m_application);
+        const Project project = projectFor(m_work, appFile());
         QCOMPARE(project.renamedTo, work.filePath(QStringLiteral("legacy.crlf")));
         QCOMPARE(project.files, QStringList({work.filePath(QStringLiteral("legacy.crlf")),
                                              work.filePath(QStringLiteral("workspace.crlf"))}));
@@ -343,11 +343,11 @@ private slots:
         writeFile(work.filePath(QStringLiteral("web/.crlf/rules/style.md")), "rule");
         writeFile(work.filePath(QStringLiteral("web/index.html")), "<html>");
 
-        const Project inner = projectFor(work.filePath(QStringLiteral("api/src/deep/main.cpp")), m_application);
+        const Project inner = projectFor(work.filePath(QStringLiteral("api/src/deep/main.cpp")), appFile());
         QCOMPARE(inner.directory, work.filePath(QStringLiteral("api")));
         QCOMPARE(commandNames(inner), QStringList({QStringLiteral("Inner")}));
 
-        const Project outer = projectFor(work.filePath(QStringLiteral("web")), m_application);
+        const Project outer = projectFor(work.filePath(QStringLiteral("web")), appFile());
         QCOMPARE(outer.directory, m_work);
         QCOMPARE(commandNames(outer), QStringList({QStringLiteral("Outer")}));
     }
@@ -369,14 +369,14 @@ private slots:
         writeFile(application, R"({"groups": [{"name": "Shared", "files": ["LICENSE"]}]})");
         const QByteArray applicationBefore = readFile(application);
 
-        Project project = projectFor(m_work, m_application);
+        Project project = projectFor(m_work, appFile());
         QCOMPARE(groupNames(project),
                  QStringList({QStringLiteral("Docs"), QStringLiteral("Old"), QStringLiteral("Shared")}));
         FileGroup added;
         added.name = QStringLiteral("New");
         added.files = {QStringLiteral("TODO.md")};
         project.groups.append(added);
-        QVERIFY(saveProjectGroups(m_work, project.groups, m_application));
+        QVERIFY(saveProjectGroups(m_work, project.groups, appFile()));
 
         QCOMPARE(names(readObject(first).value(QLatin1String("groups"))),
                  QStringList({QStringLiteral("Docs"), QStringLiteral("Old"), QStringLiteral("New")}));
@@ -384,7 +384,7 @@ private slots:
         QCOMPARE(readObject(second), json(R"({"commands": []})"));
         QCOMPARE(readObject(work.filePath(QStringLiteral("a.crlf"))), json(R"({"inherit": true, "hide": ["build"]})"));
         QCOMPARE(readFile(application), applicationBefore);
-        QCOMPARE(groupNames(projectFor(m_work, m_application)),
+        QCOMPARE(groupNames(projectFor(m_work, appFile())),
                  QStringList({QStringLiteral("Docs"), QStringLiteral("Old"), QStringLiteral("New"),
                               QStringLiteral("Shared")}));
     }
@@ -405,12 +405,12 @@ private slots:
         FileGroup added;
         added.name = QStringLiteral("New");
         added.files = {QStringLiteral("TODO.md")};
-        QVERIFY(saveProjectGroups(m_work, {shared, added}, m_application));
+        QVERIFY(saveProjectGroups(m_work, {shared, added}, appFile()));
 
         const QJsonObject created = readObject(QDir(m_work).filePath(QLatin1String(kWorkspaceFile)));
         QCOMPARE(created.value(QLatin1String("inherit")).toBool(), true);
         QCOMPARE(names(created.value(QLatin1String("groups"))), QStringList({QStringLiteral("New")}));
-        const Project project = projectFor(m_work, m_application);
+        const Project project = projectFor(m_work, appFile());
         QCOMPARE(commandNames(project), QStringList({QStringLiteral("Mine")}));
         QCOMPARE(groupNames(project), QStringList({QStringLiteral("New"), QStringLiteral("Shared")}));
     }
@@ -438,7 +438,7 @@ private slots:
                         {"name": "There", "command": {"windows": "dir", "wsl": "ls"},
                          "cwd": "\\\\wsl.localhost\\Ubuntu\\home\\me"}],
                       "syntax": {"enabled": true, "command": {"windows": "check.cmd", "wsl": "./check.sh"}}})");
-        const Project project = projectFor(m_work, m_application);
+        const Project project = projectFor(m_work, appFile());
         QCOMPARE(project.commands.at(0).command, QStringLiteral("dir"));
         QCOMPARE(project.commands.at(1).command, QStringLiteral("ls"));
         QCOMPARE(project.syntax.command, QStringLiteral("check.cmd"));
@@ -476,50 +476,168 @@ private slots:
         QCOMPARE(windows.cwd, QStringLiteral("C:/work/app"));
     }
 
-    // The first run after an upgrade must not lose the user's defaults.
-    // They were the file named .crlf beside the program, so that file
-    // becomes application.crlf; a new install has only the shipped
-    // application.crlf to copy. The folders for the user's own scripts,
-    // keys, and rules are made then, and a later run changes nothing.
-    void firstRunSeedsTheApplicationFolder()
+    // The application folder gets each shipped file it lacks: the configured
+    // application.crlf and blank.crlf, with the folders for the user's own
+    // scripts, keys, and rules. A file the user has is theirs and is never
+    // replaced, and a folder seeded by an earlier version still gains the
+    // files added since.
+    void seedingAddsTheShippedFilesTheFolderLacks()
     {
         const QDir program(m_program);
         const QDir application(m_application);
-        const QString settings = application.filePath(QLatin1String(kApplicationFile));
-        writeFile(program.filePath(QLatin1String(kApplicationFile)), R"({"commands": []})");
+        writeFile(program.filePath(QLatin1String(kApplicationFile)), "configured");
+        writeFile(program.filePath(QLatin1String(kBlankFile)), "{}");
 
-        seedApplicationFolder(m_application, m_program);
-        QCOMPARE(readFile(settings), QByteArray(R"({"commands": []})"));
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
+        QCOMPARE(readFile(appFile()), QByteArray("configured"));
+        QCOMPARE(readFile(application.filePath(QLatin1String(kBlankFile))), QByteArray("{}"));
         for (const char *folder : {".crlf/scripts", ".crlf/keys", ".crlf/rules"})
             QVERIFY(QFileInfo(application.filePath(QLatin1String(folder))).isDir());
 
-        writeFile(settings, "edited");
-        seedApplicationFolder(m_application, m_program);
-        QCOMPARE(readFile(settings), QByteArray("edited"));
-
-        QVERIFY(QFile::remove(settings));
-        writeFile(program.filePath(QStringLiteral(".crlf")), R"([{"name": "Old", "command": "o"}])");
-        seedApplicationFolder(m_application, m_program);
-        QCOMPARE(readFile(settings), QByteArray(R"([{"name": "Old", "command": "o"}])"));
+        writeFile(appFile(), "edited");
+        QVERIFY(QFile::remove(application.filePath(QLatin1String(kBlankFile))));
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
+        QCOMPARE(readFile(appFile()), QByteArray("edited"));
+        QCOMPARE(readFile(application.filePath(QLatin1String(kBlankFile))), QByteArray("{}"));
     }
 
-    // Copy Application Files to Workspace makes a folder self-contained. In
-    // an empty folder it creates workspace.crlf from application.crlf with
-    // the script and rule paths pointing at the copies, copies the shipped
-    // scripts and then the application's (which win on a shared path), and
-    // copies the rules. Keys are never copied, because a workspace is
-    // usually a git repository, so the new file keeps naming ${appDir}/keys.
+    // The first run after an upgrade must not lose the user's defaults.
+    // They were the file named .crlf beside the program. It is kept as
+    // previous.crlf and named as the file to make active, so those settings
+    // keep applying while the configured application.crlf is there to switch
+    // to. A later run names nothing, so the user's own choice stands.
+    void firstRunKeepsThePreviousDefaults()
+    {
+        const QDir program(m_program);
+        writeFile(program.filePath(QLatin1String(kApplicationFile)), "configured");
+        writeFile(program.filePath(QStringLiteral(".crlf")), R"([{"name": "Old", "command": "o"}])");
+
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString::fromLatin1(kPreviousFile));
+        QCOMPARE(readFile(appFile()), QByteArray("configured"));
+        const QString previous = QDir(m_application).filePath(QLatin1String(kPreviousFile));
+        QCOMPARE(commandNames(projectFor(QString(), previous)), QStringList({QStringLiteral("Old")}));
+
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
+    }
+
+    // An old defaults file nobody edited still holds what shipped with it:
+    // an empty command list. Keeping that active would hide the configured
+    // file from someone who never chose to have no settings.
+    void firstRunIgnoresUntouchedPreviousDefaults()
+    {
+        const QDir program(m_program);
+        writeFile(program.filePath(QLatin1String(kApplicationFile)), "configured");
+        writeFile(program.filePath(QStringLiteral(".crlf")), R"({ "commands": [] })");
+
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
+        QVERIFY(!QFileInfo::exists(QDir(m_application).filePath(QLatin1String(kPreviousFile))));
+        QCOMPARE(readFile(appFile()), QByteArray("configured"));
+    }
+
+    // The user picks which application file is in use. The choice is a file
+    // name; when that file has been deleted, application.crlf is used, so a
+    // stale choice never leaves the editor without settings. The chosen
+    // file is the one a project reads.
+    void theChosenApplicationFileIsTheOneRead()
+    {
+        const QDir application(m_application);
+        writeFile(appFile(), R"({"commands": [{"name": "Configured", "command": "c"}]})");
+        writeFile(application.filePath(QLatin1String(kBlankFile)), "{}");
+
+        const QString blank = activeApplicationFile(m_application, QString::fromLatin1(kBlankFile));
+        QCOMPARE(blank, application.filePath(QLatin1String(kBlankFile)));
+        QCOMPARE(activeApplicationFile(m_application, QStringLiteral("gone.crlf")), appFile());
+        QCOMPARE(activeApplicationFile(m_application, QString()), appFile());
+
+        const Project project = projectFor(QString(), blank);
+        QCOMPARE(project.files, QStringList({blank}));
+        QVERIFY(project.commands.isEmpty());
+        QCOMPARE(commandNames(projectFor(QString(), appFile())), QStringList({QStringLiteral("Configured")}));
+    }
+
+    // A workspace's application.crlf is its copy of the application
+    // settings: the base the workspace's own files adjust. By name it would
+    // be read first and win, so it is read after the others instead.
+    void workspaceApplicationFileIsMergedLast()
+    {
+        const QDir work(m_work);
+        writeFile(work.filePath(QLatin1String(kApplicationFile)),
+                  R"({"commands": [{"name": "Build", "command": "base"}, {"name": "Run", "command": "r"}]})");
+        writeFile(work.filePath(QLatin1String(kWorkspaceFile)),
+                  R"({"commands": [{"name": "Build", "command": "mine"}]})");
+        writeFile(work.filePath(QStringLiteral("zeta.crlf")), R"({"commands": [{"name": "Zeta", "command": "z"}]})");
+
+        const Project project = projectFor(m_work, appFile());
+        QCOMPARE(project.files, QStringList({work.filePath(QLatin1String(kWorkspaceFile)),
+                                             work.filePath(QStringLiteral("zeta.crlf")),
+                                             work.filePath(QLatin1String(kApplicationFile))}));
+        QCOMPARE(commandNames(project),
+                 QStringList({QStringLiteral("Build"), QStringLiteral("Zeta"), QStringLiteral("Run")}));
+        QCOMPARE(project.commands.at(0).command, QStringLiteral("mine"));
+    }
+
+    // The application.crlf that ships is what a new install runs with, so
+    // it has to parse and set up what it promises: the four agents on both
+    // Windows and WSL, each reading its key and both rules folders, and the
+    // syntax and autocomplete scripts, which are bash and so start only in a
+    // WSL folder.
+    void shippedApplicationFileSetsUpTheScripts()
+    {
+        QVERIFY(QFile::copy(QStringLiteral(SHIPPED_APPLICATION_FILE), appFile()));
+        writeFile(QDir(m_work).filePath(QLatin1String(kWorkspaceFile)), R"({"inherit": true})");
+
+        const Project project = projectFor(m_work, appFile());
+        QCOMPARE(project.error, QString());
+        QStringList agents;
+        for (const AgentSettings &agent : project.agents) {
+            agents.append(agent.name);
+            QVERIFY(agent.process.command.startsWith(
+                QStringLiteral("python \"${programDir}/scripts/agent/crlf_agent.py\"")));
+            QVERIFY(agent.process.command.contains(QStringLiteral("--rules .crlf/rules --rules \"${appDir}/rules\"")));
+        }
+        QCOMPARE(agents, QStringList({QStringLiteral("Claude"), QStringLiteral("GPT"), QStringLiteral("Grok"),
+                                      QStringLiteral("Local")}));
+        QVERIFY(project.agents.at(1).process.command.contains(
+            QStringLiteral("--api-key-file \"${appDir}/keys/openai\"")));
+        QVERIFY(project.syntax.enabled);
+        QCOMPARE(project.syntax.command, QString());
+        QCOMPARE(project.autocomplete.command, QString());
+
+        const QJsonObject shipped = readObject(appFile());
+        const QString distro = QStringLiteral("//wsl.localhost/Ubuntu/home/me/app");
+        QCOMPARE(commandFor(shipped.value(QLatin1String("syntax")).toObject().value(QLatin1String("command")), distro),
+                 QStringLiteral("bash \"${programDir}/scripts/syntax.sh\" \"${file}\""));
+        QCOMPARE(commandFor(shipped.value(QLatin1String("autocomplete")).toObject().value(QLatin1String("command")),
+                            distro),
+                 QStringLiteral("bash \"${programDir}/scripts/autocomplete.sh\""));
+        for (const QJsonValue &agent : shipped.value(QLatin1String("agents")).toArray()) {
+            QVERIFY(commandFor(agent.toObject().value(QLatin1String("command")), distro)
+                        .startsWith(QStringLiteral("python3 \"${programDir}/scripts/agent/crlf_agent.py\"")));
+        }
+    }
+
+    // Copy Application Files to Workspace makes a folder self-contained. It
+    // puts the active application file in the root as application.crlf,
+    // whatever that file is called, with the script and rule paths pointing
+    // at the copies. An empty workspace.crlf is made beside it for the
+    // workspace's own settings, which are read first. The shipped scripts
+    // are copied, then the application's (which win on a shared path), and
+    // the rules. Keys are never copied, because a workspace is usually a git
+    // repository, so the copy keeps naming ${appDir}/keys.
     void copyIntoAnEmptyFolderCreatesAWorkspace()
     {
         makeApplication();
-        const SeedCounts counts = seedWorkspace(m_application, shipped(), m_work, false);
-        QCOMPARE(counts.copied, 5);
+        const QString chosen = QDir(m_application).filePath(QStringLiteral("team.crlf"));
+        QVERIFY(QFile::rename(appFile(), chosen));
+        const SeedCounts counts = seedWorkspace(chosen, shipped(), m_work, false);
+        QCOMPARE(counts.copied, 6);
         QCOMPARE(counts.replaced, 0);
         QCOMPARE(counts.skipped, 0);
         QCOMPARE(counts.failed, 0);
 
         const QDir work(m_work);
-        const QByteArray settings = readFile(work.filePath(QLatin1String(kWorkspaceFile)));
+        QCOMPARE(readObject(work.filePath(QLatin1String(kWorkspaceFile))), QJsonObject());
+        const QByteArray settings = readFile(work.filePath(QLatin1String(kApplicationFile)));
         // The file is JSON text, so a quote inside a command is \".
         QVERIFY(settings.contains("python \\\".crlf/scripts/agent/crlf_agent.py\\\""));
         QVERIFY(settings.contains("--rules \\\".crlf/rules\\\""));
@@ -533,59 +651,67 @@ private slots:
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/rules/style.md"))), QByteArray("rule"));
         QVERIFY(!QFileInfo::exists(work.filePath(QStringLiteral(".crlf/keys"))));
 
-        // The created file is a working project: its agent runs the copy.
-        const Project project = projectFor(m_work, m_application);
-        QCOMPARE(project.files, QStringList({work.filePath(QLatin1String(kWorkspaceFile))}));
+        // The two files are a working project: the agent comes from the copy
+        // and runs the copied script.
+        const Project project = projectFor(m_work, chosen);
+        QCOMPARE(project.files, QStringList({work.filePath(QLatin1String(kWorkspaceFile)),
+                                             work.filePath(QLatin1String(kApplicationFile))}));
         QVERIFY(project.agents.at(0).process.command.startsWith(
             QStringLiteral("python \".crlf/scripts/agent/crlf_agent.py\"")));
     }
 
     // Running the command in a project that already exists must not undo
-    // work done there. With Replace existing files off, the settings file
-    // and a script the workspace already has are left as they are and
-    // counted as skipped; only what is missing is added.
+    // work done there. With Replace existing files off, the workspace's
+    // settings, its copy of the application file, and a script it already
+    // has are left as they are and counted as skipped; only what is missing
+    // is added.
     void copyLeavesExistingFilesAlone()
     {
         makeApplication();
         const QDir work(m_work);
-        writeFile(work.filePath(QStringLiteral("local.crlf")), R"({"hide": ["build"]})");
+        writeFile(work.filePath(QLatin1String(kWorkspaceFile)), R"({"hide": ["build"]})");
+        writeFile(work.filePath(QLatin1String(kApplicationFile)), "earlier copy");
         writeFile(work.filePath(QStringLiteral(".crlf/scripts/syntax.sh")), "edited here");
 
-        const SeedCounts counts = seedWorkspace(m_application, shipped(), m_work, false);
+        const SeedCounts counts = seedWorkspace(appFile(), shipped(), m_work, false);
         QCOMPARE(counts.copied, 3);
         QCOMPARE(counts.replaced, 0);
-        QCOMPARE(counts.skipped, 2);
+        QCOMPARE(counts.skipped, 3);
 
-        QCOMPARE(readFile(work.filePath(QStringLiteral("local.crlf"))), QByteArray(R"({"hide": ["build"]})"));
-        QVERIFY(!QFileInfo::exists(work.filePath(QLatin1String(kWorkspaceFile))));
+        QCOMPARE(readFile(work.filePath(QLatin1String(kWorkspaceFile))), QByteArray(R"({"hide": ["build"]})"));
+        QCOMPARE(readFile(work.filePath(QLatin1String(kApplicationFile))), QByteArray("earlier copy"));
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/scripts/syntax.sh"))), QByteArray("edited here"));
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/scripts/mine.sh"))), QByteArray("mine"));
     }
 
     // Replace existing files brings a workspace's copies up to date after
-    // an upgrade. It overwrites what the application also has and nothing
-    // else: a script only the workspace has stays, and a settings file is
-    // never replaced, with the box on or off.
-    void copyWithReplaceOverwritesScriptsOnly()
+    // an upgrade. It overwrites what came from the application: the copy of
+    // the application file and the scripts the application also has. A
+    // script only the workspace has stays, and the workspace's own settings
+    // file is never replaced, with the box on or off.
+    void copyWithReplaceOverwritesTheCopiesOnly()
     {
         makeApplication();
         const QDir work(m_work);
-        writeFile(work.filePath(QStringLiteral("local.crlf")), R"({"hide": ["build"]})");
+        writeFile(work.filePath(QLatin1String(kWorkspaceFile)), R"({"hide": ["build"]})");
+        writeFile(work.filePath(QLatin1String(kApplicationFile)), "earlier copy");
         writeFile(work.filePath(QStringLiteral(".crlf/scripts/syntax.sh")), "edited here");
         writeFile(work.filePath(QStringLiteral(".crlf/scripts/own.sh")), "only here");
 
-        const SeedCounts counts = seedWorkspace(m_application, shipped(), m_work, true);
+        const SeedCounts counts = seedWorkspace(appFile(), shipped(), m_work, true);
         QCOMPARE(counts.copied, 3);
-        QCOMPARE(counts.replaced, 1);
+        QCOMPARE(counts.replaced, 2);
         QCOMPARE(counts.skipped, 1);
 
+        QVERIFY(readFile(work.filePath(QLatin1String(kApplicationFile))).contains(".crlf/scripts/agent/crlf_agent.py"));
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/scripts/syntax.sh"))), QByteArray("application syntax"));
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/scripts/own.sh"))), QByteArray("only here"));
-        QCOMPARE(readFile(work.filePath(QStringLiteral("local.crlf"))), QByteArray(R"({"hide": ["build"]})"));
-        QVERIFY(!QFileInfo::exists(work.filePath(QLatin1String(kWorkspaceFile))));
+        QCOMPARE(readFile(work.filePath(QLatin1String(kWorkspaceFile))), QByteArray(R"({"hide": ["build"]})"));
     }
 
 private:
+    // The application file in use, unless a case names another.
+    QString appFile() const { return QDir(m_application).filePath(QLatin1String(kApplicationFile)); }
     QString shipped() const { return QDir(m_program).filePath(QStringLiteral("scripts")); }
 
     // An application folder with a script of its own, a script that

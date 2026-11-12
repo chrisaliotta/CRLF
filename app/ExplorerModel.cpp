@@ -1,6 +1,7 @@
 #include "app/ExplorerModel.h"
 
 #include "app/FileIconTheme.h"
+#include "app/FolderWatch.h"
 #include "app/ProcessOrchestrator.h"
 #include "io/NamePattern.h"
 
@@ -8,13 +9,17 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QMetaObject>
 #include <QMimeData>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QUrl>
 
 namespace {
+
+constexpr int kChangeDelayMs = 200;
 
 bool samePath(const QString &left, const QString &right)
 {
@@ -44,7 +49,25 @@ struct ExplorerModel::Node
 
 ExplorerModel::ExplorerModel(QObject *parent)
     : QAbstractItemModel(parent)
+    , m_watch(new FolderWatch(this))
+    , m_changedTimer(new QTimer(this))
 {
+    // A build or a branch switch changes a folder many times in a moment.
+    // The folders are gathered and each is read once when the timer fires.
+    m_changedTimer->setSingleShot(true);
+    m_changedTimer->setInterval(kChangeDelayMs);
+    connect(m_watch, &FolderWatch::changed, this, [this](const QString &directory) {
+        m_changed.insert(directory);
+        if (!m_changedTimer->isActive())
+            m_changedTimer->start();
+    });
+    connect(m_watch, &FolderWatch::overflowed, this, &ExplorerModel::refreshListed);
+    connect(m_changedTimer, &QTimer::timeout, this, [this] {
+        const QSet<QString> changed = m_changed;
+        m_changed.clear();
+        for (const QString &directory : changed)
+            refresh(directory);
+    });
 }
 
 ExplorerModel::~ExplorerModel()
@@ -221,6 +244,8 @@ void ExplorerModel::setRootPath(const QString &path)
         m_root->name = QDir::toNativeSeparators(m_root->path);
     m_root->isDir = true;
     endResetModel();
+    m_changed.clear();
+    m_watched = m_watch->watch(m_root->path);
     startListing(m_root);
 }
 
@@ -300,22 +325,44 @@ QModelIndex ExplorerModel::index(const QString &path)
     Node *parentNode = find(info.path());
     if (parentNode == nullptr || !parentNode->listed)
         return {};
+    return indexOf(insertEntry(parentNode, {info.fileName(), QDir::cleanPath(path), info.isDir()}));
+}
 
-    const QString name = info.fileName();
-    Node *home = parentNode;
-    const int group = groupFor(parentNode->path, name);
-    if (group >= 0)
-        home = ensureGroup(parentNode, group);
-    const int row = fileRow(home, name);
+ExplorerModel::Node *ExplorerModel::insertEntry(Node *directory, const Entry &entry)
+{
+    Node *home = directory;
+    int row = 0;
+    if (entry.isDir) {
+        row = directoryRow(directory, entry.name);
+    } else {
+        const int group = groupFor(directory->path, entry.name);
+        if (group >= 0)
+            home = ensureGroup(directory, group);
+        row = fileRow(home, entry.name);
+    }
 
     beginInsertRows(indexOf(home), row, row);
     auto *child = new Node;
-    child->name = name;
-    child->path = QDir::cleanPath(path);
+    child->name = entry.name;
+    child->path = entry.path;
+    child->isDir = entry.isDir;
     child->parent = home;
     home->children.insert(row, child);
     endInsertRows();
-    return indexOf(child);
+    return child;
+}
+
+int ExplorerModel::directoryRow(Node *parent, const QString &name) const
+{
+    for (int i = 0; i < parent->children.size(); ++i) {
+        const Node *child = parent->children.at(i);
+        if (child->placeholder)
+            continue;
+        // Folders come first, so the first virtual folder or file ends them.
+        if (!child->isDir || child->virtualFolder || child->name.compare(name, Qt::CaseInsensitive) > 0)
+            return i;
+    }
+    return parent->children.size();
 }
 
 bool ExplorerModel::remove(const QModelIndex &index)
@@ -342,10 +389,31 @@ void ExplorerModel::discard(const QString &path)
 
 void ExplorerModel::refresh(const QString &directory)
 {
+    // The watch names every folder that changed. Most are not in the tree,
+    // and one that has not been listed is read when it is first expanded.
     Node *node = find(directory);
-    if (node == nullptr || !node->isDir)
+    if (node == nullptr || !node->isDir || !node->listed)
         return;
     startListing(node);
+}
+
+void ExplorerModel::refreshListed()
+{
+    if (m_root == nullptr)
+        return;
+    QStringList paths;
+    collectListed(m_root, paths);
+    for (const QString &path : std::as_const(paths))
+        refresh(path);
+}
+
+void ExplorerModel::collectListed(Node *node, QStringList &paths) const
+{
+    if (!node->isDir || node->virtualFolder || !node->listed)
+        return;
+    paths.append(node->path);
+    for (Node *child : node->children)
+        collectListed(child, paths);
 }
 
 void ExplorerModel::setExpanded(const QModelIndex &index, bool expanded)
@@ -551,6 +619,9 @@ void ExplorerModel::startListing(Node *node)
     }
     const QString path = node->path;
     const int generation = node->generation;
+    // Reading a folder again happens on its own, over and over. Only the
+    // first read is kept in the Processes history.
+    const bool firstRead = !node->listed;
     QPointer<ExplorerModel> alive(this);
     m_orchestrator->submit(QStringLiteral("list:%1").arg(path), QStringLiteral("List directory"), path, 0, path,
                            [alive, path, generation] {
@@ -578,7 +649,7 @@ void ExplorerModel::startListing(Node *node)
                 return;
             alive->completeListing(path, generation, ok, entries);
         }, Qt::QueuedConnection);
-    });
+    }, ProcessLane::Pool, nullptr, firstRead);
 }
 
 void ExplorerModel::completeListing(const QString &path, int generation, bool ok,
@@ -596,6 +667,11 @@ void ExplorerModel::completeListing(const QString &path, int generation, bool ok
         } else {
             node->listed = true;
         }
+        return;
+    }
+    if (node->listed) {
+        mergeListing(node, entries);
+        emit directoryLoaded(node->path);
         return;
     }
 
@@ -660,6 +736,52 @@ void ExplorerModel::completeListing(const QString &path, int generation, bool ok
     }
     node->listed = true;
     emit directoryLoaded(node->path);
+}
+
+void ExplorerModel::mergeListing(Node *directory, const QList<Entry> &entries)
+{
+    QHash<QString, const Entry *> listed;
+    for (const Entry &entry : entries)
+        listed.insert(entry.name.toLower(), &entry);
+
+    // The rows on screen, with the files shown inside virtual folders.
+    QList<Node *> shown;
+    for (Node *child : std::as_const(directory->children)) {
+        if (child->virtualFolder)
+            shown += child->children;
+        else if (!child->placeholder)
+            shown.append(child);
+    }
+
+    bool changed = false;
+    QSet<QString> kept;
+    for (Node *row : std::as_const(shown)) {
+        const QString key = row->name.toLower();
+        const Entry *entry = listed.value(key);
+        // A file replaced by a folder of the same name is a different row.
+        if (entry == nullptr || entry->isDir != row->isDir) {
+            discardNode(row);
+            changed = true;
+            continue;
+        }
+        kept.insert(key);
+        if (row->name != entry->name) {
+            // Only the letter case changed, which the file system treats as the same entry.
+            row->name = entry->name;
+            row->path = entry->path;
+            const QModelIndex index = indexOf(row);
+            emit dataChanged(index, index, {Qt::DisplayRole, Qt::EditRole, FilePathRole, Qt::ToolTipRole});
+        }
+    }
+    for (const Entry &entry : entries) {
+        if (kept.contains(entry.name.toLower()))
+            continue;
+        insertEntry(directory, entry);
+        changed = true;
+    }
+    // A virtual folder that lost its last file goes, unless it shows when empty.
+    if (changed)
+        regroupDirectory(directory);
 }
 
 void ExplorerModel::clearChildren(Node *node)

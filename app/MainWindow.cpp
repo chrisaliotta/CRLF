@@ -38,6 +38,7 @@
 #include <QFile>
 #include <QUuid>
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -57,6 +58,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -69,6 +71,8 @@ constexpr auto kExplorerRootSetting = "explorerRoot";
 constexpr auto kExplorerVisibleSetting = "explorerVisible";
 constexpr auto kSourceControlVisibleSetting = "sourceControlVisible";
 constexpr auto kAgentVisibleSetting = "agentVisible";
+// The name of the application file in use, among those in the application folder.
+constexpr auto kApplicationFileSetting = "applicationFile";
 constexpr auto kTerminalVisibleSetting = "terminalVisible";
 constexpr auto kThemeSetting = "theme";
 constexpr auto kFileIconThemeSetting = "fileIconTheme";
@@ -714,8 +718,10 @@ void MainWindow::changeEvent(QEvent *event)
     if (event->type() == QEvent::WindowStateChange)
         m_titleBar->setMaximized(isMaximized());
     // Work done in a terminal or another program shows up on return.
-    if (event->type() == QEvent::ActivationChange && isActiveWindow())
+    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
         m_sourceControl->refresh();
+        m_explorer->refreshListed();
+    }
 }
 
 bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
@@ -882,10 +888,10 @@ void MainWindow::buildMenus()
         connect(action, &QAction::triggered, this, [this, theme = &theme] { applyFileIconTheme(theme); });
     }
     QMenu *defaults = view->addMenu(QStringLiteral("Edit Defaults"));
-    const QString settingsFile = QDir(applicationFolder()).filePath(QLatin1String(kApplicationFile));
-    defaults->addAction(QStringLiteral("Commands"), m_tabs, [this, settingsFile] {
-        m_tabs->openFile(settingsFile);
-    });
+    // The files are whatever the application folder holds when the menu opens.
+    QMenu *application = defaults->addMenu(QStringLiteral("Application Settings"));
+    connect(application, &QMenu::aboutToShow, this, [this, application] { fillApplicationMenu(application); });
+    fillApplicationMenu(application);
     addJsonFileMenu(defaults->addMenu(QStringLiteral("Themes")),
                     QDir(programDirectory()).filePath(QStringLiteral("themes")), m_tabs);
     addJsonFileMenu(defaults->addMenu(QStringLiteral("Syntax")),
@@ -1029,7 +1035,7 @@ void MainWindow::connectActions()
     connect(m_explorer, &ExplorerPanel::closeRequested, this,
             [this] { m_actions.explorer->setChecked(false); });
     connect(m_explorer, &ExplorerPanel::virtualFoldersEdited, this, [this](const QList<FileGroup> &groups) {
-        saveProjectSetting([groups, application = applicationFolder()](const QString &directory) {
+        saveProjectSetting([groups, application = applicationFile()](const QString &directory) {
             return saveProjectGroups(directory, groups, application);
         });
     });
@@ -1483,9 +1489,35 @@ void MainWindow::editIconTemplates()
         statusBar()->showMessage(QStringLiteral("Open a folder before saving icon rules"), 5000);
         return;
     }
-    saveProjectSetting([icons = dialog.icons(), application = applicationFolder()](const QString &directory) {
+    saveProjectSetting([icons = dialog.icons(), application = applicationFile()](const QString &directory) {
         return saveProjectIcons(directory, icons, application);
     });
+}
+
+QString MainWindow::applicationFile() const
+{
+    return activeApplicationFile(applicationFolder(), QSettings().value(kApplicationFileSetting).toString());
+}
+
+void MainWindow::fillApplicationMenu(QMenu *menu)
+{
+    menu->clear();
+    const QString active = QFileInfo(applicationFile()).fileName();
+    const QStringList files = settingsFiles(applicationFolder());
+    for (const QString &path : files) {
+        const QString name = QFileInfo(path).fileName();
+        QAction *action = menu->addAction(name);
+        action->setCheckable(true);
+        action->setChecked(name.compare(active, Qt::CaseInsensitive) == 0);
+        connect(action, &QAction::triggered, this, [this, name] {
+            QSettings().setValue(kApplicationFileSetting, name);
+            reloadCommands();
+        });
+    }
+    menu->addSeparator();
+    menu->addAction(QStringLiteral("Edit Active File"), this, [this] { m_tabs->openFile(applicationFile()); });
+    menu->addAction(QStringLiteral("Open Application Folder"), this,
+                    [] { QDesktopServices::openUrl(QUrl::fromLocalFile(applicationFolder())); });
 }
 
 void MainWindow::saveProjectSetting(std::function<bool(const QString &directory)> save)
@@ -1506,14 +1538,16 @@ void MainWindow::saveProjectSetting(std::function<bool(const QString &directory)
 void MainWindow::copyApplicationFiles()
 {
     const QString target = m_explorer->rootPath();
+    const QString application = applicationFile();
     QMessageBox dialog(QMessageBox::Question, QStringLiteral("Copy Application Files to Workspace"),
-                       QStringLiteral("Copy the application's scripts and rules into this folder?\n\n%1")
+                       QStringLiteral("Copy the application's settings, scripts, and rules into this folder?\n\n%1")
                            .arg(QDir::toNativeSeparators(target)),
                        QMessageBox::Cancel, this);
     dialog.setInformativeText(QStringLiteral(
-        "Scripts and rules go into the folder's .crlf folder. A folder with no .crlf settings file also gets a "
-        "workspace.crlf made from application.crlf. An existing settings file is not changed, and key files "
-        "are not copied."));
+        "%1 is copied into the folder as application.crlf, and the scripts and rules go into its .crlf folder. "
+        "A folder with no settings of its own also gets an empty workspace.crlf, which is read first. "
+        "An existing workspace.crlf is not changed, and key files are not copied.")
+                                  .arg(QFileInfo(application).fileName()));
     auto *replace = new QCheckBox(QStringLiteral("Replace existing files"), &dialog);
     dialog.setCheckBox(replace);
     QPushButton *copy = dialog.addButton(QStringLiteral("Copy"), QMessageBox::AcceptRole);
@@ -1521,7 +1555,6 @@ void MainWindow::copyApplicationFiles()
     if (dialog.clickedButton() != copy)
         return;
 
-    const QString application = applicationFolder();
     const QString scripts = QDir(programDirectory()).filePath(QStringLiteral("scripts"));
     const bool replaceExisting = replace->isChecked();
     m_orchestrator->submit(QStringLiteral("workspace-seed"), QStringLiteral("Copy Application Files"), target, 0,
@@ -1945,13 +1978,17 @@ void MainWindow::reloadCommands(bool restart)
         start = m_tabs->fileFor(m_tabs->currentWidget()).path();
 
     const int generation = ++m_commandGeneration;
-    const QString application = applicationFolder();
+    const QString folder = applicationFolder();
     const QString program = programDirectory();
     m_orchestrator->submit(QStringLiteral("project"), QStringLiteral("Project"), start, 0,
-                           start.isEmpty() ? QString::fromLatin1(kApplicationFile) : start,
-                           [this, start, application, program, generation, restart] {
-        seedApplicationFolder(application, program);
-        const Project project = projectFor(start, application);
+                           start.isEmpty() ? QFileInfo(applicationFile()).fileName() : start,
+                           [this, start, folder, program, generation, restart] {
+        // The settings a user had before the application folder keep applying.
+        const QString adopted = seedApplicationFolder(folder, program);
+        if (!adopted.isEmpty())
+            QSettings().setValue(kApplicationFileSetting, adopted);
+        const Project project = projectFor(
+            start, activeApplicationFile(folder, QSettings().value(kApplicationFileSetting).toString()));
         QMetaObject::invokeMethod(this, [this, project, generation, restart] {
             // The file was renamed on disk, whether or not a newer load has
             // replaced this one.
@@ -1974,7 +2011,7 @@ void MainWindow::applyProject(const Project &project, bool restart)
     if (!watched.isEmpty())
         m_projectWatcher->removePaths(watched);
     m_projectDirectory = project.directory;
-    // `files` is never empty: application.crlf applies when nothing else does.
+    // `files` is never empty: the application file applies when nothing else does.
     m_projectWatcher->addPaths(project.files + project.syntax.watch + project.autocomplete.watch);
     if (!m_projectDirectory.isEmpty())
         m_projectWatcher->addPath(m_projectDirectory);
