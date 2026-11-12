@@ -172,6 +172,7 @@ Write a variable as `${name}` inside `command`. The value is taken when the comm
 | `${project}` | Directory that contains the `.crlf` file |
 | `${folder}` | Folder the explorer is scoped to |
 | `${cwd}` | This command's working directory, after `cwd` is resolved |
+| `${programDir}` | The folder beside the program that holds `styles`, `themes`, and `scripts`: the build folder for a dev build, the install folder otherwise. The shipped agent is `"${programDir}/scripts/agent/crlf_agent.py"` |
 
 `${file}`, `${fileDir}`, and `${relativeFile}` are empty when the focused document has never been saved. `${line}`, `${column}`, and `${selection}` are empty in the hex view.
 

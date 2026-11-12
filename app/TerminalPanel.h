@@ -33,6 +33,8 @@ public:
     // Plain text of the session on screen: scrollback, then the visible rows.
     QString transcript() const;
     int sessionCount() const { return m_sessions.size(); }
+    // Types `text` into the session on screen, as if it were keyed in.
+    void sendInput(const QString &text);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

@@ -1,15 +1,15 @@
 #pragma once
 
-#include "app/ProcessLaunch.h"
 #include "editor/CompletionItem.h"
 #include "io/CommandVariables.h"
 
 #include <QHash>
+#include <QJsonObject>
 #include <QList>
 #include <QObject>
 
+class JsonLineProcess;
 class ProcessOrchestrator;
-class QProcess;
 
 // One line to the completion script. See docs/autocomplete.md.
 struct CompletionRequest
@@ -38,9 +38,8 @@ class CompletionSession : public QObject
 
 public:
     explicit CompletionSession(QObject *parent = nullptr);
-    ~CompletionSession() override;
 
-    void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
+    void setOrchestrator(ProcessOrchestrator *orchestrator);
 
     // Replaces a session already running for a different command. `restart`
     // replaces it even when the command is the same, so an edited script is
@@ -63,22 +62,11 @@ signals:
     void failed(const QString &message);
 
 private:
-    void launch();
-    void stopTree();
     void write(const CompletionRequest &request);
     void flushHeldOpens();
-    void absorbStdout(const QByteArray &bytes);
-    void takeLine(const QByteArray &line);
+    void take(const QJsonObject &obj);
 
-    ProcessOrchestrator *m_orchestrator = nullptr;
-    QProcess *m_process = nullptr;
-    ProcessLaunch m_launch;
-    QString m_command;
-    QString m_workingDirectory;
-    CommandVariables m_variables;
-    QByteArray m_pending;
-    int m_token = 0;
-    bool m_stopRequested = false;
+    JsonLineProcess *m_process = nullptr;
     QList<CompletionRequest> m_heldOpens;
     // The path the script was given, to the path the editor asked with. A
     // file inside a WSL distro is sent as its Linux path.

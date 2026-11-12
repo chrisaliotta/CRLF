@@ -1,5 +1,9 @@
 #include "app/MainWindow.h"
 
+#include "app/AgentController.h"
+#include "app/AgentHost.h"
+#include "app/AgentPanel.h"
+#include "app/AgentSession.h"
 #include "app/BottomPanel.h"
 #include "app/SyntaxRunner.h"
 #include "app/CompletionSession.h"
@@ -61,6 +65,7 @@ constexpr auto kPersistSetting = "persistUnsavedEdits";
 constexpr auto kExplorerRootSetting = "explorerRoot";
 constexpr auto kExplorerVisibleSetting = "explorerVisible";
 constexpr auto kSourceControlVisibleSetting = "sourceControlVisible";
+constexpr auto kAgentVisibleSetting = "agentVisible";
 constexpr auto kTerminalVisibleSetting = "terminalVisible";
 constexpr auto kThemeSetting = "theme";
 constexpr auto kFileIconThemeSetting = "fileIconTheme";
@@ -200,6 +205,20 @@ SourceControlPanel QTreeWidget::item:selected { background: %6; }
 SourceControlPanel QPlainTextEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px; }
 SourceControlPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
 SourceControlPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
+AgentPanel { background: %1; }
+#agentTitle { color: %2; font-weight: bold; padding: 0 4px; }
+#agentStatus { color: %9; padding: 0 12px; }
+AgentPanel QTextBrowser { background: %7; color: %2; border: none; padding: 6px 10px; }
+AgentPanel QPlainTextEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px; }
+AgentPanel QToolButton { border: none; border-radius: 4px; background: transparent; color: %2; padding: 2px 6px; }
+AgentPanel QToolButton:hover { background: %4; }
+AgentPanel QToolButton:pressed { background: %5; }
+AgentPanel QComboBox { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px 8px; }
+AgentPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
+AgentPanel QCheckBox { color: %2; }
+#agentCard { background: %7; border: 1px solid %3; border-radius: 8px; }
+#agentCard QLabel { color: %2; }
+#agentCardTitle { font-weight: bold; }
 #branchButton { border: none; border-radius: 4px; color: %2; padding: 0 6px; }
 #branchButton:hover { background: %4; }
 QSplitter::handle { background: %3; }
@@ -400,17 +419,27 @@ MainWindow::MainWindow(QWidget *parent)
     m_completion = new CompletionSession;
     m_runner = new CommandRunner;
     m_gitClient = new GitClient;
+    m_agentSession = new AgentSession;
     m_orchestrator->moveToThread(m_thread);
     m_syntax->moveToThread(m_thread);
     m_completion->moveToThread(m_thread);
     m_runner->moveToThread(m_thread);
     m_gitClient->moveToThread(m_thread);
+    m_agentSession->moveToThread(m_thread);
     m_syntax->setOrchestrator(m_orchestrator);
     m_completion->setOrchestrator(m_orchestrator);
     m_runner->setOrchestrator(m_orchestrator);
     m_gitClient->setOrchestrator(m_orchestrator);
+    m_agentSession->setOrchestrator(m_orchestrator);
     m_sourceControl = new SourceControl(m_orchestrator, m_gitClient, this);
     m_sourcePanel = new SourceControlPanel(m_sourceControl, this);
+    m_agentPanel = new AgentPanel(this);
+    m_agentPanel->hide();
+    auto *agentHost = new AgentHost(m_agentSession, m_agentPanel, m_tabs, m_sourceControl, m_bottom->terminal(),
+                                    m_orchestrator, this);
+    m_agents = new AgentController(m_agentSession, agentHost, m_agentPanel, m_tabs, m_output, m_orchestrator, this);
+    agentHost->setParent(m_agents);
+    m_agents->setVariablesProvider([this] { return commandVariables(); });
     m_runner->setUi(this);
     m_runner->setContextProvider([this](const QString &command) {
         CommandVariables vars = commandVariables();
@@ -517,6 +546,7 @@ MainWindow::MainWindow(QWidget *parent)
     splitter->setChildrenCollapsible(false);
     splitter->addWidget(m_sidebar);
     splitter->addWidget(m_tabs);
+    splitter->addWidget(m_agentPanel);
     splitter->setStretchFactor(1, 1);
 
     auto *vertical = new QSplitter(Qt::Vertical, this);
@@ -593,6 +623,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_actions.explorer->setChecked(settings.value(kExplorerVisibleSetting).toBool());
     }
     m_actions.sourceControl->setChecked(settings.value(kSourceControlVisibleSetting, false).toBool());
+    m_actions.agent->setChecked(settings.value(kAgentVisibleSetting, false).toBool());
 
     // Periodic snapshot so unsaved edits also survive crashes and power loss,
     // not just graceful exits.
@@ -627,6 +658,9 @@ MainWindow::~MainWindow()
     // that is already ending. Left to ~QWidget, the tabs would be destroyed
     // after the orchestrator and call into freed memory.
     m_findBar->setEditor(nullptr);
+    // The agent host answers with the tabs, so it goes before them.
+    delete m_agents;
+    m_agents = nullptr;
     m_tabs->disconnect(this);
     delete m_tabs;
     m_tabs = nullptr;
@@ -636,12 +670,15 @@ MainWindow::~MainWindow()
         m_runner->stopAll();
         m_syntax->cancelAll();
         m_completion->stop();
+        m_agentSession->stop();
         m_gitClient->cancelAll();
         m_orchestrator->shutdown();
         delete m_syntax;
         m_syntax = nullptr;
         delete m_completion;
         m_completion = nullptr;
+        delete m_agentSession;
+        m_agentSession = nullptr;
         delete m_runner;
         m_runner = nullptr;
         delete m_gitClient;
@@ -805,6 +842,7 @@ void MainWindow::buildMenus()
     QMenu *view = m_menuBar->addMenu(QStringLiteral("&View"));
     view->addAction(m_actions.explorer);
     view->addAction(m_actions.sourceControl);
+    view->addAction(m_actions.agent);
     view->addAction(m_actions.terminal);
     view->addAction(m_actions.processes);
     view->addSeparator();
@@ -915,6 +953,15 @@ void MainWindow::connectActions()
         QSettings().setValue(kSourceControlVisibleSetting, visible);
         updateSidebar();
     });
+    connect(m_actions.agent, &QAction::toggled, this, [this](bool visible) {
+        m_agentPanel->setVisible(visible);
+        QSettings().setValue(kAgentVisibleSetting, visible);
+        if (!visible)
+            return;
+        m_agents->ensureStarted();
+        m_agentPanel->focusInput();
+    });
+    connect(m_agentPanel, &AgentPanel::closeRequested, this, [this] { m_actions.agent->setChecked(false); });
     connect(m_actions.terminal, &QAction::toggled, this, [this](bool visible) {
         if (m_syncingTerminal)
             return;
@@ -1537,6 +1584,7 @@ CommandVariables MainWindow::commandVariables() const
 CommandVariables MainWindow::variablesFor(QWidget *page) const
 {
     CommandVariables vars;
+    vars.programDir = programDirectory();
     if (!m_projectFile.isEmpty())
         vars.project = QFileInfo(m_projectFile).absolutePath();
     vars.folder = m_explorer->rootPath();
@@ -1608,6 +1656,7 @@ void MainWindow::startCompletion(bool restart)
     vars.project = groupDirectory;
     vars.folder = m_explorer->rootPath();
     vars.cwd = m_autocompleteDirectory;
+    vars.programDir = programDirectory();
     const QString command = m_autocompleteCommand;
     const QString directory = m_autocompleteDirectory;
     // A new process knows no files. Each open below is answered with a state.
@@ -1689,8 +1738,8 @@ void MainWindow::runCommand(const QString &name)
 
 bool MainWindow::canReload(const QString &key)
 {
-    return key == QLatin1String("autocomplete") || key.startsWith(QLatin1String("syntax:"))
-           || key.startsWith(QLatin1String("command:"));
+    return key == QLatin1String("autocomplete") || key == QLatin1String("agent")
+           || key.startsWith(QLatin1String("syntax:")) || key.startsWith(QLatin1String("command:"));
 }
 
 void MainWindow::cancelProcess(const QString &key)
@@ -1710,6 +1759,10 @@ void MainWindow::cancelProcess(const QString &key)
     } else if (key.startsWith(QLatin1String("git:"))) {
         QMetaObject::invokeMethod(m_gitClient, [client = m_gitClient, key] { client->cancel(key); },
                                   Qt::QueuedConnection);
+    } else if (key == QLatin1String("agent")) {
+        m_agents->stop();
+    } else if (key.startsWith(QLatin1String("agent-terminal:"))) {
+        m_agents->killTerminal(key.section(QLatin1Char(':'), 1));
     }
 }
 
@@ -1733,6 +1786,8 @@ void MainWindow::reloadProcess(const QString &key)
             runSyntax(editor);
     } else if (key.startsWith(QLatin1String("command:"))) {
         runCommand(key.mid(8));
+    } else if (key == QLatin1String("agent")) {
+        m_agents->restart();
     }
 }
 
@@ -1911,6 +1966,9 @@ void MainWindow::applyProject(const Project &project, bool restart)
     if (restart)
         restartServices();
     refreshCompletionStatus();
+    m_agents->setAgents(project.agents);
+    if (m_actions.agent->isChecked())
+        m_agents->ensureStarted();
     m_commandTexts.clear();
     for (const ProjectCommand &command : project.commands)
         m_commandTexts.insert(command.name, command.command);

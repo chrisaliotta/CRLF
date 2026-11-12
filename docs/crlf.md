@@ -2,7 +2,7 @@
 
 `.crlf` is the project file. One file is in use at a time. It is JSON. The parser in `io/ProjectCommands.cpp` is the list of keys that do anything. A key that is not in that list is kept when the file is rewritten and is otherwise ignored.
 
-Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md). Source control is in [git.md](git.md).
+Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md). Source control is in [git.md](git.md). The Agent panel is in [agent.md](agent.md).
 
 ## Which file is in use
 
@@ -24,7 +24,7 @@ A bare array is a list of commands and nothing else.
 ]
 ```
 
-An object is the full file. `commands` is the same list. Every other key below is read only from the object. Putting `indent`, `hide`, `syntax`, `autocomplete`, or `git` next to a bare array does not parse: a bare array has no place to put them.
+An object is the full file. `commands` is the same list. Every other key below is read only from the object. Putting `indent`, `hide`, `syntax`, `autocomplete`, `agents`, or `git` next to a bare array does not parse: a bare array has no place to put them.
 
 ```json
 {
@@ -37,6 +37,7 @@ An object is the full file. `commands` is the same list. Every other key below i
   "externalNavigation": true,
   "syntax": {},
   "autocomplete": {},
+  "agents": [],
   "unlimitedLog": false,
   "git": {}
 }
@@ -53,6 +54,7 @@ An object is the full file. `commands` is the same list. Every other key below i
 | `externalNavigation` | boolean | `true` | [Navigation](#navigation) |
 | `syntax` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
 | `autocomplete` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
+| `agents` | array of objects: `name`, `command`, `cwd`, `watch`, `permissions` | The Agent panel has nothing to start | [Agents](#agents) |
 | `unlimitedLog` | boolean | `false` | [Process logs](#process-logs) |
 | `git` | object: `enabled`, `depth`. Or a boolean | Off | [Source control](#source-control) |
 
@@ -258,6 +260,42 @@ These two do not start a process:
 
 The first sets `enabled` and leaves `command` empty. The second has a command and leaves `enabled` off.
 
+## Agents
+
+`agents` lists the programs the Agent panel (View > Agent) can start. Each one speaks the Agent Client Protocol on standard input and output: the reference agent beside the program, Claude Code behind its ACP adapter, or anything else that does. [agent.md](agent.md) describes the panel and the protocol.
+
+| Field | Meaning |
+|---|---|
+| `name` | Required. The label in the panel's picker. A second entry with the same name is skipped |
+| `command` | Required. Shell command, with `${name}` filled in when the agent starts |
+| `cwd` | The session's working directory, relative to the `.crlf` directory. The default is that directory. The agent may read and write inside it without leaving the permissions below |
+| `watch` | Array of file paths, relative to `cwd`. Saving one starts a new session |
+| `permissions` | Object with `read`, `write`, and `terminal`, each `allow`, `ask`, `review`, or `deny` |
+
+| Permission | Default | Covers |
+|---|---|---|
+| `read` | `allow` | Reading files, the open files, problems, git status, and the terminal's text |
+| `write` | `review` | Writing a file. `review` shows the change and waits for Accept |
+| `terminal` | `ask` | Running a command, and typing into your terminal |
+
+A path outside `cwd` always asks, even when the setting is `allow`.
+
+```json
+"agents": [
+  {
+    "name": "Claude",
+    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5"
+  },
+  {
+    "name": "Local",
+    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder",
+    "permissions": { "write": "allow", "terminal": "ask" }
+  }
+]
+```
+
+Claude reads the key from `ANTHROPIC_API_KEY` in the environment CRLF was started from. Local talks to Ollama on this machine, writes files without review, and asks before each command. The model names are examples; use the ones your provider offers.
+
 ## Process logs
 
 `unlimitedLog` set to `true` keeps every line a process writes to its log on the Processes page. Missing, or `false`, keeps the last 2,000 lines of each log. It is read only from the object form.
@@ -340,6 +378,13 @@ One object that uses every key. Paths are relative to the directory that contain
     "enabled": true,
     "command": "./scripts/autocomplete.sh"
   },
+  "agents": [
+    {
+      "name": "GPT",
+      "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5",
+      "permissions": { "terminal": "ask" }
+    }
+  ],
   "unlimitedLog": false,
   "git": { "enabled": true, "depth": 1 }
 }

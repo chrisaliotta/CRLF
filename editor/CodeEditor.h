@@ -59,6 +59,7 @@ public:
     void showResolved(const QString &data, const QString &detail, const QString &documentation);
     void showSignatures(const QList<SignatureHint> &signatures, int active);
     void setDiagnostics(const QList<Diagnostic> &spans);
+    const QList<Diagnostic> &diagnostics() const { return m_diagnostics; }
     // Change bars against `base`, the text git has staged for this file.
     // After an edit they are recomputed on the pool once typing pauses.
     void setDiffBase(const QString &base);

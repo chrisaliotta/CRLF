@@ -1,76 +1,65 @@
 #include "app/CompletionSession.h"
 
-#include "app/ProcessLaunch.h"
-#include "app/ProcessOrchestrator.h"
-#include "io/CommandVariables.h"
+#include "app/JsonLineProcess.h"
 #include "io/WslPath.h"
 
 #include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QProcess>
 
 namespace {
 
-QString linuxPath(const QString &windowsPath)
-{
-    if (windowsPath.isEmpty())
-        return windowsPath;
-    const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
-    return converted.valid() ? converted.path : windowsPath;
-}
+const QString kKey = QStringLiteral("autocomplete");
 
 } // namespace
 
 CompletionSession::CompletionSession(QObject *parent)
     : QObject(parent)
+    , m_process(new JsonLineProcess(kKey, this))
 {
     qRegisterMetaType<CompletionItem>();
     qRegisterMetaType<QList<CompletionItem>>();
     qRegisterMetaType<SignatureHint>();
     qRegisterMetaType<QList<SignatureHint>>();
     qRegisterMetaType<CompletionFileState>();
+    connect(m_process, &JsonLineProcess::started, this, &CompletionSession::flushHeldOpens);
+    connect(m_process, &JsonLineProcess::received, this, &CompletionSession::take);
+    connect(m_process, &JsonLineProcess::unreadable, this,
+            [this] { emit failed(QStringLiteral("Couldn't read completion results.")); });
+    connect(m_process, &JsonLineProcess::exited, this, [this] { emit failed(QStringLiteral("Completion stopped.")); });
+    connect(m_process, &JsonLineProcess::failedToStart, this, &CompletionSession::failed);
 }
 
-CompletionSession::~CompletionSession()
+void CompletionSession::setOrchestrator(ProcessOrchestrator *orchestrator)
 {
-    stopTree();
+    m_process->setOrchestrator(orchestrator);
 }
 
 void CompletionSession::start(const QString &command, const QString &workingDirectory,
                               const CommandVariables &variables, bool restart)
 {
-    if (!restart && m_process != nullptr && m_process->state() != QProcess::NotRunning && m_command == command
-        && m_workingDirectory == workingDirectory) {
+    if (!restart && m_process->runs(command, workingDirectory)) {
         flushHeldOpens();
         return;
     }
-    stopTree();
-    m_command = command;
-    m_workingDirectory = workingDirectory;
-    m_variables = variables;
-    m_token = m_orchestrator == nullptr ? 0 : m_orchestrator->currentToken(QStringLiteral("autocomplete"));
-    m_stopRequested = false;
-    launch();
+    m_editorPaths.clear();
+    m_process->start(command, workingDirectory, variables);
 }
 
 void CompletionSession::request(const CompletionRequest &request)
 {
-    if (m_process != nullptr && m_process->state() == QProcess::Running) {
+    if (m_process->running()) {
         write(request);
         return;
     }
     // Starting is not running. A write in that window is discarded, so an
     // open waits for the process. A session that is stopped holds nothing,
     // and the status bar already says it is stopped.
-    if (m_process != nullptr && m_process->state() == QProcess::Starting
-        && request.kind == QLatin1String("open"))
+    if (m_process->starting() && request.kind == QLatin1String("open"))
         m_heldOpens.append(request);
 }
 
 void CompletionSession::flushHeldOpens()
 {
-    if (m_process == nullptr || m_process->state() != QProcess::Running)
+    if (!m_process->running())
         return;
     const QList<CompletionRequest> opens = m_heldOpens;
     m_heldOpens.clear();
@@ -80,56 +69,8 @@ void CompletionSession::flushHeldOpens()
 
 void CompletionSession::stop()
 {
-    m_stopRequested = true;
     m_heldOpens.clear();
-    if (m_orchestrator != nullptr)
-        m_orchestrator->cancel(QStringLiteral("autocomplete"));
-    stopTree();
-}
-
-void CompletionSession::launch()
-{
-    if (m_process == nullptr) {
-        m_process = new QProcess(this);
-        connect(m_process, &QProcess::started, this, [this] { flushHeldOpens(); });
-        connect(m_process, &QProcess::readyReadStandardOutput, this, [this] {
-            absorbStdout(m_process->readAllStandardOutput());
-        });
-        connect(m_process, &QProcess::readyReadStandardError, this, [this] {
-            const QByteArray bytes = m_process->readAllStandardError();
-            if (bytes.isEmpty() || m_orchestrator == nullptr)
-                return;
-            m_orchestrator->appendLog(QStringLiteral("autocomplete"), QString::fromUtf8(bytes));
-        });
-        connect(m_process, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
-            absorbStdout(m_process->readAllStandardOutput());
-            if (!m_stopRequested && m_orchestrator != nullptr)
-                m_orchestrator->release(QStringLiteral("autocomplete"), m_token);
-            if (!m_stopRequested)
-                emit failed(QStringLiteral("Completion stopped."));
-            m_stopRequested = false;
-        });
-    }
-
-    m_pending.clear();
-    m_editorPaths.clear();
-
-    CommandVariables vars = m_variables;
-    vars.cwd = m_workingDirectory;
-#ifdef Q_OS_WIN
-    const WslPath::LinuxPath linux = WslPath::toLinux(m_workingDirectory);
-    if (linux.valid()) {
-        vars.file = linuxPath(vars.file);
-        vars.fileDir = linuxPath(vars.fileDir);
-        vars.project = linuxPath(vars.project);
-        vars.folder = linuxPath(vars.folder);
-        vars.cwd = linux.path;
-    }
-#endif
-    m_process->setProcessChannelMode(QProcess::SeparateChannels);
-    m_launch.startShell(m_process, m_workingDirectory, expandCommand(m_command, vars));
-    if (m_process->state() == QProcess::NotRunning && m_process->error() == QProcess::FailedToStart)
-        emit failed(m_process->errorString());
+    m_process->stop();
 }
 
 void CompletionSession::write(const CompletionRequest &request)
@@ -155,32 +96,11 @@ void CompletionSession::write(const CompletionRequest &request)
     }
     if (!request.trigger.isEmpty())
         obj.insert(QLatin1String("trigger"), request.trigger);
-    m_process->write(QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n');
+    m_process->write(obj);
 }
 
-void CompletionSession::absorbStdout(const QByteArray &bytes)
+void CompletionSession::take(const QJsonObject &obj)
 {
-    m_pending += m_launch.takeOutput(bytes);
-    int newline = m_pending.indexOf('\n');
-    while (newline >= 0) {
-        takeLine(m_pending.left(newline));
-        m_pending = m_pending.mid(newline + 1);
-        newline = m_pending.indexOf('\n');
-    }
-}
-
-void CompletionSession::takeLine(const QByteArray &line)
-{
-    const QByteArray trimmed = line.trimmed();
-    if (trimmed.isEmpty())
-        return;
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(trimmed, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-        emit failed(QStringLiteral("Couldn't read completion results."));
-        return;
-    }
-    const QJsonObject obj = document.object();
     const QString kind = obj.value(QLatin1String("kind")).toString();
     if (kind == QLatin1String("state")) {
         CompletionFileState state;
@@ -255,18 +175,4 @@ void CompletionSession::takeLine(const QByteArray &line)
         items.append(row);
     }
     emit completed(id, revision, items, obj.value(QLatin1String("incomplete")).toBool());
-}
-
-void CompletionSession::stopTree()
-{
-    m_launch.stopTree(this);
-    if (m_process == nullptr || m_process->state() == QProcess::NotRunning)
-        return;
-    // The killed process can take a moment to exit. It is detached so a new
-    // session can start now, and its exit does not read as this session's.
-    QProcess *old = m_process;
-    m_process = nullptr;
-    old->disconnect(this);
-    connect(old, &QProcess::finished, old, &QObject::deleteLater);
-    old->kill();
 }

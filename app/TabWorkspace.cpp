@@ -408,6 +408,23 @@ CodeEditor *TabWorkspace::editorFor(quintptr editorId) const
     return nullptr;
 }
 
+CodeEditor *TabWorkspace::editorForPath(const QString &path) const
+{
+    const QString clean = normalizedPath(path);
+    for (auto it = m_pages.cbegin(); it != m_pages.cend(); ++it) {
+        if (normalizedPath(it->file.path()).compare(clean, Qt::CaseInsensitive) == 0)
+            return qobject_cast<CodeEditor *>(it.key());
+    }
+    return nullptr;
+}
+
+void TabWorkspace::writeEditor(CodeEditor *editor, const QString &text)
+{
+    editor->applyCommandOutput(text);
+    writePage(editor);
+    emit fileSaved(QFileInfo(m_pages[editor].file.path()).absolutePath());
+}
+
 void TabWorkspace::goToDiagnostic(const QString &path, quintptr editorId, int line, int column)
 {
     CodeEditor *editor = editorFor(editorId);

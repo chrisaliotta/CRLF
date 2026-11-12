@@ -42,13 +42,15 @@ Cancel and Reload act on the selected Active row. `MainWindow` routes them by ke
 | `syntax:<editor>` | Stops that editor's check | Checks the editor's current text again |
 | `command:<name>` | Stops the menu command | Runs the command again, as choosing it from the menu does |
 | `git:<n>` | Stops that git job. The repository's next queued job starts | Not offered |
+| `agent` | Stops the agent. The next message starts it again | Starts a new session with an empty transcript |
+| `agent-terminal:<id>` | Stops a command the agent is running. The agent reads its exit | Not offered |
 | Anything else | Drops the record. A pool task already running keeps going, and its result is no longer the current one | Not offered |
 
 Reload starts the command string again, so an edited script is read from disk. Nothing watches the script.
 
-Restart Services, on Active, needs no selection. It starts autocomplete again and checks every open editor, for whichever of the two the project enables. Those are the processes that run without being chosen from a menu, so this brings them back after a Cancel. Menu commands are left alone.
+Restart Services, on Active, needs no selection. It starts autocomplete again and checks every open editor, for whichever of the two the project enables. Those are the processes that run without being chosen from a menu, so this brings them back after a Cancel. Menu commands are left alone, and so is the agent, because a new session ends the conversation.
 
-`ProcessLaunch` is the one place a child process is started: `cmd.exe`, `bash` inside a distro, or a program with plain arguments, each inside a kill-on-close job. `CommandRunner`, `SyntaxRunner`, `CompletionSession`, and `GitClient` each hold one per process. Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
+`ProcessLaunch` is the one place a child process is started: `cmd.exe`, `bash` inside a distro, or a program with plain arguments, each inside a kill-on-close job. `CommandRunner`, `SyntaxRunner`, `JsonLineProcess`, `AgentTerminals`, and `GitClient` each hold one per process. `JsonLineProcess` is the long-lived process that reads and writes one JSON object per line; the autocomplete session and the agent are each one. Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
 
 ## What runs where
 
@@ -57,6 +59,9 @@ Restart Services, on Active, needs no selection. It starts autocomplete again an
 | Syntax check | `SyntaxRunner` on the orchestrator thread, after the editor's 500ms idle timer | `MainWindow::applySyntax` draws marks and updates Problems |
 | Completion | `CompletionSession` on the orchestrator thread. The process stays up; each request is one JSON line | `MainWindow::applyCompletion` fills the popup |
 | Menu command | `CommandRunner` on the orchestrator thread | Output chunks and exit state, which the Output page already displays |
+| Agent | `AgentSession` on the orchestrator thread. The process stays up; it speaks JSON-RPC, one object per line. See [agent.md](agent.md) | `AgentHost` answers the agent's requests; `AgentPanel` draws the transcript |
+| Agent command | `AgentTerminals` on the orchestrator thread, one process per `terminal/create` | The Output log `agent: <command>` |
+| Agent file read or write | Pool, for a file that is not open | An open file's text, and its replacement |
 | Symbol scan | Pool. The editor's 200ms timer is the `Sleep` record | `applyDisk` and the index update |
 | External lookup and opening a definition | Pool | Opening the tab |
 | Explorer listing | Pool | The model update |

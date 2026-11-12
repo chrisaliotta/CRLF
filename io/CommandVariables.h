@@ -25,6 +25,8 @@
 //   ${project}       directory that contains the .crlf
 //   ${folder}        folder the explorer is scoped to
 //   ${cwd}           this command's working directory
+//   ${programDir}    the folder that holds styles, themes, and scripts
+//                    beside the program
 //
 // A name this list does not have is left unchanged. Quote a value in the
 // command when it may contain spaces: "${file}".
@@ -47,6 +49,7 @@ struct CommandVariables
     QString project;
     QString folder;
     QString cwd;
+    QString programDir;
 };
 
 // Replaces each known ${name} in `command`.

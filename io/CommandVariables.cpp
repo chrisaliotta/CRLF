@@ -21,6 +21,7 @@ QString expandCommand(const QString &command, const CommandVariables &vars)
         {QStringLiteral("project"), vars.project},
         {QStringLiteral("folder"), vars.folder},
         {QStringLiteral("cwd"), vars.cwd},
+        {QStringLiteral("programDir"), vars.programDir},
     };
 
     static const QRegularExpression token(QStringLiteral("\\$\\{([A-Za-z]+)\\}"));

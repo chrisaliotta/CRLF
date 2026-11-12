@@ -36,6 +36,26 @@
     "enabled": false,
     "command": "./scripts/autocomplete.sh"
   },
+  "agents": [
+    {
+      "name": "Claude",
+      "command": "python scripts/agent/crlf_agent.py --provider anthropic --model claude-sonnet-4-5",
+      "watch": ["scripts/agent/crlf_agent.py", "scripts/agent/providers.py", "scripts/agent/tools.py"]
+    },
+    {
+      "name": "GPT",
+      "command": "python scripts/agent/crlf_agent.py --provider openai --model gpt-5"
+    },
+    {
+      "name": "Grok",
+      "command": "python scripts/agent/crlf_agent.py --provider xai --model grok-4"
+    },
+    {
+      "name": "Local",
+      "command": "python scripts/agent/crlf_agent.py --provider ollama --model qwen3-coder",
+      "permissions": { "write": "review", "terminal": "ask" }
+    }
+  ],
   "unlimitedLog": false,
   "git": {
     "enabled": true,

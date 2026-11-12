@@ -178,6 +178,11 @@ QString TerminalPanel::transcript() const
     return view != nullptr ? view->transcript() : QString();
 }
 
+void TerminalPanel::sendInput(const QString &text)
+{
+    m_sessions.at(m_sessionsCombo->currentIndex()).pty->writeInput(text.toUtf8());
+}
+
 TerminalPanel::Launch TerminalPanel::launchFor(const QString &directory) const
 {
     const WslPath::LinuxPath linux = WslPath::toLinux(directory);

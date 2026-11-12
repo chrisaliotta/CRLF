@@ -118,6 +118,18 @@ IndentRule readIndentRule(const QJsonObject &obj, const IndentRule &base)
     return rule;
 }
 
+// `command`, `cwd`, and `watch`, shared by the services and the agents.
+void readProcess(ServiceSettings &service, const QJsonObject &obj, const QString &directory)
+{
+    service.command = obj.value(QLatin1String("command")).toString();
+    const QString cwd = obj.value(QLatin1String("cwd")).toString();
+    if (!cwd.isEmpty())
+        service.workingDirectory = QDir(directory).filePath(cwd);
+    service.workingDirectory = QDir(service.workingDirectory).absolutePath();
+    for (const QJsonValue &path : obj.value(QLatin1String("watch")).toArray())
+        service.watch.append(QDir(service.workingDirectory).absoluteFilePath(path.toString()));
+}
+
 void readService(ServiceSettings &service, const QJsonValue &value, const QString &directory)
 {
     service.workingDirectory = QDir(directory).absolutePath();
@@ -129,13 +141,33 @@ void readService(ServiceSettings &service, const QJsonValue &value, const QStrin
         return;
     const QJsonObject obj = value.toObject();
     service.enabled = obj.value(QLatin1String("enabled")).toBool(false);
-    service.command = obj.value(QLatin1String("command")).toString();
-    const QString cwd = obj.value(QLatin1String("cwd")).toString();
-    if (!cwd.isEmpty())
-        service.workingDirectory = QDir(directory).filePath(cwd);
-    service.workingDirectory = QDir(service.workingDirectory).absolutePath();
-    for (const QJsonValue &path : obj.value(QLatin1String("watch")).toArray())
-        service.watch.append(QDir(service.workingDirectory).absoluteFilePath(path.toString()));
+    readProcess(service, obj, directory);
+}
+
+void readAgents(Project &project, const QJsonArray &entries, const QString &directory)
+{
+    for (const QJsonValue &value : entries) {
+        const QJsonObject obj = value.toObject();
+        AgentSettings agent;
+        agent.name = obj.value(QLatin1String("name")).toString().trimmed();
+        agent.process.workingDirectory = QDir(directory).absolutePath();
+        readProcess(agent.process, obj, directory);
+        if (agent.name.isEmpty() || agent.process.command.isEmpty())
+            continue;
+        bool duplicate = false;
+        for (const AgentSettings &existing : project.agents)
+            duplicate = duplicate || existing.name == agent.name;
+        if (duplicate)
+            continue;
+        const QJsonObject permissions = obj.value(QLatin1String("permissions")).toObject();
+        const auto access = [&permissions](const char *key, AgentAccess fallback) {
+            return accessNamed(permissions.value(QLatin1String(key)).toString(), fallback);
+        };
+        agent.permissions.read = access("read", agent.permissions.read);
+        agent.permissions.write = access("write", agent.permissions.write);
+        agent.permissions.terminal = access("terminal", agent.permissions.terminal);
+        project.agents.append(agent);
+    }
 }
 
 void readGit(GitSettings &git, const QJsonValue &value)
@@ -277,6 +309,7 @@ Project projectFor(const QString &start)
     project.externalNavigation = root.value(QLatin1String("externalNavigation")).toBool(true);
     readService(project.syntax, root.value(QLatin1String("syntax")), directory);
     readService(project.autocomplete, root.value(QLatin1String("autocomplete")), directory);
+    readAgents(project, root.value(QLatin1String("agents")).toArray(), directory);
     project.unlimitedLog = root.value(QLatin1String("unlimitedLog")).toBool(false);
     readGit(project.git, root.value(QLatin1String("git")));
     return project;

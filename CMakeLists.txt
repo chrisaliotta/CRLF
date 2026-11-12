@@ -80,6 +80,18 @@ set(APP_SOURCES
     app/SyntaxRunner.cpp
     app/CompletionSession.h
     app/CompletionSession.cpp
+    app/JsonLineProcess.h
+    app/JsonLineProcess.cpp
+    app/AgentSession.h
+    app/AgentSession.cpp
+    app/AgentTerminals.h
+    app/AgentTerminals.cpp
+    app/AgentHost.h
+    app/AgentHost.cpp
+    app/AgentPanel.h
+    app/AgentPanel.cpp
+    app/AgentController.h
+    app/AgentController.cpp
     app/ProcessOrchestrator.h
     app/ProcessOrchestrator.cpp
     app/ProcessesPanel.h
@@ -118,6 +130,16 @@ set(GIT_SOURCES
     git/GitDiscovery.cpp
     git/LineDiff.h
     git/LineDiff.cpp
+)
+
+# The Agent Client Protocol and the access policy. No widgets, so the tests build it too.
+set(AGENT_SOURCES
+    agent/JsonRpc.h
+    agent/JsonRpc.cpp
+    agent/AcpTypes.h
+    agent/AcpTypes.cpp
+    agent/AgentPolicy.h
+    agent/AgentPolicy.cpp
 )
 
 set(EDITOR_SOURCES
@@ -187,6 +209,7 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     Types.h
     ${APP_SOURCES}
+    ${AGENT_SOURCES}
     ${GIT_SOURCES}
     ${EDITOR_SOURCES}
     ${HEX_SOURCES}
@@ -215,6 +238,21 @@ if(CRLF_BUILD_TESTS)
     target_include_directories(GitClientTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(GitClientTests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME GitClientTests COMMAND GitClientTests)
+
+    # The access policy and the protocol messages, without a process.
+    add_executable(AgentTests tests/AgentTests.cpp ${AGENT_SOURCES})
+    target_include_directories(AgentTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(AgentTests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME AgentTests COMMAND AgentTests)
+
+    # Drives tests/fake_acp_agent.py, so it needs python on PATH.
+    add_executable(AgentSessionTests tests/AgentSessionTests.cpp app/AgentSession.cpp app/AgentTerminals.cpp
+        app/JsonLineProcess.cpp app/ProcessLaunch.cpp app/ProcessOrchestrator.cpp ${AGENT_SOURCES}
+        io/CommandVariables.cpp io/WslPath.cpp)
+    target_include_directories(AgentSessionTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(AgentSessionTests PRIVATE FAKE_AGENT="${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_acp_agent.py")
+    target_link_libraries(AgentSessionTests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME AgentSessionTests COMMAND AgentSessionTests)
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg vterm)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -265,6 +303,13 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/autocomplete.py"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/agent"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/scripts/agent/crlf_agent.py"
+        "${CMAKE_SOURCE_DIR}/scripts/agent/providers.py"
+        "${CMAKE_SOURCE_DIR}/scripts/agent/tools.py"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/agent"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -294,6 +339,10 @@ install(FILES "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
     DESTINATION scripts)
+install(FILES "${CMAKE_SOURCE_DIR}/scripts/agent/crlf_agent.py"
+    "${CMAKE_SOURCE_DIR}/scripts/agent/providers.py"
+    "${CMAKE_SOURCE_DIR}/scripts/agent/tools.py"
+    DESTINATION scripts/agent)
 
 qt_generate_deploy_app_script(
     TARGET ${PROJECT_NAME}

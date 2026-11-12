@@ -110,10 +110,17 @@ public:
     // documents and the + tab, and have no file, pin, or save.
     bool isToolPage(QWidget *page) const { return page != nullptr && (page == m_processes || page == m_diff); }
     CodeEditor *editorFor(quintptr editorId) const;
+    // The text editor open on `path`, or null.
+    CodeEditor *editorForPath(const QString &path) const;
     QList<CodeEditor *> editors() const;
+    // Replaces the editor's text as one undo step and saves the file.
+    void writeEditor(CodeEditor *editor, const QString &text);
     // Focuses the open document and moves its cursor. A path that is not open
     // is left alone; check rows belong to documents that are still open.
     void goToDiagnostic(const QString &path, quintptr editorId, int line, int column);
+    // Focuses `editorId`, or the tab on `path`, or opens `path`, and moves to
+    // the 1-based line and column.
+    void revealDefinition(const QString &path, quintptr editorId, int line, int column);
     // The editor a command's output will replace. Cleared in the hex view.
     void rememberCommandEditor(const QString &name);
     void applyCommandOutput(const QString &name, const QString &text);
@@ -185,7 +192,6 @@ private:
     // `others` keeps `clicked`. `toTheRight` keeps `clicked` and everything
     // before it. Pinned tabs stay open either way.
     void closeUnpinned(int clicked, bool others, bool toTheRight);
-    void revealDefinition(const QString &path, quintptr editorId, int line, int column);
     // Looks the target up under node_modules on a worker. A newer click wins.
     void revealExternal(CodeEditor *editor, const SymbolLocation &target);
 

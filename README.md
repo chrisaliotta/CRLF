@@ -52,6 +52,15 @@ File > Open Folder (Ctrl+Shift+O), or View > Explorer (Ctrl+B). The tree is scop
 - Fetch, Pull (fast-forward only), Push, Stash, and Pop Stash are on the panel and the Git menu. Each operation's output is in the Output log `git: <folder>`, which opens when an operation fails
 - A repository inside a WSL distro runs that distro's git
 
+### Agent
+
+View > Agent (Ctrl+Shift+A) opens a chat with an AI coding agent. The editor holds none of the AI: an agent is a program listed under `agents` in `.crlf`, and CRLF speaks the [Agent Client Protocol](https://agentclientprotocol.com) with it. See [docs/agent.md](docs/agent.md).
+
+- `scripts/agent/crlf_agent.py` ships beside the program and talks to OpenAI, Anthropic, xAI Grok, Ollama, LM Studio, or any OpenAI-compatible server. The key comes from the provider's environment variable. Claude Code behind its ACP adapter, and other ACP agents, work the same way
+- The agent reads files through the editor, so it sees unsaved edits. Each write is shown as a card with the lines it changes; Open Diff shows it in the Diff tab, and nothing is saved until Accept
+- Commands the agent runs ask first, appear on the Processes page, and write to an Output log. The agent can also see the open files, the Problems list, git status, and the terminal's text
+- `permissions` on each agent sets `read`, `write`, and `terminal` to `allow`, `ask`, `review`, or `deny`. A path outside the agent's folder always asks
+
 ### WSL
 
 File > Open WSL Folder… picks a distro and a Linux path (the distro's home is the default) and scopes the explorer to `\\wsl.localhost\<Distro>\…`. The tooltip shows the Linux path. Parent-folder and project search stop at the distro root.
@@ -72,7 +81,7 @@ View > Hex Editor (Ctrl+Shift+H) swaps the current tab between text and a hex vi
 
 ### Project commands
 
-A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, is the project file. [docs/crlf.md](docs/crlf.md) is the list of keys. [docs/commands.md](docs/commands.md) describes the menus and the variables. A bare array is only commands; groups, hide, icons, indent, navigation, check, autocomplete, and git have to live in an object. Each command is a JSON object:
+A `.crlf` file in the explorer folder, or in a parent folder up to the drive or distro root, is the project file. [docs/crlf.md](docs/crlf.md) is the list of keys. [docs/commands.md](docs/commands.md) describes the menus and the variables. A bare array is only commands; groups, hide, icons, indent, navigation, check, autocomplete, agents, and git have to live in an object. Each command is a JSON object:
 
 ```json
 [
@@ -109,7 +118,7 @@ cmake --build build
 
 Or open `CMakeLists.txt` in Qt Creator and press Run.
 
-The unit tests build with the program (`-DCRLF_BUILD_TESTS=OFF` skips them). Run them with Qt's `bin` folder on `PATH`; `GitClientTests` needs `git` too:
+The unit tests build with the program (`-DCRLF_BUILD_TESTS=OFF` skips them). Run them with Qt's `bin` folder on `PATH`; `GitClientTests` needs `git` too, and `AgentSessionTests` needs `python`:
 
 ```
 ctest --test-dir build --output-on-failure
@@ -139,9 +148,11 @@ and sessions in `%APPDATA%\CRLF` are kept.
 | Directory | Contents |
 | --- | --- |
 | `Types.h` | Types shared across module boundaries (`TokenRole`, `FoldMode`, `FoldPair`) |
-| `app/` | `MainWindow`, `TabWorkspace` (tab strip, pins, documents), `ExplorerPanel` and `ExplorerModel`, `ProcessLaunch` (how every child process starts), `CommandRunner`, `OutputPanel`, `Actions`, `FindBar`, and source control: `GitClient`, `SourceControl`, `SourceControlPanel`, `DiffView` |
+| `app/` | `MainWindow`, `TabWorkspace` (tab strip, pins, documents), `ExplorerPanel` and `ExplorerModel`, `ProcessLaunch` (how every child process starts), `JsonLineProcess` (a long-lived JSON-lines child), `CommandRunner`, `OutputPanel`, `Actions`, `FindBar`, source control: `GitClient`, `SourceControl`, `SourceControlPanel`, `DiffView`, and the agent: `AgentSession`, `AgentTerminals`, `AgentHost`, `AgentController`, `AgentPanel` |
+| `agent/` | No widgets: JSON-RPC (`JsonRpc`), the Agent Client Protocol messages (`AcpTypes`), and the access check (`AgentPolicy`) |
 | `git/` | No widgets: git status, branch, and log parsers (`GitParse`), repository search (`GitDiscovery`), and the line diff (`LineDiff`) |
-| `tests/` | `GitTests` (parsers, search, diff) and `GitClientTests` (a real git against a temporary repository) |
+| `scripts/agent/` | The reference agent: the ACP loop (`crlf_agent.py`), the model providers (`providers.py`), and its tools (`tools.py`) |
+| `tests/` | `GitTests` (parsers, search, diff), `GitClientTests` (a real git against a temporary repository), `AgentTests` (the access policy and protocol messages), and `AgentSessionTests` (a whole turn with `fake_acp_agent.py`) |
 | `editor/` | `CodeEditor` (QPlainTextEdit subclass), `Gutter`, `FoldController`, `FoldingLayout`, `BlockData`, and definition navigation: `SymbolIndex`, `ImportAliases`, `ExternalLookup`, `TailwindNames` |
 | `hex/` | `HexView` |
 | `syntax/` | JSON-driven `LanguageDefinition`/`LanguageRegistry`, `Theme`, `Highlighter` |

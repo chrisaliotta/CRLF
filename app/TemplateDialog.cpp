@@ -41,6 +41,7 @@ const CommandKey kCommandKeys[] = {
     {"project", "Directory that contains the .crlf file"},
     {"folder", "Folder the explorer is scoped to"},
     {"cwd", "This command's working directory"},
+    {"programDir", "Folder beside the program that holds styles, themes, and scripts"},
 };
 
 void hideUnless(QListWidget *list, const QString &text)

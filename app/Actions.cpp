@@ -33,6 +33,8 @@ Actions::Actions(QObject *parent)
 
     explorer = make(QStringLiteral("&Explorer"), QKeySequence(Qt::CTRL | Qt::Key_B));
     explorer->setCheckable(true);
+    agent = make(QStringLiteral("&Agent"), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
+    agent->setCheckable(true);
     terminal = make(QStringLiteral("&Terminal"), QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft));
     terminal->setCheckable(true);
     processes = make(QStringLiteral("&Processes"), QKeySequence());

@@ -15,6 +15,9 @@
 #include <QMainWindow>
 #include <QSet>
 
+class AgentController;
+class AgentPanel;
+class AgentSession;
 class BottomPanel;
 class SyntaxRunner;
 class CodeEditor;
@@ -167,6 +170,9 @@ private:
     CommandRunner *m_runner = nullptr;
     SyntaxRunner *m_syntax = nullptr;
     CompletionSession *m_completion = nullptr;
+    AgentSession *m_agentSession = nullptr;
+    AgentPanel *m_agentPanel = nullptr;
+    AgentController *m_agents = nullptr;
     GitClient *m_gitClient = nullptr;
     SourceControl *m_sourceControl = nullptr;
     SourceControlPanel *m_sourcePanel = nullptr;

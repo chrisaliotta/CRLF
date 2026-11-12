@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/AgentPolicy.h"
+
 #include <QKeySequence>
 #include <QList>
 #include <QString>
@@ -77,6 +79,16 @@ struct ServiceSettings
     QStringList watch;
 };
 
+// One entry of `agents`: an Agent Client Protocol program the Agent panel can
+// start (docs/agent.md). `command`, `workingDirectory`, and `watch` are read
+// like a service's; `enabled` is not used.
+struct AgentSettings
+{
+    QString name;
+    ServiceSettings process;
+    AgentPermissions permissions;
+};
+
 // Source control for the scoped folder. `depth` is how many folder levels
 // below that folder are searched for repositories; 0 is only the folder
 // itself and the repository that contains it.
@@ -125,6 +137,8 @@ struct Project
     ServiceSettings syntax;
     // One long-lived completion process per project.
     ServiceSettings autocomplete;
+    // The Agent panel's choices, in file order. One runs at a time.
+    QList<AgentSettings> agents;
     // Keeps every line of a process log. False keeps the last 2,000.
     bool unlimitedLog = false;
     GitSettings git;

@@ -31,6 +31,7 @@ struct Actions
     QAction *gotoLine;
 
     QAction *explorer;
+    QAction *agent;
     QAction *terminal;
     QAction *processes;
     QAction *wordWrap;
