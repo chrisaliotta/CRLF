@@ -84,5 +84,7 @@ CMakeLists.txt.user*
 /build*/
 /.qtcreator/
 
-# API keys for the agents in .crlf
-.keys/
+# API keys for the agents in workspace.crlf
+.crlf/keys/
+# The agent's code index. It also writes its own .gitignore there.
+.crlf/data/

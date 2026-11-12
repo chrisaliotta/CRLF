@@ -30,7 +30,7 @@ public:
 
     // The ${...} values a starting agent's command is filled with.
     void setVariablesProvider(std::function<CommandVariables()> provider);
-    // The .crlf `agents`. A running agent whose entry changed or disappeared
+    // The project's `agents`. A running agent whose entry changed or disappeared
     // is stopped; the next prompt starts it again.
     void setAgents(const QList<AgentSettings> &agents);
     // Starts the chosen agent unless it is already running.

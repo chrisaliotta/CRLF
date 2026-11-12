@@ -23,6 +23,7 @@
 #include "app/TerminalPanel.h"
 #include "app/TitleBar.h"
 #include "io/ProjectCommands.h"
+#include "io/WorkspaceSeed.h"
 #include "io/WslPath.h"
 #include "editor/CodeEditor.h"
 #include "editor/FoldController.h"
@@ -31,6 +32,7 @@
 #include "syntax/LanguageDefinition.h"
 
 #include <QActionGroup>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFile>
@@ -47,6 +49,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPointer>
+#include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
@@ -532,6 +535,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_projectChanged = new QTimer(this);
     m_projectChanged->setSingleShot(true);
     m_projectChanged->setInterval(200);
+    m_projectFolderChanged = new QTimer(this);
+    m_projectFolderChanged->setSingleShot(true);
+    m_projectFolderChanged->setInterval(200);
     m_explorer->hide();
     m_sourcePanel->hide();
 
@@ -820,6 +826,7 @@ void MainWindow::buildMenus()
     file->addAction(m_actions.open);
     file->addAction(m_actions.openFolder);
     file->addAction(m_actions.openWslFolder);
+    file->addAction(m_actions.copyApplicationFiles);
     file->addSeparator();
     file->addAction(m_actions.save);
     file->addAction(m_actions.saveAs);
@@ -875,9 +882,9 @@ void MainWindow::buildMenus()
         connect(action, &QAction::triggered, this, [this, theme = &theme] { applyFileIconTheme(theme); });
     }
     QMenu *defaults = view->addMenu(QStringLiteral("Edit Defaults"));
-    const QString commandsFile = QDir(programDirectory()).filePath(QStringLiteral(".crlf"));
-    defaults->addAction(QStringLiteral("Commands"), m_tabs, [this, commandsFile] {
-        m_tabs->openFile(commandsFile);
+    const QString settingsFile = QDir(applicationFolder()).filePath(QLatin1String(kApplicationFile));
+    defaults->addAction(QStringLiteral("Commands"), m_tabs, [this, settingsFile] {
+        m_tabs->openFile(settingsFile);
     });
     addJsonFileMenu(defaults->addMenu(QStringLiteral("Themes")),
                     QDir(programDirectory()).filePath(QStringLiteral("themes")), m_tabs);
@@ -940,6 +947,7 @@ void MainWindow::connectActions()
             m_actions.explorer->setChecked(true);
     });
     connect(m_actions.openWslFolder, &QAction::triggered, this, &MainWindow::chooseWslFolder);
+    connect(m_actions.copyApplicationFiles, &QAction::triggered, this, &MainWindow::copyApplicationFiles);
     connect(m_actions.explorer, &QAction::toggled, this, [this](bool visible) {
         if (visible && m_explorer->rootPath().isEmpty() && !chooseExplorerFolder()) {
             m_actions.explorer->setChecked(false);
@@ -1004,6 +1012,7 @@ void MainWindow::connectActions()
     });
     connect(m_explorer, &ExplorerPanel::rootPathChanged, this, [this](const QString &path) {
         QSettings().setValue(kExplorerRootSetting, path);
+        m_actions.copyApplicationFiles->setEnabled(!path.isEmpty());
         if (path != m_scopedRoot) {
             m_scopedRoot = path;
             if (!path.isEmpty()) {
@@ -1020,14 +1029,9 @@ void MainWindow::connectActions()
     connect(m_explorer, &ExplorerPanel::closeRequested, this,
             [this] { m_actions.explorer->setChecked(false); });
     connect(m_explorer, &ExplorerPanel::virtualFoldersEdited, this, [this](const QList<FileGroup> &groups) {
-        QString file = m_projectFile;
-        if (file.isEmpty())
-            file = QDir(m_explorer->rootPath()).filePath(QStringLiteral(".crlf"));
-        if (!saveProjectGroups(file, groups)) {
-            statusBar()->showMessage(QStringLiteral("Couldn't write .crlf"), 5000);
-            return;
-        }
-        reloadCommands();
+        saveProjectSetting([groups, application = applicationFolder()](const QString &directory) {
+            return saveProjectGroups(directory, groups, application);
+        });
     });
     connect(m_tabs, &TabWorkspace::fileSaved, this, [this](const QString &directory) {
         m_saveDirectory = directory;
@@ -1100,6 +1104,11 @@ void MainWindow::connectActions()
     });
     connect(m_projectWatcher, &QFileSystemWatcher::fileChanged, m_projectChanged, qOverload<>(&QTimer::start));
     connect(m_projectChanged, &QTimer::timeout, this, [this] { reloadCommands(true); });
+    // A settings file was added to the project root or removed from it. The
+    // services start again only when their own settings changed.
+    connect(m_projectWatcher, &QFileSystemWatcher::directoryChanged, m_projectFolderChanged,
+            qOverload<>(&QTimer::start));
+    connect(m_projectFolderChanged, &QTimer::timeout, this, [this] { reloadCommands(); });
     connect(m_runner, &CommandRunner::outputReceived, this,
             [this](const QString &name, const QString &text) {
                 if (m_editorCommands.contains(name) && m_output->currentName() != name)
@@ -1470,19 +1479,64 @@ void MainWindow::editIconTemplates()
     TemplateDialog dialog(m_iconThemes, m_projectIcons, fallback, this);
     if (dialog.exec() != QDialog::Accepted)
         return;
-    QString file = m_projectFile;
-    if (file.isEmpty()) {
-        if (m_explorer->rootPath().isEmpty()) {
-            statusBar()->showMessage(QStringLiteral("Open a folder before saving icon rules"), 5000);
-            return;
-        }
-        file = QDir(m_explorer->rootPath()).filePath(QStringLiteral(".crlf"));
-    }
-    if (!saveProjectIcons(file, dialog.icons())) {
-        statusBar()->showMessage(QStringLiteral("Couldn't write .crlf"), 5000);
+    if (m_projectDirectory.isEmpty() && m_explorer->rootPath().isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Open a folder before saving icon rules"), 5000);
         return;
     }
-    reloadCommands();
+    saveProjectSetting([icons = dialog.icons(), application = applicationFolder()](const QString &directory) {
+        return saveProjectIcons(directory, icons, application);
+    });
+}
+
+void MainWindow::saveProjectSetting(std::function<bool(const QString &directory)> save)
+{
+    const QString directory = m_projectDirectory.isEmpty() ? m_explorer->rootPath() : m_projectDirectory;
+    m_orchestrator->submit(QStringLiteral("project-save"), QStringLiteral("Project"), directory, 0, directory,
+                           [this, directory, save] {
+        const bool saved = save(directory);
+        QMetaObject::invokeMethod(this, [this, saved] {
+            if (saved)
+                reloadCommands();
+            else
+                statusBar()->showMessage(QStringLiteral("Couldn't write the workspace settings"), 5000);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void MainWindow::copyApplicationFiles()
+{
+    const QString target = m_explorer->rootPath();
+    QMessageBox dialog(QMessageBox::Question, QStringLiteral("Copy Application Files to Workspace"),
+                       QStringLiteral("Copy the application's scripts and rules into this folder?\n\n%1")
+                           .arg(QDir::toNativeSeparators(target)),
+                       QMessageBox::Cancel, this);
+    dialog.setInformativeText(QStringLiteral(
+        "Scripts and rules go into the folder's .crlf folder. A folder with no .crlf settings file also gets a "
+        "workspace.crlf made from application.crlf. An existing settings file is not changed, and key files "
+        "are not copied."));
+    auto *replace = new QCheckBox(QStringLiteral("Replace existing files"), &dialog);
+    dialog.setCheckBox(replace);
+    QPushButton *copy = dialog.addButton(QStringLiteral("Copy"), QMessageBox::AcceptRole);
+    dialog.exec();
+    if (dialog.clickedButton() != copy)
+        return;
+
+    const QString application = applicationFolder();
+    const QString scripts = QDir(programDirectory()).filePath(QStringLiteral("scripts"));
+    const bool replaceExisting = replace->isChecked();
+    m_orchestrator->submit(QStringLiteral("workspace-seed"), QStringLiteral("Copy Application Files"), target, 0,
+                           target, [this, application, scripts, target, replaceExisting] {
+        const SeedCounts counts = seedWorkspace(application, scripts, target, replaceExisting);
+        QMetaObject::invokeMethod(this, [this, counts, target] {
+            QString message = QStringLiteral("Copied %1 files, replaced %2, skipped %3")
+                                  .arg(counts.copied).arg(counts.replaced).arg(counts.skipped);
+            if (counts.failed > 0)
+                message += QStringLiteral(", couldn't write %1").arg(counts.failed);
+            statusBar()->showMessage(message, 8000);
+            m_explorer->refresh(target);
+            reloadCommands();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::applyTheme(const Theme *theme)
@@ -1586,8 +1640,8 @@ CommandVariables MainWindow::variablesFor(QWidget *page) const
 {
     CommandVariables vars;
     vars.programDir = programDirectory();
-    if (!m_projectFile.isEmpty())
-        vars.project = QFileInfo(m_projectFile).absolutePath();
+    vars.appDir = QDir(applicationFolder()).filePath(QLatin1String(kProjectFolder));
+    vars.project = m_projectDirectory;
     vars.folder = m_explorer->rootPath();
 
     CodeEditor *editor = qobject_cast<CodeEditor *>(page);
@@ -1651,18 +1705,13 @@ void MainWindow::runSyntax(CodeEditor *editor)
 
 void MainWindow::startCompletion(bool restart)
 {
-    const QString groupDirectory =
-        m_projectFile.isEmpty() ? QString() : QFileInfo(m_projectFile).absolutePath();
-    CommandVariables vars;
-    vars.project = groupDirectory;
-    vars.folder = m_explorer->rootPath();
-    vars.cwd = m_autocompleteDirectory;
-    vars.programDir = programDirectory();
+    // The session belongs to the project, not to the document in front.
+    const CommandVariables vars = variablesFor(nullptr);
     const QString command = m_autocompleteCommand;
     const QString directory = m_autocompleteDirectory;
     // A new process knows no files. Each open below is answered with a state.
     m_fileStates.clear();
-    m_orchestrator->submit(QStringLiteral("autocomplete"), QStringLiteral("autocomplete"), groupDirectory, 0, command,
+    m_orchestrator->submit(QStringLiteral("autocomplete"), QStringLiteral("autocomplete"), m_projectDirectory, 0, command,
                            [session = m_completion, command, directory, vars, restart] {
                                session->start(command, directory, vars, restart);
                            },
@@ -1896,11 +1945,22 @@ void MainWindow::reloadCommands(bool restart)
         start = m_tabs->fileFor(m_tabs->currentWidget()).path();
 
     const int generation = ++m_commandGeneration;
-    const QString owner = start.isEmpty() ? QString() : start;
-    m_orchestrator->submit(QStringLiteral("project"), QStringLiteral("Project"), owner, 0,
-                           owner.isEmpty() ? QStringLiteral(".crlf") : owner, [this, start, generation, restart] {
-        const Project project = projectFor(start);
+    const QString application = applicationFolder();
+    const QString program = programDirectory();
+    m_orchestrator->submit(QStringLiteral("project"), QStringLiteral("Project"), start, 0,
+                           start.isEmpty() ? QString::fromLatin1(kApplicationFile) : start,
+                           [this, start, application, program, generation, restart] {
+        seedApplicationFolder(application, program);
+        const Project project = projectFor(start, application);
         QMetaObject::invokeMethod(this, [this, project, generation, restart] {
+            // The file was renamed on disk, whether or not a newer load has
+            // replaced this one.
+            if (!project.renamedFrom.isEmpty()) {
+                m_tabs->retargetPath(project.renamedFrom, project.renamedTo);
+                m_explorer->refresh(project.directory);
+                statusBar()->showMessage(
+                    QStringLiteral("Renamed .crlf to %1").arg(QFileInfo(project.renamedTo).fileName()), 5000);
+            }
             if (generation != m_commandGeneration)
                 return;
             applyProject(project, restart);
@@ -1910,11 +1970,14 @@ void MainWindow::reloadCommands(bool restart)
 
 void MainWindow::applyProject(const Project &project, bool restart)
 {
-    if (!m_projectWatcher->files().isEmpty())
-        m_projectWatcher->removePaths(m_projectWatcher->files());
-    m_projectFile = project.filePath;
-    if (!m_projectFile.isEmpty())
-        m_projectWatcher->addPaths(QStringList{m_projectFile} + project.syntax.watch + project.autocomplete.watch);
+    const QStringList watched = m_projectWatcher->files() + m_projectWatcher->directories();
+    if (!watched.isEmpty())
+        m_projectWatcher->removePaths(watched);
+    m_projectDirectory = project.directory;
+    // `files` is never empty: application.crlf applies when nothing else does.
+    m_projectWatcher->addPaths(project.files + project.syntax.watch + project.autocomplete.watch);
+    if (!m_projectDirectory.isEmpty())
+        m_projectWatcher->addPath(m_projectDirectory);
 
     QMetaObject::invokeMethod(m_runner, [runner = m_runner, commands = project.commands] {
         runner->setProject(commands);
@@ -1924,9 +1987,8 @@ void MainWindow::applyProject(const Project &project, bool restart)
         if (command.outputToEditor)
             m_editorCommands.insert(command.name);
     }
-    const QString groupDirectory =
-        project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath();
-    m_explorer->setGroups(groupDirectory, project.groups);
+    // With no workspace, the application's groups apply to the scoped folder.
+    m_explorer->setGroups(project.directory.isEmpty() ? m_explorer->rootPath() : project.directory, project.groups);
     m_explorer->setHidden(project.hide);
     m_projectIcons = project.icons;
     applyComposedIcons();
@@ -1934,7 +1996,8 @@ void MainWindow::applyProject(const Project &project, bool restart)
     m_tabs->setExternalNavigation(project.externalNavigation);
     m_tabs->setSymbolProject(m_explorer->rootPath(), project.hide);
     m_tabs->setIndent(project.indent);
-    m_sourceControl->setProject(project.git, m_explorer->rootPath().isEmpty() ? groupDirectory : m_explorer->rootPath(),
+    m_sourceControl->setProject(project.git,
+                                m_explorer->rootPath().isEmpty() ? project.directory : m_explorer->rootPath(),
                                 project.hide);
     const bool syntaxEnabled = project.syntax.enabled && !project.syntax.command.isEmpty();
     const bool syntaxChanged = syntaxEnabled != m_syntaxEnabled || project.syntax.command != m_syntaxCommand
@@ -1942,8 +2005,7 @@ void MainWindow::applyProject(const Project &project, bool restart)
     m_syntaxEnabled = syntaxEnabled;
     m_syntaxCommand = project.syntax.command;
     m_syntaxDirectory = project.syntax.workingDirectory;
-    m_bottom->problems()->setProjectDirectory(
-        project.filePath.isEmpty() ? QString() : QFileInfo(project.filePath).absolutePath());
+    m_bottom->problems()->setProjectDirectory(project.directory);
     if (syntaxChanged)
         m_tabs->setSyntaxEnabled(m_syntaxEnabled);
     if (!m_syntaxEnabled) {
@@ -1974,20 +2036,18 @@ void MainWindow::applyProject(const Project &project, bool restart)
     for (const ProjectCommand &command : project.commands)
         m_commandTexts.insert(command.name, command.command);
     clearProjectCommands(m_menuBar);
-    if (project.commands.isEmpty()) {
-        if (!project.error.isEmpty())
-            statusBar()->showMessage(project.error, 5000);
-    } else {
-        for (const ProjectCommand &command : project.commands) {
-            QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
-            action->setCheckable(true);
-            action->setChecked(m_runningCommands.contains(command.name));
-            if (!command.key.isEmpty()) {
-                action->setShortcut(command.key);
-                action->setShortcutContext(Qt::WindowShortcut);
-            }
-            connect(action, &QAction::triggered, this, [this, name = command.name] { runCommand(name); });
+    // A file that is not JSON is skipped, and the others still apply.
+    if (!project.error.isEmpty())
+        statusBar()->showMessage(project.error, 5000);
+    for (const ProjectCommand &command : project.commands) {
+        QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
+        action->setCheckable(true);
+        action->setChecked(m_runningCommands.contains(command.name));
+        if (!command.key.isEmpty()) {
+            action->setShortcut(command.key);
+            action->setShortcutContext(Qt::WindowShortcut);
         }
+        connect(action, &QAction::triggered, this, [this, name = command.name] { runCommand(name); });
     }
     m_runMenu->menuAction()->setVisible(!m_runMenu->actions().isEmpty());
 }

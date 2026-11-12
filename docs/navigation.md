@@ -76,7 +76,7 @@ Do **not** replace this with `QThreadPool::waitForDone()` on the UI thread at sh
 ### Project walk
 
 - Starts when a folder is scoped (`MainWindow::applyProject` → `TabWorkspace::setSymbolProject`).
-- Skips dot directories, `.crlf` `hide` patterns (matched exactly like `ExplorerPanel`: case-insensitive, wildcard when the pattern has `*` or `?`), any `node_modules` directory, and files over 1 MiB.
+- Skips dot directories, the project's `hide` patterns (matched exactly like `ExplorerPanel`: case-insensitive, wildcard when the pattern has `*` or `?`), any `node_modules` directory, and files over 1 MiB.
 - **`node_modules` is always skipped, even when not hidden.** It can contain hundreds of thousands of files. External code is resolved on click instead (see below).
 - Disk scans pass `includeLocals = false`, so local variables from files you are not editing are never stored.
 

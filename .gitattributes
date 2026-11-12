@@ -1,0 +1,2 @@
+# Shell scripts run in bash, from a Windows checkout or install too.
+*.sh text eol=lf

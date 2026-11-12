@@ -15,6 +15,8 @@
 #include <QMainWindow>
 #include <QSet>
 
+#include <functional>
+
 class AgentController;
 class AgentPanel;
 class AgentSession;
@@ -84,12 +86,17 @@ private:
     void editIconTemplates();
     void refreshStatus();
     void persistSession();
-    // Reloads the .crlf discovered from the explorer root, or from the active
+    // Reloads the project found from the explorer root, or from the active
     // file when no folder is scoped, and places each command on the menu
-    // path it names. `restart` restarts the services once the file is read,
-    // because the .crlf or a script it watches changed.
+    // path it names. `restart` restarts the services once the files are
+    // read, because a .crlf file or a script it watches changed.
     void reloadCommands(bool restart = false);
     void applyProject(const Project &project, bool restart);
+    // Runs `save` on the pool with the folder whose workspace files take an
+    // edited setting, then reloads the project.
+    void saveProjectSetting(std::function<bool(const QString &directory)> save);
+    // File > Copy Application Files to Workspace, for the scoped folder.
+    void copyApplicationFiles();
     void finishStartup(const QStringList &paths);
     CommandVariables commandVariables() const;
     CommandVariables variablesFor(QWidget *page) const;
@@ -203,11 +210,15 @@ private:
     QList<ProcessRecord> m_liveProcesses;
     QList<ProcessRecord> m_recentProcesses;
     QHash<quintptr, QString> m_diagnosticKeys;
-    // The .crlf and every file its services list under `watch`. One save
-    // fires several changes, so they are gathered by m_projectChanged.
+    // The settings files in use, every file the services list under `watch`,
+    // and the project root, where a settings file can appear or go. One save
+    // fires several changes, so they are gathered by m_projectChanged, and
+    // those of the folder by m_projectFolderChanged.
     QFileSystemWatcher *m_projectWatcher = nullptr;
     QTimer *m_projectChanged = nullptr;
-    QString m_projectFile;
+    QTimer *m_projectFolderChanged = nullptr;
+    // The project root. Empty when only application.crlf applies.
+    QString m_projectDirectory;
     int m_commandGeneration = 0;
     QString m_scopedRoot;
     QString m_saveDirectory;

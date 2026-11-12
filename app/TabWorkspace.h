@@ -87,7 +87,7 @@ public:
     void setCurrentLanguage(const LanguageDefinition *definition);
     void setIndent(const IndentSettings &indent);
     // Folder whose source files are indexed for Ctrl+click. An empty root
-    // keeps only the open buffers. `hide` is the .crlf name list.
+    // keeps only the open buffers. `hide` is the project's name list.
     void setSymbolProject(const QString &root, const QStringList &hide);
     // `false` drops the index and stops further scans.
     void setSymbolNavigation(bool enabled);

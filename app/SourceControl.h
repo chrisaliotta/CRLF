@@ -42,7 +42,7 @@ class SourceControl : public QObject
 public:
     SourceControl(ProcessOrchestrator *orchestrator, GitClient *client, QObject *parent = nullptr);
 
-    // The .crlf `git` settings, the scoped folder, and the .crlf `hide` list.
+    // The project's `git` settings, the scoped folder, and its `hide` list.
     // Repositories are searched again only when one of these changed.
     void setProject(const GitSettings &settings, const QString &scope, const QStringList &hide);
     bool enabled() const { return m_settings.enabled && !m_scope.isEmpty(); }

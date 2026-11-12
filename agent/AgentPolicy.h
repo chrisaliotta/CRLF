@@ -8,11 +8,11 @@
 enum class AgentAccess { Allow, Ask, Review, Deny };
 
 // Read: files, editor state, problems, git status, and the terminal's text.
-// Write: fs/write_text_file. Terminal: running a command or typing into the
+// Write: fs/write_text_file and _crlf/fs/delete. Terminal: running a command or typing into the
 // user's terminal.
 enum class AgentAction { Read, Write, Terminal };
 
-// The `permissions` object of one `.crlf` agent entry.
+// The `permissions` object of one `agents` entry in a .crlf file.
 struct AgentPermissions
 {
     AgentAccess read = AgentAccess::Allow;

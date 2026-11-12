@@ -87,7 +87,7 @@ AgentPanel::AgentPanel(QWidget *parent)
     auto *title = new QLabel(QStringLiteral("Agent"), this);
     title->setObjectName(QStringLiteral("agentTitle"));
     m_agents = new QComboBox(this);
-    m_agents->setToolTip(QStringLiteral("The agents listed under `agents` in .crlf"));
+    m_agents->setToolTip(QStringLiteral("The agents listed under `agents` in the .crlf files"));
     m_thinking = new QToolButton(this);
     m_thinking->setText(QStringLiteral("Thinking"));
     m_thinking->setToolTip(QStringLiteral("Show the agent's thinking as it streams"));

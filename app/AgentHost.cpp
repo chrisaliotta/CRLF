@@ -8,6 +8,7 @@
 #include "editor/CodeEditor.h"
 #include "git/LineDiff.h"
 #include "io/DocumentFile.h"
+#include "io/FileOperations.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -66,6 +67,7 @@ AgentHost::AgentHost(AgentSession *session, AgentPanel *panel, TabWorkspace *tab
         {QStringLiteral("fs/write_text_file"), &AgentHost::writeFile},
         {QStringLiteral("session/request_permission"), &AgentHost::requestPermission},
         {QStringLiteral("terminal/create"), &AgentHost::createTerminal},
+        {QStringLiteral("_crlf/fs/delete"), &AgentHost::deleteFile},
         {QStringLiteral("_crlf/editor/state"), &AgentHost::editorState},
         {QStringLiteral("_crlf/problems"), &AgentHost::problems},
         {QStringLiteral("_crlf/git/status"), &AgentHost::gitStatus},
@@ -181,6 +183,38 @@ void AgentHost::applyWrite(const AgentRequest &request, const QString &path, con
             alive->reply(id, QJsonObject());
             alive->m_sourceControl->refresh();
         }, Qt::QueuedConnection);
+    });
+}
+
+void AgentHost::deleteFile(const AgentRequest &request)
+{
+    const QString path = m_policy.resolve(request.params.value(QLatin1String("path")).toString());
+    const QJsonValue id = request.id;
+    const QString detail = FileOperations::usesRecycleBin(path)
+                               ? QStringLiteral("The file moves to the Recycle Bin.")
+                               : QStringLiteral("The file is deleted for good. This folder has no Recycle Bin.");
+    authorize(request, AgentAction::Write, path, QStringLiteral("Delete %1").arg(shown(path)), detail, [this, id, path] {
+        QPointer<AgentHost> alive(this);
+        m_orchestrator->submit(QStringLiteral("agent-io:%1").arg(++m_reads), QStringLiteral("Agent delete"), shown(path),
+                               0, path, [alive, id, path] {
+            const bool exists = QFileInfo(path).isFile();
+            const bool removed = exists && FileOperations::remove(path);
+            QMetaObject::invokeMethod(QCoreApplication::instance(), [alive, id, path, exists, removed] {
+                if (alive.isNull())
+                    return;
+                if (!exists) {
+                    alive->reject(id, RpcCode::NotFound, QStringLiteral("%1 does not exist").arg(path));
+                    return;
+                }
+                // The system can refuse: a file another program holds open.
+                if (!removed) {
+                    alive->reject(id, RpcCode::Internal, QStringLiteral("%1 could not be deleted").arg(path));
+                    return;
+                }
+                alive->reply(id, QJsonObject());
+                alive->m_sourceControl->refresh();
+            }, Qt::QueuedConnection);
+        });
     });
 }
 

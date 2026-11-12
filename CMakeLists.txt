@@ -198,6 +198,10 @@ set(IO_SOURCES
     io/SessionStore.cpp
     io/ProjectCommands.h
     io/ProjectCommands.cpp
+    io/ProjectMerge.h
+    io/ProjectMerge.cpp
+    io/WorkspaceSeed.h
+    io/WorkspaceSeed.cpp
     io/CommandVariables.h
     io/CommandVariables.cpp
     io/WslPath.h
@@ -254,6 +258,14 @@ if(CRLF_BUILD_TESTS)
     target_link_libraries(AgentSessionTests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME AgentSessionTests COMMAND AgentSessionTests)
 
+    # The .crlf files: merging, discovery, saving, the command variables, and
+    # the copy into a workspace. No widgets; Gui is for QKeySequence.
+    add_executable(ProjectTests tests/ProjectTests.cpp io/ProjectCommands.cpp io/ProjectMerge.cpp
+        io/WorkspaceSeed.cpp io/CommandVariables.cpp io/WslPath.cpp agent/AgentPolicy.cpp)
+    target_include_directories(ProjectTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(ProjectTests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME ProjectTests COMMAND ProjectTests)
+
     # The reference agent against scripted providers. Needs python on PATH.
     add_test(NAME ReferenceAgentTests
         COMMAND python "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference_agent_tests.py")
@@ -292,10 +304,9 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/resources/icons"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/icons"
-    COMMAND ${CMAKE_COMMAND}
-        "-DSRC=${CMAKE_SOURCE_DIR}/resources/default.crlf"
-        "-DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/.crlf"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/resources/default.crlf"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/application.crlf"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -307,13 +318,10 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/autocomplete.py"
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/agent"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/scripts/agent/crlf_agent.py"
-        "${CMAKE_SOURCE_DIR}/scripts/agent/providers.py"
-        "${CMAKE_SOURCE_DIR}/scripts/agent/tools.py"
-        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/agent"
+    COMMAND ${CMAKE_COMMAND}
+        "-DSRC=${CMAKE_SOURCE_DIR}/scripts/agent"
+        "-DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts/agent"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_python_tree.cmake"
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -331,22 +339,21 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/fonts/"
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/icons/"
     DESTINATION icons
     FILES_MATCHING PATTERN "*.json" PATTERN "*.ttf" PATTERN "*.txt" PATTERN "*.svg" PATTERN "*.png")
-# Beside styles and themes, one level above bin. Left in place once it
-# exists, so an edited default is not replaced on the next install.
-install(CODE "
-    execute_process(COMMAND \"${CMAKE_COMMAND}\"
-        \"-DSRC=${CMAKE_SOURCE_DIR}/resources/default.crlf\"
-        \"-DDST=\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/.crlf\"
-        -P \"${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_absent.cmake\")
-")
+# Beside styles and themes, one level above bin. This copy is only the seed:
+# the first run copies it to the application folder, which is the one the
+# user edits, so each install may replace it.
+install(FILES "${CMAKE_SOURCE_DIR}/resources/default.crlf"
+    DESTINATION .
+    RENAME application.crlf)
 install(FILES "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
     DESTINATION scripts)
-install(FILES "${CMAKE_SOURCE_DIR}/scripts/agent/crlf_agent.py"
-    "${CMAKE_SOURCE_DIR}/scripts/agent/providers.py"
-    "${CMAKE_SOURCE_DIR}/scripts/agent/tools.py"
-    DESTINATION scripts/agent)
+# The reference agent: its modules and the tools package.
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/scripts/agent/"
+    DESTINATION scripts/agent
+    FILES_MATCHING PATTERN "*.py"
+    PATTERN "__pycache__" EXCLUDE)
 
 qt_generate_deploy_app_script(
     TARGET ${PROJECT_NAME}

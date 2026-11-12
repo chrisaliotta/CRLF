@@ -2,11 +2,11 @@
 
 This document records how external checking works and why it is built this way. It is written for a later refactor: several choices look arbitrary from the code alone.
 
-User-facing behavior is described in [README.md](../README.md) and the `.crlf` key in [commands.md](commands.md). This file is about the implementation.
+User-facing behavior is described in [README.md](../README.md) and the `syntax` key in [commands.md](commands.md). This file is about the implementation.
 
 ## Goals that drove every decision
 
-1. **The editor does not grow a parser or a language server.** The project already dispatches tools from `.crlf`: menu commands, and the formatter script that reads the buffer and writes text back. Checking is the same idea. The script owns clang, eslint, or anything else. The editor owns the contract and the drawing.
+1. **The editor does not grow a parser or a language server.** The project already dispatches tools from its `.crlf` files: menu commands, and the formatter script that reads the buffer and writes text back. Checking is the same idea. The script owns clang, eslint, or anything else. The editor owns the contract and the drawing.
 2. **Unsaved edits are what get checked.** The buffer is standard input. `${file}` names the language and the include directory. A tool that opens `${file}` checks the saved copy.
 3. **A stale column is worse than a brief gap.** An edit clears marks immediately. A result is applied only when it still belongs to that buffer.
 4. **Happy-path code.** The JSON array is the one place a check's output is read, because that output is not deterministic. The lexer, the menu runner, and the output log are left alone.
@@ -15,7 +15,7 @@ User-facing behavior is described in [README.md](../README.md) and the `.crlf` k
 
 | File | Role |
 | --- | --- |
-| `io/ProjectCommands.*` | `.crlf` key `syntax`: `enabled`, `command`, `cwd` |
+| `io/ProjectCommands.*` | The `syntax` key: `enabled`, `command` (a string, or a `windows` and `wsl` pair), `cwd`, `watch` |
 | `editor/Diagnostic.*` | The span struct and `diagnosticsFromJson` |
 | `app/SyntaxRunner.*` | One short process per editor. Stdin is the buffer, stdout is the array |
 | `editor/CodeEditor.*` | 500ms timer, wavy underlines, gutter squares, hover tip |
@@ -47,7 +47,7 @@ flowchart LR
 
 Stdout is a JSON array of `{line, column, endLine, endColumn, severity, message}`. `line` and `column` are 1-based, matching `${line}` and `${column}`. A missing end runs the mark from `column` through the end of the line. A present `endColumn` is exclusive: it is the first column not included. `severity` is `error` or `warning`; anything else is drawn as an error.
 
-Messages contain colons, so a `file:line:col` interchange breaks. The app already parses JSON for `.crlf`.
+Messages contain colons, so a `file:line:col` interchange breaks. The app already parses JSON for the `.crlf` files.
 
 Exit 0 means the tool ran and the array is the result, including `[]` for a clean file. Any other exit, or stdout that is not a JSON array, leaves the current Problems rows alone and puts the error on the status bar. Clang and eslint use a nonzero exit to mean "found problems". That is the script's concern: `scripts/syntax.sh` exits 0 after it has written the array, and exits 1 only when the compiler is missing or fails outright.
 
@@ -75,7 +75,7 @@ Cancellation closes the kill-on-close job, calls `QProcess::kill()`, and starts 
 
 Output is a command log. Problems is a tree: directory, then file name, then one row per span, in the order the script wrote them. Directories and files are ordered by path.
 
-The directory is the path relative to the `.crlf` directory when the file is under it. A file in that directory is grouped under `.`. Anything else uses the absolute directory. A buffer with no path is grouped under `(unsaved)`, and its key is the editor id so two untitled tabs stay distinct. A later save moves the rows to the new path without opening the strip.
+The directory is the path relative to the project root when the file is under it. A file in that directory is grouped under `.`. Anything else uses the absolute directory. A buffer with no path is grouped under `(unsaved)`, and its key is the editor id so two untitled tabs stay distinct. A later save moves the rows to the new path without opening the strip.
 
 A finished check replaces the rows for that file. `[]` removes the file, and a directory with no files is removed. Activating a row focuses the open editor and calls `CodeEditor::goTo`. Rows are only kept for editors that are open.
 
@@ -87,4 +87,4 @@ The page opens when a check returns one or more spans and the strip is hidden. A
 
 Stdin is copied to a temp file because clang will not resolve `#include "sibling.h"` from a buffer. Quoted includes are searched in the compiled file's directory first, and that file is in the temp directory, so the script passes `-I` set to `dirname` of the path argument. `-fno-color-diagnostics` and `-fno-caret-diagnostics` keep the text to `file:line:column: severity: message`. Notes and caret lines are ignored. `fatal error` is reported as `error`. Clang exiting 1 because it found problems still exits 0 from the script.
 
-The command runs inside the distro whenever `cwd` is a `\\wsl.localhost` path, so the script path in `.crlf` has to be a path that distro can execute. `scripts/syntax.sh` from the project directory is the documented form. The file is also copied beside the program, under `scripts/`, for an installed copy.
+The command runs inside the distro whenever `cwd` is a `\\wsl.localhost` path, so the script path has to be one that distro can execute. `scripts/syntax.sh` from the project directory is the documented form. The file is also shipped beside the program, under `scripts/`, and `"${programDir}/scripts/syntax.sh"` names that copy; inside a distro the variable is a `/mnt/<drive>/...` path.

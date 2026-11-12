@@ -4,7 +4,7 @@
   "keywords": ["true", "false", "null"],
   "patterns": [
     { "role": "string", "regex": "\"(?:\\\\.|[^\"\\\\])*\"" },
-    { "role": "keyword", "regex": "\"(?:agents|autocomplete|command|commands|cwd|depth|enabled|extensions|externalNavigation|files|from|git|groups|hide|icon|iconOpen|icons|indent|keep|key|kind|menu|name|navigation|output|path|pattern|permissions|read|recursive|rules|showIfEmpty|size|style|syntax|terminal|theme|types|unlimitedLog|watch|write)\"(?=\\s*:)" },
+    { "role": "keyword", "regex": "\"(?:agents|autocomplete|command|commands|cwd|depth|enabled|extensions|externalNavigation|files|from|git|groups|hide|icon|iconOpen|icons|indent|inherit|keep|key|kind|menu|name|navigation|output|path|pattern|permissions|read|recursive|rules|showIfEmpty|size|style|syntax|terminal|theme|types|unlimitedLog|watch|windows|write|wsl)\"(?=\\s*:)" },
     { "role": "number", "regex": "-?\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?\\b" },
     { "role": "preprocessor", "regex": "\\$\\{[A-Za-z]+\\}", "insideStrings": true }
   ],

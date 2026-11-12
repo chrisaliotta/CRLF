@@ -1,18 +1,267 @@
-# The .crlf file
+# The .crlf files
 
-`.crlf` is the project file. One file is in use at a time. It is JSON. The parser in `io/ProjectCommands.cpp` is the list of keys that do anything. A key that is not in that list is kept when the file is rewritten and is otherwise ignored.
+`.crlf` is a file extension and a folder name. A project's settings are every `<name>.crlf` file in its root, merged into one. The folder named `.crlf` beside them holds what the project keeps for the editor and its agents. The editor has settings of its own in `application.crlf`, which apply where a project has none or asks for them.
 
-Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md). Source control is in [git.md](git.md). The Agent panel is in [agent.md](agent.md).
+Each file is JSON. The parser in `io/ProjectCommands.cpp` is the list of keys that do anything, and `io/ProjectMerge.cpp` is how several files become one. A key that is not in that list is kept when a file is rewritten and is otherwise ignored.
 
-## Which file is in use
+Menus, variables, and how a command runs are in [commands.md](commands.md). Checks are in [diagnostics.md](diagnostics.md). Completion is in [autocomplete.md](autocomplete.md). Definition links are in [navigation.md](navigation.md). Source control is in [git.md](git.md). The Agent panel is in [agent.md](agent.md), and the shipped agent's tools and code index are in [agent-tools.md](agent-tools.md).
 
-The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the directory of the focused document. It walks parent folders and stops at the drive root, or at the distro root of a `\\wsl.localhost` path. The first `.crlf` found is the project file.
+## Layout
 
-When that walk finds nothing, CRLF uses the `.crlf` next to the program, beside `styles` and `themes`. View > Edit Defaults opens that copy. A workspace file replaces it for as long as the walk finds the workspace file.
+```
+project/                       a workspace
+  workspace.crlf               settings (any name with the .crlf extension)
+  local.crlf                   optional, merged with the others
+  .crlf/
+    data/                      the agent's code index, and its own .gitignore
+    rules/                     agent rule files
+    keys/                      API key files
+    scripts/, temp/            free for the project's own use
 
-The file is read again when the explorer folder changes, when the current tab changes, when a document is saved, when the file on disk changes, and when a virtual folder or an icon mapping is saved from the UI. The read runs off the UI thread. A newer read replaces an older one that has not been applied yet.
+%APPDATA%\CRLF\CRLF\           the application folder
+  application.crlf             the user's settings for every folder
+  .crlf/
+    scripts/                   the user's own scripts, shared by every workspace
+    keys/                      API key files shared by every workspace
+    rules/                     agent rules shared by every workspace
 
-A file that is not JSON, or that is neither an array nor an object, keeps its path so it can be watched, shows "Couldn't read .crlf" in the status bar, and applies no commands. The other settings fall back to their defaults, because the broken file did not supply them.
+<install folder>\scripts\      shipped scripts, refreshed by each upgrade
+```
+
+The editor reads the `<name>.crlf` files and nothing else in this layout. It creates the application folder's `.crlf` subfolders on first run and does not create a workspace's `.crlf` folder. The reference agent creates `.crlf/data` and reads `.crlf/rules`; see [agent-tools.md](agent-tools.md). `.crlf/keys`, `.crlf/scripts`, and `.crlf/temp` are conventions: a command names them by path. Payload files for `${buffer}` and `${terminal}` stay in the system temp folder.
+
+## Which files are in use
+
+The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the directory of the focused document. It walks parent folders and stops at the drive root, or at the distro root of a `\\wsl.localhost` path. The first folder that holds at least one `<name>.crlf` file is the project root. The folder named `.crlf` is not a file and does not count. The application folder is never a project root; the walk passes it.
+
+```mermaid
+flowchart TD
+  start[Open a folder or file] --> found{"Project root found?"}
+  found -->|no| appOnly[application.crlf alone]
+  found -->|yes| inherit{"A workspace file sets inherit?"}
+  inherit -->|no| wsOnly[Workspace files only]
+  inherit -->|yes| both[Workspace files, then application.crlf last]
+```
+
+- **No project root.** `application.crlf` is used alone.
+- **Workspace files without `inherit`.** The application settings are not read.
+- **`inherit` set.** `application.crlf` is merged after the workspace files, whole or limited to the keys `inherit` lists. See [Application settings](#application-settings).
+
+The workspace files are taken in file-name order, ignoring case, so `local.crlf` is read before `workspace.crlf`. The order matters because the earlier file wins; see [Merging the files](#merging-the-files).
+
+The files are read again when the explorer folder changes, when the current tab changes, when a document is saved, when a file in use changes on disk, when a file is added to the project root or removed from it, when a virtual folder or an icon mapping is saved from the UI, and after Copy Application Files to Workspace. The read runs off the UI thread. A newer read replaces an older one that has not been applied yet.
+
+The watcher holds the settings files in use, the files listed under `watch` by `syntax` and `autocomplete`, and the project root folder. A change to one of the files restarts the services. A change to the folder reloads the settings and restarts a service only when its own settings changed. `application.crlf` is watched while it is in use. The application folder itself is not watched, because the session file is rewritten there every 30 seconds.
+
+A file that is not JSON, or that is neither an array nor an object, is skipped. The status bar says "Couldn't read" and the file's name, such as "Couldn't read local.crlf", and the other files still apply. The file stays watched, so fixing it reloads the project. When every workspace file is unreadable, nothing applies; `application.crlf` is not used in their place.
+
+## Merging the files
+
+The files are merged as JSON, in order, and the result is read as one file. The earlier file wins.
+
+| Key | How the files combine |
+|---|---|
+| `commands`, `agents` | Joined in file order. An entry whose `name` was already seen is dropped, so the first definition wins |
+| `groups` | Joined the same way. Two groups are the same when `name` and `path` are both the same, as written |
+| `hide` | The union of every file's list |
+| `icons` | `theme` comes from the first file that sets it. `rules` are joined |
+| `indent` | `style`, `size`, and `keep` each come from the first file that sets them. `types` are joined, and the first matching type still wins |
+| Any other key | Taken whole from the first file that has it. That covers `syntax`, `autocomplete`, `git`, `navigation`, `externalNavigation`, `unlimitedLog`, and every key the editor does not know |
+| `inherit` | Read from the first workspace file that has it. It is not part of the result |
+
+A bare array file is a list of commands, and merges as `{ "commands": [...] }`.
+
+Two files in one project root. `local.crlf` is one developer's own and is left out of git; `workspace.crlf` is shared.
+
+`local.crlf`:
+
+```json
+{
+  "commands": [
+    { "name": "Build", "command": "cmake --build build --parallel 16" }
+  ],
+  "hide": ["scratch"],
+  "indent": { "size": 2 },
+  "syntax": { "enabled": false }
+}
+```
+
+`workspace.crlf`:
+
+```json
+{
+  "commands": [
+    { "name": "Build", "command": "cmake --build build" },
+    { "name": "Test", "command": "ctest --test-dir build" }
+  ],
+  "hide": ["build", "*.log"],
+  "indent": { "style": "spaces", "size": 4, "keep": true },
+  "syntax": { "enabled": true, "command": "./scripts/syntax.sh \"${file}\"" }
+}
+```
+
+What applies:
+
+```json
+{
+  "commands": [
+    { "name": "Build", "command": "cmake --build build --parallel 16" },
+    { "name": "Test", "command": "ctest --test-dir build" }
+  ],
+  "hide": ["scratch", "build", "*.log"],
+  "indent": { "size": 2, "style": "spaces", "keep": true },
+  "syntax": { "enabled": false }
+}
+```
+
+Build is `local.crlf`'s, and Test is added from `workspace.crlf`. `hide` has both lists. `indent` takes `size` from `local.crlf` and the fields it left out from `workspace.crlf`. `syntax` is taken whole from `local.crlf`, so checking is off and the shared command is not used: a key of that kind is not blended.
+
+A type under `indent.types` takes the fields it leaves out from the merged standard rule, not from the standard rule of the file it was written in.
+
+## Application settings
+
+`application.crlf` holds the settings a user wants in every folder: their own commands, their agents, their indent rule. It lives in the application folder, `%APPDATA%\CRLF\CRLF`, beside the saved session. View > Edit Defaults > Commands opens it. It takes the same keys as a workspace file, except that `inherit` means nothing in it.
+
+The application folder also has a `.crlf` folder with `scripts`, `keys`, and `rules`, for the files those settings use. `${appDir}` is that folder's path in a command.
+
+**First run.** When `application.crlf` is absent, the editor creates the three folders and copies the file in: from the file named `.crlf` beside the program when there is one, which is where an earlier version kept these settings, and otherwise from the `application.crlf` shipped beside the program. Nothing is copied once the file exists, so an upgrade does not replace it. A relative path in settings carried over from the old file no longer resolves against the program folder; see [Paths](#paths).
+
+The shipped `resources/default.crlf` is `{ "commands": [] }`. Each build and each install copies it beside the program as `application.crlf`, replacing the copy there. That copy is only the source for the first run.
+
+### inherit
+
+A workspace replaces the application settings unless one of its files sets `inherit`. The value is read from the first workspace file, in name order, that has the key. A later file's `inherit` is ignored.
+
+| Value | What is taken from `application.crlf` |
+|---|---|
+| `true` | Every key |
+| An array of key names | Those keys |
+| `false`, an empty array, or left out | Nothing |
+
+Whatever is taken is merged last, by the rules above. A list from `application.crlf` follows the workspace's, the workspace wins a shared name, and a key the workspace already has is the workspace's.
+
+Everything:
+
+```json
+{
+  "inherit": true,
+  "commands": [
+    { "name": "Build", "command": "cmake --build build" }
+  ]
+}
+```
+
+The project has its Build command, then every command in `application.crlf` that is not named Build, and every other application setting the project does not set itself.
+
+Some keys:
+
+```json
+{
+  "inherit": ["agents", "indent"],
+  "commands": [
+    { "name": "Build", "command": "cmake --build build" }
+  ]
+}
+```
+
+The project takes the user's agents and indent rule. The user's commands, hidden names, and the rest are left out.
+
+### Paths
+
+- A relative `cwd`, `watch`, or group `path` in a workspace file resolves against the project root.
+- The same fields in `application.crlf` resolve against the project root too, when the file is inherited. An application command with `"cwd": "build"` runs in each project's own `build` folder.
+- With no project root, they resolve against the folder the explorer is scoped to, or against the application folder when no folder is scoped. The application's virtual folders are shown relative to the scoped folder.
+- `${project}` is the project root. It is empty when only `application.crlf` applies.
+
+An application entry reaches its script and its key through variables, because it has no folder of its own to be relative to:
+
+```json
+{
+  "agents": [
+    {
+      "name": "GPT",
+      "command": {
+        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --api-key-file \"${appDir}/keys/openai\" --rules .crlf/rules --rules \"${appDir}/rules\"",
+        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --api-key-file \"${appDir}/keys/openai\" --rules .crlf/rules --rules \"${appDir}/rules\""
+      }
+    }
+  ]
+}
+```
+
+The agent is the shipped one in the install folder. Its key is `%APPDATA%\CRLF\CRLF\.crlf\keys\openai`. It reads the workspace's rules first and the application's second; naming `--rules` replaces the default folder, so both are named. Its index goes to `.crlf/data` in the working directory, which is the project root. The model name is an example. The `command` object and what `${appDir}` becomes inside a distro are under [Windows and WSL](#windows-and-wsl).
+
+## The legacy .crlf file
+
+Earlier versions used one file named exactly `.crlf`. That name now belongs to the folder, and a folder cannot be created while a file has the name. When a project root holds such a file, loading the project renames it:
+
+- to `workspace.crlf`, or
+- to `legacy.crlf` when the root already has a `workspace.crlf`. `legacy.crlf` sorts first, so it wins over `workspace.crlf` as the old file did.
+
+The status bar says "Renamed .crlf to workspace.crlf" or "Renamed .crlf to legacy.crlf", and a tab that had the file open follows it. If the rename fails, as in a read-only folder, the file is read under its old name and the rename is tried again at the next load.
+
+Folders from before this layout are not moved. An old `.crlf-data` folder is not read, so the index is built again in `.crlf/data`, and the old folder can be deleted. Rule files in `.crlf-rules` have to be moved to `.crlf/rules` by hand, and key files to wherever the command names them.
+
+## Saving from the editor
+
+New Virtual Folder, the other virtual-folder actions, and View > File Icons > Templates write `groups` and `icons` into a workspace file.
+
+- The first workspace file that has the key receives the new value. The later files lose the key, so one file owns it afterwards.
+- When no file has the key, `workspace.crlf` in the project root receives it and is created when absent. With no project root, the folder is the one the explorer is scoped to.
+- A folder that had no settings file was running on `application.crlf` alone. The `workspace.crlf` created there also sets `"inherit": true`, so the application's commands, agents, and other settings keep applying.
+- `application.crlf` is never written. An entry that came from it and was not changed is left out of the workspace file. An inherited entry that was changed is written, and then wins over the application's.
+- Removing an inherited virtual folder or icon rule in the UI does not last: the entry is still in `application.crlf`, so the next load brings it back. Remove it there, or stop inheriting that key.
+- A value that ends up empty removes the key instead of writing an empty list.
+
+The write produces the object form. A bare array becomes an object whose `commands` array is the old list. Other keys in the file are left as they were. When the file to write is not JSON or cannot be written, nothing changes and the status bar says "Couldn't write the workspace settings".
+
+## Copy Application Files to Workspace
+
+File > Copy Application Files to Workspace gives the scoped folder its own copy of the application setup. It is enabled while the explorer is scoped to a folder. Use it to make a workspace self-contained: a project whose scripts are edited and committed with it, or a project in a WSL distro that has drive mounting turned off.
+
+A dialog names the folder and has one check box, Replace existing files, which is off each time the dialog opens. Copy starts the copy; Cancel closes the dialog.
+
+| What | Copied from | Into |
+|---|---|---|
+| Settings | `application.crlf`, only when the folder has no `<name>.crlf` file | `workspace.crlf` |
+| Scripts | The install folder's `scripts`, then the application's `.crlf/scripts` | `.crlf/scripts/` |
+| Rules | The application's `.crlf/rules` | `.crlf/rules/` |
+| Keys | Never copied | |
+
+- **The created `workspace.crlf`** is the text of `application.crlf` with three paths replaced: `${programDir}/scripts` and `${appDir}/scripts` become `.crlf/scripts`, and `${appDir}/rules` becomes `.crlf/rules`. The new file then runs the copied scripts. `${appDir}/keys` is left as written.
+- **What the replacement misses.** Only those three spellings, with forward slashes, are replaced; `${programDir}\\scripts` is not. The new paths are relative to the working directory, so an entry with its own `cwd` no longer finds its script. Edit such an entry by hand.
+- **An existing settings file** is never replaced or edited, with the box on or off.
+- **An application script replaces a shipped one** of the same relative path. Folders named `__pycache__` are not copied.
+- **Replace existing files off.** A script or rule file already in the workspace is skipped.
+- **Replace existing files on.** Script and rule files are overwritten with the application's copies. A file only the workspace has is left alone. Nothing is deleted.
+- **Keys stay behind** because a workspace is usually a git repository, and a copied key could be committed.
+
+The copy runs off the UI thread, as the Processes row Copy Application Files. When it ends, the status bar says "Copied 5 files, replaced 0, skipped 1", with ", couldn't write 2" added when the file system refused a file, and the project reloads. The settings file counts: copied when it was created, skipped when the folder already had one.
+
+The copies are a snapshot. A later upgrade refreshes the shipped scripts in the install folder, not the workspace's copies. Running the command again with Replace existing files brings them up to date.
+
+## Windows and WSL
+
+A working directory under `\\wsl.localhost` or `\\wsl$` runs its command through `wsl.exe` in that distro. Any other Windows directory runs through `cmd.exe /d /s /c`. One `application.crlf` serves both, in three ways.
+
+**The `command` object.** `command` is a string, or an object with `windows` and `wsl`. A working directory inside a distro takes `wsl`; any other takes `windows`. A string serves both. This holds for `commands`, `syntax`, `autocomplete`, and `agents`. A side that is left out is an empty command: the entry is skipped for a command or an agent, and a service does not start.
+
+```json
+{
+  "name": "Lint",
+  "command": { "windows": "python tools\\lint.py \"${file}\"", "wsl": "python3 tools/lint.py \"${file}\"" }
+}
+```
+
+**Path variables.** When a command runs in a distro, `${file}`, `${fileDir}`, `${project}`, `${folder}`, `${buffer}`, `${terminal}`, `${programDir}`, and `${appDir}` are given as Linux paths, and `${cwd}` is the Linux working directory. A path inside the distro loses its `\\wsl.localhost\<Distro>` prefix. A path on a Windows drive becomes the drive's mount, `/mnt/<drive>/...`, so `${appDir}` is a path such as `/mnt/c/Users/me/AppData/Roaming/CRLF/CRLF/.crlf`. The other variables are not changed. This depends on WSL mounting the Windows drives, which it does by default.
+
+**Shared scripts and keys.** Because of those mounts, the shipped scripts under `${programDir}/scripts`, the user's scripts under `${appDir}/scripts`, and the key files under `${appDir}/keys` are read from the Windows side by both environments. Nothing is copied into a distro. With drive mounting turned off, use [Copy Application Files to Workspace](#copy-application-files-to-workspace) and keep the key files inside the distro.
+
+**Line endings.** A `.gitattributes` rule in this repository keeps `*.sh` at LF, so the shipped shell scripts run in `bash` from a Windows checkout or install.
+
+**Installed separately in each environment.** The editor shares files, not programs. Each environment needs its own interpreter (`python` on Windows, `python3` in most distros), its own Python packages installed with that environment's `pip`, and its own tools such as `rg`, `git`, `clang`, and `clangd`.
+
+None of this section has been run inside a WSL distro. The conversion and the choice between `windows` and `wsl` are covered by `ProjectTests`.
 
 ## Two shapes
 
@@ -28,6 +277,7 @@ An object is the full file. `commands` is the same list. Every other key below i
 
 ```json
 {
+  "inherit": false,
   "commands": [],
   "groups": [],
   "hide": [],
@@ -47,34 +297,31 @@ An object is the full file. `commands` is the same list. Every other key below i
 |---|---|---|---|
 | `commands` | array of objects | No menu commands | [Commands](#commands) |
 | `groups` | array of objects | No virtual folders | [Virtual folders](#virtual-folders) |
-| `hide` | array of strings | Nothing is hidden | [Hidden names](#hidden-names) |
+| `inherit` | `true`, or an array of key names | `application.crlf` is not merged in | [inherit](#inherit) |
+| `hide` | array of strings | No name is hidden | [Hidden names](#hidden-names) |
 | `icons` | object: `theme` string, `rules` array of objects | View > File Icons decides | [Icons](#icons) |
 | `indent` | object: `style`, `size`, `keep`, `types` array of objects | One tab character, four columns wide | [Indent](#indent) |
 | `navigation` | boolean | `true` | [Navigation](#navigation) |
 | `externalNavigation` | boolean | `true` | [Navigation](#navigation) |
-| `syntax` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
-| `autocomplete` | object: `enabled`, `command`, `cwd`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
+| `syntax` | object: `enabled`, `command`, `cwd`, `watch`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
+| `autocomplete` | object: `enabled`, `command`, `cwd`, `watch`. Or a boolean | Off | [Syntax and autocomplete](#syntax-and-autocomplete) |
 | `agents` | array of objects: `name`, `command`, `cwd`, `watch`, `permissions` | The Agent panel has nothing to start | [Agents](#agents) |
 | `unlimitedLog` | boolean | `false` | [Process logs](#process-logs) |
 | `git` | object: `enabled`, `depth`. Or a boolean | Off | [Source control](#source-control) |
 
-A value of the wrong type is read as if the key were left out. JSON has no comments, so this document is where the file is explained.
+A value of the wrong type is read as if the key were left out. JSON has no comments, so this document is where the files are explained.
 
-The `.crlf` at the root of this repository uses every key and is the file CRLF reads when this folder is open. Its `syntax` and `autocomplete` entries carry the right commands and are switched off, because the scripts need `bash` and a C++ toolchain (`clang`, `clangd`) that a Windows checkout does not have.
-
-New Virtual Folder and View > File Icons > Templates write the object form. If the file was a bare array, that write turns it into an object whose `commands` array is the old list. Other keys already in an object are left as they were. A file that is not JSON is left unchanged, and the status bar says "Couldn't write .crlf".
-
-The shipped `resources/default.crlf` is `{ "commands": [] }`. It is copied beside the program only when that copy is not already there.
+`workspace.crlf` at the root of this repository uses every key except `inherit` and is the file CRLF reads when this folder is open. Its `syntax` and `autocomplete` entries carry the right commands and are switched off, because the scripts need `bash` and a C++ toolchain (`clang`, `clangd`) that a Windows checkout does not have.
 
 ## Commands
 
-Each entry needs `name` and `command`. An entry missing either is skipped. A second entry with the same `name` is skipped. The name is the menu label, the process name, and the output log.
+Each entry needs `name` and `command`. An entry missing either is skipped. A second entry with the same `name` is skipped, in the same file or in a later one. The name is the menu label, the process name, and the output log.
 
 | Field | Meaning |
 |---|---|
 | `name` | Required. Identifies the command |
-| `command` | Required. Shell command. `${name}` is filled in when the process starts |
-| `cwd` | Working directory, relative to the `.crlf` directory. The default is that directory. Variables are not filled in here |
+| `command` | Required. Shell command, as a string or as an object with `windows` and `wsl` (see [Windows and WSL](#windows-and-wsl)). `${name}` is filled in when the process starts |
+| `cwd` | Working directory, relative to the project root (see [Paths](#paths)). The default is that folder. Variables are not filled in here |
 | `menu` | Menu path. A string splits on `/` and `\`. An array does not split, so one entry can contain a slash. Empty parts are dropped. The default is Run |
 | `key` | A function key from F1 through F35, with no modifiers. Anything else is ignored. The first command to claim a key keeps it |
 | `output` | `editor` sends the focused editor's text to the process and, on exit 0, replaces that editor. Any other value keeps both streams in the output panel |
@@ -97,22 +344,22 @@ Each entry needs `name` and `command`. An entry missing either is skipped. A sec
 ]
 ```
 
-Format replaces the focused editor and does not write the file. Build runs in the `build` directory under the `.crlf` folder and sits on Tools, then Build. F5 starts it. A second `"key": "F5"` later in the file is ignored.
+Format replaces the focused editor and does not write the file. Build runs in the `build` directory under the project root and sits on Tools, then Build. F5 starts it. A second `"key": "F5"` later in the merged list is ignored.
 
 `${name}` matches letters only, as in `${file}`. `${file-name}` is not a variable. A name this program does not know is left in the string for the shell. The names are listed in [commands.md](commands.md). `${buffer}` and `${terminal}` are paths to files written for that launch: the focused editor's text, including unsaved edits, and the current terminal's plain text. The same substitution is used for `syntax` and `autocomplete`.
 
-On Windows, a working directory under `\\wsl.localhost` or `\\wsl$` runs the command through `wsl.exe` in that distro. Path variables that point into a distro are Linux paths. Any other Windows directory runs through `cmd.exe /d /s /c`.
+On Windows, a working directory under `\\wsl.localhost` or `\\wsl$` runs the command through `wsl.exe` in that distro, and the path variables are Linux paths there. Any other Windows directory runs through `cmd.exe /d /s /c`. See [Windows and WSL](#windows-and-wsl).
 
 ## Virtual folders
 
-`groups` adds folders in the explorer that do not exist on disk. A file is claimed by the first group, in file order, whose pattern matches its name in that directory. Directories are never claimed.
+`groups` adds folders in the explorer that do not exist on disk. A file is claimed by the first group, in merge order, whose pattern matches its name in that directory. Directories are never claimed.
 
 | Field | Meaning |
 |---|---|
 | `name` | Required. The label. A group with an empty name is skipped |
 | `files` | Names to fold in. A pattern containing `*` or `?` is a wildcard. Any other pattern is an exact name. Matching ignores case |
 | `icon` | Folder name passed to the file-icon theme. The default is `name` |
-| `path` | Folder under the `.crlf` directory. Empty, `.`, and `./` mean that directory |
+| `path` | Folder under the project root. Empty, `.`, and `./` mean the root itself |
 | `recursive` | Also apply the group in subfolders of `path`. The default is false, so the group exists only in `path` itself |
 | `showIfEmpty` | When false (the default), the folder is omitted wherever it has no matching files |
 
@@ -133,7 +380,7 @@ On Windows, a working directory under `\\wsl.localhost` or `\\wsl$` runs the com
 ]
 ```
 
-Configuration appears in `src` and in its subfolders, and only where one of those names is present. `app.config.js` matches the wildcard. Notes is at the `.crlf` directory, and it stays visible even when both files are missing. A file that matches both groups lands in Configuration, because that group is written first.
+Configuration appears in `src` and in its subfolders, and only where one of those names is present. `app.config.js` matches the wildcard. Notes is at the project root, and it stays visible even when both files are missing. A file that matches both groups lands in Configuration, because that group is written first.
 
 ## Hidden names
 
@@ -145,7 +392,9 @@ The explorer drops a matching row. The definition scan of the scoped folder also
 "hide": ["node_modules", "dist", "*.log", "bin", "obj"]
 ```
 
-Hide Dot Folders is a view setting. It hides directories whose names start with `.` and leaves dot files, including `.crlf`, visible. It is not a key in this file.
+No name is built into the list. The `.crlf` folder, where the reference agent keeps its code index, is not hidden by name: it is a dot folder, so the definition scan and the search for git repositories skip it, and the explorer hides it while Hide Dot Folders is on. The index is described in [agent-tools.md](agent-tools.md#what-appears-under-crlfdata).
+
+Hide Dot Folders is a view setting on the explorer's menu. It hides directories whose names start with `.` and leaves files visible, including dot files and the `<name>.crlf` files. It is not a key in these files.
 
 ## Icons
 
@@ -226,8 +475,8 @@ Ctrl+click still opens a definition in the project. A name imported from a packa
 | Field | Meaning |
 |---|---|
 | `enabled` | Must be `true` for the feature to run. An object that omits it is off |
-| `command` | Shell command. Required in practice: an enabled entry with an empty command does not start |
-| `cwd` | Working directory, relative to the `.crlf` directory. The default is that directory |
+| `command` | Shell command, as a string or as an object with `windows` and `wsl`. Required in practice: an enabled entry with an empty command does not start |
+| `cwd` | Working directory, relative to the project root. The default is that folder |
 | `watch` | Array of file paths, relative to `cwd`. Saving one of them restarts the services |
 
 `"syntax": true` sets `enabled` and leaves `command` empty, so no check runs. The same is true for `autocomplete`. The command has to be in the object, with `enabled` set to `true`.
@@ -245,7 +494,7 @@ Ctrl+click still opens a definition in the project. A name imported from a packa
 }
 ```
 
-Saving the `.crlf` file, or any file listed under `watch` by either service, stops the autocomplete session and starts it again, and runs every open editor's check again. List each script the command runs, including scripts it calls in turn, such as `autocomplete.py` above.
+Saving a settings file in use, or any file listed under `watch` by either service, stops the autocomplete session and starts it again, and runs every open editor's check again. List each script the command runs, including scripts it calls in turn, such as `autocomplete.py` above.
 
 `syntax` reads the editor buffer on standard input and writes a JSON array of spans. `autocomplete` stays running and speaks one JSON object per line. A working directory inside a WSL distro runs the command in that distro, so `./scripts/syntax.sh` has to be a path that distro can execute. The contracts are in [diagnostics.md](diagnostics.md) and [autocomplete.md](autocomplete.md).
 
@@ -266,16 +515,16 @@ The first sets `enabled` and leaves `command` empty. The second has a command an
 
 | Field | Meaning |
 |---|---|
-| `name` | Required. The label in the panel's picker. A second entry with the same name is skipped |
-| `command` | Required. Shell command, with `${name}` filled in when the agent starts |
-| `cwd` | The session's working directory, relative to the `.crlf` directory. The default is that directory. The agent may read and write inside it without leaving the permissions below |
+| `name` | Required. The label in the panel's picker. A second entry with the same name is skipped, in the same file or in a later one |
+| `command` | Required. Shell command, as a string or as an object with `windows` and `wsl`, with `${name}` filled in when the agent starts |
+| `cwd` | The session's working directory, relative to the project root. The default is that folder. The agent may read and write inside it without leaving the permissions below |
 | `watch` | Array of file paths, relative to `cwd`. Saving one starts a new session |
 | `permissions` | Object with `read`, `write`, and `terminal`, each `allow`, `ask`, `review`, or `deny` |
 
 | Permission | Default | Covers |
 |---|---|---|
 | `read` | `allow` | Reading files, the open files, problems, git status, and the terminal's text |
-| `write` | `review` | Writing a file. `review` shows the change and waits for Accept |
+| `write` | `review` | Writing a file, and deleting one. `review` shows the change and waits for Accept; a deletion shows a card with Allow and Reject |
 | `terminal` | `ask` | Running a command, and typing into your terminal |
 
 A path outside `cwd` always asks, even when the setting is `allow`.
@@ -284,19 +533,33 @@ A path outside `cwd` always asks, even when the setting is `allow`.
 "agents": [
   {
     "name": "Claude",
-    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file .keys/anthropic"
+    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file .crlf/keys/anthropic --index fts --context-budget 100000"
   },
   {
     "name": "Local",
-    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder",
+    "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder --index vector --embed-provider ollama --embed-model nomic-embed-text",
     "permissions": { "write": "allow", "terminal": "ask" }
   }
 ]
 ```
 
-Claude reads its key from `.keys/anthropic` beside `.crlf`; keep that folder out of git, and put a new key in the file to rotate it. Without `--api-key-file`, the reference agent reads `ANTHROPIC_API_KEY` from the environment CRLF was started from. Local talks to Ollama on this machine, writes files without review, and asks before each command. The model names are examples; use the ones your provider offers.
+Claude reads its key from `.crlf/keys/anthropic` in the project root; keep that folder out of git, and put a new key in the file to rotate it. An agent in `application.crlf` names `"${appDir}/keys/anthropic"` instead, so one key file serves every workspace; the entry under [Paths](#paths) is written that way. Without `--api-key-file`, the reference agent reads `ANTHROPIC_API_KEY` from the environment CRLF was started from. Local talks to Ollama on this machine, writes files without review, and asks before each command. The model names are examples; use the ones your provider offers.
 
-For the reference agent, `--model` is only where a session starts, along with `--max-tokens`, `--reasoning-effort` (OpenAI and xAI), and `--thinking` (Anthropic: `off`, `4k`, `16k`, `32k`, or `adaptive`). The Agent panel lists the provider's models and these settings, and remembers what you pick there for each agent `name`. [agent.md](agent.md#settings) describes them.
+For the reference agent, `--model` is only where a session starts, along with `--max-tokens`, `--reasoning-effort` (OpenAI and xAI), `--thinking` (Anthropic: `off`, `4k`, `16k`, `32k`, or `adaptive`), and `--context-budget`. The Agent panel lists the provider's models and these settings, and remembers what you pick there for each agent `name`. [agent.md](agent.md#settings) describes them.
+
+The other flags hold for the life of the agent and are not in the panel:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--index` | `fts` | What the agent's code search asks: `grep` keeps nothing, `fts` keeps a full-text index, `vector` keeps embeddings and needs `--embed-provider` |
+| `--index-dir` | `.crlf/data` | Folder the index is kept in, relative to the session's working directory, or absolute |
+| `--embed-provider` | none | `local`, `ollama`, `openai`, or `openai-compatible`: where a vector index gets its embeddings |
+| `--embed-model` | A small local model for `local` | The embedding model. Required for the other providers |
+| `--embed-base-url`, `--embed-api-key-file`, `--embed-api-key-env` | The provider's own | The embedding server and its key |
+| `--rules` | `.crlf/rules` | Folder of `.md` rule files the model can list and read, relative to the session's working directory, or absolute. It may be given more than once, and giving it replaces the default. A rule name in two folders is the earlier folder's |
+| `--context-budget` | `unlimited` | Tokens the conversation may reach before old tool results are shortened |
+
+In the example, Claude searches a full-text index and starts with a budget of 100,000 tokens. Local searches a vector index whose embeddings come from the same Ollama, so the project's code stays on the machine. `openai` and `openai-compatible` embeddings send the code to that server. [agent-tools.md](agent-tools.md) has a worked example of each index, each embedding provider, each tool, and the rules folder.
 
 ## Process logs
 
@@ -327,7 +590,7 @@ With the explorer on `C:/work`, this tracks the repository holding `C:/work` if 
 
 ## A whole file
 
-One object that uses every key. Paths are relative to the directory that contains `.crlf`.
+One object that uses every key but `inherit`. Paths are relative to the project root.
 
 ```json
 {
@@ -383,7 +646,7 @@ One object that uses every key. Paths are relative to the directory that contain
   "agents": [
     {
       "name": "GPT",
-      "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5",
+      "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --reasoning-effort low --index fts",
       "permissions": { "terminal": "ask" }
     }
   ],

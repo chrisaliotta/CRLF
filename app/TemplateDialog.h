@@ -13,7 +13,7 @@ class QListWidget;
 class QWidget;
 
 // Catalog of installed icon keys, and a form for new file, extension, and
-// folder mappings stored in .crlf.
+// folder mappings stored in a workspace .crlf file.
 class TemplateDialog : public QDialog
 {
     Q_OBJECT

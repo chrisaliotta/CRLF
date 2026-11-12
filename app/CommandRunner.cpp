@@ -2,28 +2,13 @@
 
 #include "app/ProcessLaunch.h"
 #include "app/ProcessOrchestrator.h"
-#include "io/WslPath.h"
 
-#include <QDir>
 #include <QFile>
 #include <QMetaObject>
 #include <QProcess>
 
 namespace {
 
-QString linuxPath(const QString &windowsPath)
-{
-    if (windowsPath.isEmpty())
-        return windowsPath;
-    const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
-    if (converted.valid())
-        return converted.path;
-    // A payload file lives on a Windows drive. The distro sees it under /mnt.
-    const QString clean = QDir::fromNativeSeparators(windowsPath);
-    if (clean.size() >= 3 && clean.at(1) == QLatin1Char(':'))
-        return QStringLiteral("/mnt/") + clean.at(0).toLower() + clean.mid(2);
-    return windowsPath;
-}
 
 // The editor stores LF. A tool's stdout is the file bytes, decoded as UTF-8.
 QString commandEditorText(const QByteArray &bytes)
@@ -241,20 +226,7 @@ void CommandRunner::launch(const QString &name)
         }
     }
 
-    CommandVariables vars = m_launchVars.value(name);
-    vars.cwd = spec->workingDirectory;
-#ifdef Q_OS_WIN
-    const WslPath::LinuxPath linux = WslPath::toLinux(spec->workingDirectory);
-    if (linux.valid()) {
-        vars.file = linuxPath(vars.file);
-        vars.fileDir = linuxPath(vars.fileDir);
-        vars.project = linuxPath(vars.project);
-        vars.folder = linuxPath(vars.folder);
-        vars.buffer = linuxPath(vars.buffer);
-        vars.terminal = linuxPath(vars.terminal);
-        vars.cwd = linux.path;
-    }
-#endif
+    const CommandVariables vars = launchVariables(m_launchVars.value(name), spec->workingDirectory);
     running->process->setProcessChannelMode(running->captureEditor ? QProcess::SeparateChannels
                                                                    : QProcess::MergedChannels);
     running->launch.startShell(running->process, spec->workingDirectory, expandCommand(spec->command, vars));

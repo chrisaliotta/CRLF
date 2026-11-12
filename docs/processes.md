@@ -30,7 +30,7 @@ flowchart LR
 
 The Processes page receives a copy of the records. It never reads the worker's memory. View > Processes opens that view as one editor tab. Choosing it again focuses the same tab. Closing the tab does not stop the work.
 
-The page has three sections. Active lists live records. History lists the last 20 that finished or were cancelled. Log shows the log of the row last selected in either list. Double-clicking a row opens Log. A live task that finishes keeps its log on screen as its History row. A script writes the log on standard error; standard output stays the protocol (the check array, or one completion reply per line). The last 2,000 lines are kept. `"unlimitedLog": true` at the top of the object-shaped `.crlf` keeps every line instead. An array-shaped file leaves the cap on. A finished task's log moves to its History row whole, so set the key before reproducing a noisy problem. New lines are appended to the view, and it stays where it is when you have scrolled up.
+The page has three sections. Active lists live records. History lists the last 20 that finished or were cancelled. Log shows the log of the row last selected in either list. Double-clicking a row opens Log. A live task that finishes keeps its log on screen as its History row. A script writes the log on standard error; standard output stays the protocol (the check array, or one completion reply per line). The last 2,000 lines are kept. `"unlimitedLog": true` at the top of an object-shaped `.crlf` file keeps every line instead. Array-shaped files leave the cap on. A finished task's log moves to its History row whole, so set the key before reproducing a noisy problem. New lines are appended to the view, and it stays where it is when you have scrolled up.
 
 A standard error line that starts with `CRLF_STATUS:` is not logged. The rest of the line becomes the record's Activity, such as `servers: 2 ready`, until the next one. `ProcessOrchestrator::setActivity` sets it from C++.
 
@@ -66,6 +66,8 @@ Restart Services, on Active, needs no selection. It starts autocomplete again an
 | External lookup and opening a definition | Pool | Opening the tab |
 | Explorer listing | Pool | The model update |
 | Open file, restore session, `projectFor` | Pool | Applying the text or the project |
+| First-run copy of `application.crlf`, the legacy `.crlf` rename | Pool, in the same task as `projectFor` | Retargeting an open tab and the status bar message |
+| Saving `groups` or `icons` into a workspace file, Copy Application Files to Workspace | Pool | The dialog, the status bar message, and the reload |
 | `WslPath::distros` and `home` | Orchestrator thread, before the folder picker reads the names | The dialogs |
 | git status, operations, and object reads | `GitClient` on the orchestrator thread, one job at a time per repository. See [git.md](git.md) | `SourceControl` keeps each status; the panel, explorer, and status bar redraw from it |
 | Repository search, the Diff tab's diff | Pool | Applying the repositories, opening the tab |

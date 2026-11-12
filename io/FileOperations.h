@@ -14,7 +14,11 @@ QString availableDestination(const QString &source, const QString &directory);
 bool copy(const QString &source, const QString &destination);
 // Renames in place; folders crossing volumes are copied then removed.
 bool move(const QString &source, const QString &destination);
-bool moveToTrash(const QString &path);
+// False for a path on a WSL share, which has no Recycle Bin.
+bool usesRecycleBin(const QString &path);
+// Moves a file or folder to the Recycle Bin, or deletes it outright where
+// there is none.
+bool remove(const QString &path);
 
 // Opens Windows File Explorer with `path` selected in its parent folder.
 void revealInFileExplorer(const QString &path);

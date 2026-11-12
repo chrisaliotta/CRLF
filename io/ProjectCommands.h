@@ -9,7 +9,7 @@
 
 // A virtual folder. `files` are exact names, or wildcard patterns when they
 // contain * or ?. `icon` is the folder name passed to the icon theme; an
-// empty icon uses `name`. `path` is relative to the .crlf directory; empty
+// empty icon uses `name`. `path` is relative to the project root; empty
 // means that directory itself. `recursive` also applies the group in
 // subfolders of that path. `showIfEmpty` shows the folder where no file
 // matches. When it is false, the folder is omitted wherever it would be empty.
@@ -66,9 +66,9 @@ struct ProjectIcons
 
 // An external program the project runs without being chosen from a menu: the
 // syntax checker (docs/diagnostics.md) or the autocomplete session
-// (docs/autocomplete.md). `enabled` is false when the .crlf file has no key
+// (docs/autocomplete.md). `enabled` is false when no .crlf file has a key
 // for it. `command` is expanded when the program starts. `workingDirectory`
-// is absolute: the .crlf directory, or its `cwd`. `watch` holds absolute file
+// is absolute: the project root, or its `cwd`. `watch` holds absolute file
 // paths, resolved against `workingDirectory`; a change to one restarts the
 // services.
 struct ServiceSettings
@@ -98,10 +98,11 @@ struct GitSettings
     int depth = 0;
 };
 
-// One entry from a project's .crlf file. workingDirectory is absolute:
-// the .crlf directory, or its `cwd` resolved against that directory.
-// command may contain ${...} names from CommandVariables, filled in when
-// the command starts. menu is a path from the menu bar. The first part is a
+// One entry of `commands`. workingDirectory is absolute: the project root,
+// or its `cwd` resolved against that directory. command is the line for the
+// environment that directory is in (Windows or a WSL distro). It may contain
+// ${...} names from CommandVariables, filled in when the command starts.
+// menu is a path from the menu bar. The first part is a
 // top-level menu (an existing one, or a new one). Further parts nest under
 // it. An empty list places the command on Run. "Tools/Format" and
 // ["Tools", "Format"] are the same path. key is an optional function key
@@ -118,18 +119,39 @@ struct ProjectCommand
     bool outputToEditor = false;
 };
 
-// The .crlf discovered by walking parent folders, or an empty filePath when
-// no project file exists. A file that exists but cannot be parsed keeps its
-// path (so it can be watched) and explains itself in `error`.
+// Every <name>.crlf file in a project root is a settings file. The folder
+// named .crlf beside them holds what the project keeps for the editor and
+// its agents: data, rules, keys, scripts.
+constexpr char kProjectFolder[] = ".crlf";
+// The file the editor creates when a project has none.
+constexpr char kWorkspaceFile[] = "workspace.crlf";
+// The user's own settings, in the application folder.
+constexpr char kApplicationFile[] = "application.crlf";
+
+// The settings of one project: every <name>.crlf file in the project root,
+// merged in file-name order with the first definition winning, and
+// application.crlf after them when a workspace file sets `inherit`. With no
+// workspace file, application.crlf applies alone. See io/ProjectMerge.h.
 struct Project
 {
-    QString filePath;
+    // The project root: the nearest folder, walking up, that holds a
+    // <name>.crlf file. Empty when only application.crlf applies.
+    QString directory;
+    // The settings files in use, in merge order, so they can be watched. A
+    // file that is not JSON is listed too, applies nothing, and is named in
+    // `error`.
+    QStringList files;
+    // Set by the load that renamed a legacy file named exactly `.crlf`.
+    QString renamedFrom;
+    QString renamedTo;
     QList<ProjectCommand> commands;
     QList<FileGroup> groups;
+    // Name patterns left out of the explorer, the symbol scan, and the
+    // repository search.
     QStringList hide;
     IndentSettings indent;
     ProjectIcons icons;
-    // Ctrl+click definition navigation. Missing from the file means enabled.
+    // Ctrl+click definition navigation. Missing from the files means enabled.
     bool navigation = true;
     // Package and stylesheet links resolved under node_modules on click.
     bool externalNavigation = true;
@@ -137,7 +159,7 @@ struct Project
     ServiceSettings syntax;
     // One long-lived completion process per project.
     ServiceSettings autocomplete;
-    // The Agent panel's choices, in file order. One runs at a time.
+    // The Agent panel's choices, in merge order. One runs at a time.
     QList<AgentSettings> agents;
     // Keeps every line of a process log. False keeps the last 2,000.
     bool unlimitedLog = false;
@@ -148,13 +170,40 @@ struct Project
 // The rule for this file name. A name with no suffix is matched as itself.
 IndentRule indentForFileName(const IndentSettings &settings, const QString &fileName);
 
-// `start` is a file or directory. Parents are searched up to the drive root.
-// When that search finds nothing, the application directory's .crlf is used.
-Project projectFor(const QString &start);
+// The folder that holds application.crlf and the application's .crlf
+// folder. It is where the session is kept: %APPDATA%\CRLF\CRLF.
+QString applicationFolder();
 
-// Rewrites `groups` in the project file, keeping commands. Creates the file
-// when it does not exist. An existing file that is not JSON is left unchanged.
-bool saveProjectGroups(const QString &filePath, const QList<FileGroup> &groups);
+// The <name>.crlf files in `directory`, as absolute paths in name order,
+// ignoring case.
+QStringList settingsFiles(const QString &directory);
 
-// Rewrites `icons` the same way. An empty theme and no rules removes the object.
-bool saveProjectIcons(const QString &filePath, const ProjectIcons &icons);
+// First run: copies application.crlf into `applicationFolder` and creates
+// its .crlf/scripts, .crlf/keys, and .crlf/rules. The copy comes from the
+// file named .crlf beside the program, which was the application's settings
+// before, or from the application.crlf shipped there when that is absent.
+// Does nothing once application.crlf exists.
+void seedApplicationFolder(const QString &applicationFolder, const QString &programFolder);
+
+// `start` is a file or directory. Parents are searched up to the drive root
+// for the project root. A legacy file named `.crlf` there is renamed to
+// workspace.crlf, or to legacy.crlf when that name is taken; when the rename
+// fails, the file is read under its old name.
+//
+// Relative `cwd`, `watch`, and group paths resolve against the project root,
+// in application.crlf entries too. With no project root they resolve against
+// `start` when it is a folder, and `applicationFolder` otherwise.
+Project projectFor(const QString &start, const QString &applicationFolder);
+
+// Writes `groups` for the project rooted at `directory`. The first workspace
+// file that has the key takes the list, and the key is removed from the
+// later ones. With no such file, workspace.crlf in `directory` takes it; a
+// folder with no settings file gets a workspace.crlf that also sets
+// `inherit`, so the application's settings keep applying there.
+// An entry inherited from application.crlf and left as it was is not written,
+// and application.crlf is never changed. Returns false when the file to
+// write is not JSON or cannot be written.
+bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups, const QString &applicationFolder);
+
+// Writes `icons` the same way. An empty theme and no rules removes the key.
+bool saveProjectIcons(const QString &directory, const ProjectIcons &icons, const QString &applicationFolder);

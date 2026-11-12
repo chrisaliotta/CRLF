@@ -1,0 +1,75 @@
+{
+  "commands": [
+    {
+      "name": "Build Installer",
+      "command": "scripts\\build.cmd",
+      "menu": "Tools/Build",
+      "key": "F7"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Project",
+      "icon": "config",
+      "files": ["workspace.crlf", ".gitattributes", ".gitignore", "CMakeLists.txt", "LICENSE"]
+    }
+  ],
+  "hide": ["build", "*.user"],
+  "icons": {
+    "rules": []
+  },
+  "indent": {
+    "style": "spaces",
+    "size": 4,
+    "keep": true,
+    "types": [
+      { "extensions": ["json", "crlf", "md"], "size": 2 }
+    ]
+  },
+  "navigation": true,
+  "externalNavigation": false,
+  "syntax": {
+    "enabled": false,
+    "command": "./scripts/syntax.sh \"${file}\""
+  },
+  "autocomplete": {
+    "enabled": false,
+    "command": "./scripts/autocomplete.sh"
+  },
+  "agents": [
+    {
+      "name": "Claude",
+      "command": "python scripts/agent/crlf_agent.py --provider anthropic --model claude-sonnet-4-5 --api-key-file .crlf/keys/anthropic --index fts",
+      "watch": [
+        "scripts/agent/crlf_agent.py",
+        "scripts/agent/providers.py",
+        "scripts/agent/index.py",
+        "scripts/agent/embeddings.py",
+        "scripts/agent/history.py",
+        "scripts/agent/tools/__init__.py",
+        "scripts/agent/tools/files.py",
+        "scripts/agent/tools/search.py",
+        "scripts/agent/tools/terminal.py",
+        "scripts/agent/tools/context.py"
+      ]
+    },
+    {
+      "name": "GPT",
+      "command": "python scripts/agent/crlf_agent.py --provider openai --model gpt-5 --reasoning-effort low --api-key-file .crlf/keys/openai --index fts"
+    },
+    {
+      "name": "Grok",
+      "command": "python scripts/agent/crlf_agent.py --provider xai --model grok-4 --api-key-file .crlf/keys/xai --index fts"
+    },
+    {
+      "name": "Local",
+      "command": "python scripts/agent/crlf_agent.py --provider ollama --model qwen3-coder --index fts",
+      "permissions": { "write": "review", "terminal": "ask" }
+    }
+  ],
+  "unlimitedLog": false,
+  "git": {
+    "enabled": true,
+    "depth": 1
+  }
+}

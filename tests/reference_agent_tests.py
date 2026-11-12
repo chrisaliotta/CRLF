@@ -6,34 +6,53 @@ format is where the agent breaks without anyone noticing until a key is in
 hand: how each stream becomes text, thinking, and tool calls; what each
 provider must be handed back on the next request (Anthropic's signed
 thinking blocks, OpenAI's reasoning items); which models are offered; and
-how a setting the client picks reaches the request. See docs/agent.md.
+how a setting the client picks reaches the request. The tools, the code
+index, and the context budget are confirmed the same way, in temporary
+folders and against a local server that plays the embedding provider. See
+docs/agent.md.
 
     python tests/reference_agent_tests.py
 """
 
+import copy
 import http.server
+import itertools
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 AGENT_DIRECTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "agent")
 sys.path.insert(0, AGENT_DIRECTORY)
 
+import embeddings  # noqa: E402
+import history  # noqa: E402
+import index  # noqa: E402
 import providers  # noqa: E402
+import tools  # noqa: E402
+from tools import files  # noqa: E402
 
 TOOLS = [{"name": "read_file", "description": "Read a file",
           "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}]
 
 
-class FakeProvider:
-    """`answer(path, body)` returns the events to stream for one POST.
-    `models` is the JSON a GET returns. Every POST body is kept in `posts`."""
+# The full-text index needs FTS5 in this Python's SQLite. Without it the agent uses grep, which has its own test.
+needs_fts5 = unittest.skipUnless(index.has_fts5(), "this Python's SQLite has no FTS5")
 
-    def __init__(self, answer, models=None):
+CALL_IDS = itertools.count(1)
+
+
+class FakeServer:
+    """A local HTTP server that plays a provider. `post(path, body)` returns
+    (status, content type, data) for one POST. `models` is the JSON a GET
+    returns. Every POST body is kept in `posts`."""
+
+    def __init__(self, post, models=None):
         self.posts = []
         fake = self
 
@@ -41,21 +60,22 @@ class FakeProvider:
             def log_message(self, *arguments):
                 pass
 
-            def do_GET(self):
-                data = json.dumps(models or {"data": []}).encode()
-                self.send_response(200)
+            def answer(self, status, content_type, data):
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
+                # One request to a connection, so no handler is left reading one the client has dropped.
+                self.send_header("Connection", "close")
                 self.end_headers()
                 self.wfile.write(data)
+
+            def do_GET(self):
+                self.answer(200, "application/json", json.dumps(models or {"data": []}).encode())
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.posts.append(body)
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.end_headers()
-                for event in answer(self.path, body):
-                    self.wfile.write(("data: %s\n\n" % json.dumps(event)).encode())
+                self.answer(*post(self.path, body))
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
@@ -64,6 +84,54 @@ class FakeProvider:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+def fake_provider(answer, models=None):
+    """A model provider: `answer(path, body)` returns the events to stream for one POST."""
+    def post(path, body):
+        events = "".join("data: %s\n\n" % json.dumps(event) for event in answer(path, body))
+        return 200, "text/event-stream", events.encode()
+    return FakeServer(post, models)
+
+
+def fake_embeddings(vector):
+    """An embedding provider: `vector(text)` is the embedding of one text."""
+    def post(path, body):
+        data = [{"index": number, "embedding": vector(text)} for number, text in enumerate(body["input"])]
+        return 200, "application/json", json.dumps({"data": data}).encode()
+    return FakeServer(post)
+
+
+def embedded(fake):
+    """Every text the fake embedding provider was sent, in order."""
+    return [text for body in fake.posts for text in body["input"]]
+
+
+def write(folder, name, text):
+    path = os.path.join(folder, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def tool_calls(*calls):
+    """The Chat Completions events of one reply that asks for these (name, arguments) calls."""
+    parts = [{"index": number, "id": "call_%d" % next(CALL_IDS),
+              "function": {"name": name, "arguments": json.dumps(arguments)}}
+             for number, (name, arguments) in enumerate(calls)]
+    return [{"choices": [{"delta": {"tool_calls": parts}, "finish_reason": "tool_calls"}]}]
+
+
+def tool_results(post):
+    """What the tools answered, as one Chat Completions request carries it."""
+    return [message["content"] for message in post["messages"] if message["role"] == "tool"]
+
+
+class TemporaryFolderTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = folder.name
 
 
 def run(adapter, history, settings):
@@ -85,7 +153,7 @@ def tool_result(reply, content):
 
 class ProviderTests(unittest.TestCase):
     def serve(self, answer, models=None):
-        fake = FakeProvider(answer, models)
+        fake = fake_provider(answer, models)
         self.addCleanup(fake.close)
         return fake
 
@@ -160,6 +228,26 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("thinking", fake.posts[2])
         self.assertEqual(fake.posts[2]["messages"][1]["content"][0]["type"], "tool_use")
 
+    def test_anthropic_request_marks_what_to_cache(self):
+        """Anthropic caches a prompt only up to a marked block, and bills
+        the rest in full on every call. The three markers are the system
+        prompt, the last tool, and the newest message block; a missing one
+        costs money without any error, which is why this is checked."""
+        fake = self.serve(lambda path, body: [{"type": "message_delta", "delta": {"stop_reason": "end_turn"}}])
+        os.environ["ANTHROPIC_API_KEY"] = "k"
+        adapter = providers.create("anthropic", fake.url)
+        history = [{"role": "user", "content": "first"}, {"role": "assistant", "content": "answer", "tool_calls": []},
+                   {"role": "user", "content": "second"}]
+        run(adapter, history, {"model": "claude"})
+        sent = fake.posts[0]
+        marker = {"type": "ephemeral"}
+        self.assertEqual(sent["system"], [{"type": "text", "text": "system", "cache_control": marker}])
+        self.assertEqual(sent["tools"][-1]["cache_control"], marker)
+        self.assertEqual(sent["messages"][-1]["content"][-1],
+                         {"type": "text", "text": "second", "cache_control": marker})
+        # Only the newest block is marked: a marker on an older one would move the cached prefix back.
+        self.assertNotIn("cache_control", sent["messages"][0]["content"][0])
+
     def test_openai_responses_streams_the_summary_and_replays_reasoning(self):
         """GPT-5's thinking only arrives through the Responses API, as a
         reasoning summary. Nothing is stored at OpenAI, so the reasoning
@@ -220,49 +308,256 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual([option["id"] for option in adapter.config_options("gpt-4.1")], ["max_tokens"])
 
 
-class AgentTests(unittest.TestCase):
-    """The agent as the editor sees it: over ACP, with a scripted provider."""
+class FakeContext:
+    """The session as a tool sees it. `texts` is what the editor reads for
+    each path, and every request a tool makes is kept in `requests`."""
+
+    def __init__(self, cwd, texts=None):
+        self.cwd = cwd
+        self.texts = texts or {}
+        self.requests = []
+
+    def request(self, method, params, timeout=None):
+        self.requests.append((method, params))
+        return {"content": self.texts[params["path"]]} if method == "fs/read_text_file" else {}
+
+    def record_write(self, path, old, new):
+        pass
+
+
+class ToolTests(TemporaryFolderTest):
+    """Tools called as the session calls them, with the editor played by FakeContext."""
+
+    def test_file_search_ranks_a_file_name_above_a_folder_name(self):
+        """A model that asks for "agent" wants agent.py, not every file
+        under agent/. The ranking exists so the file it means comes first
+        in a result that is cut at 20 paths."""
+        write(self.folder, "agent/readme.txt", "")
+        write(self.folder, "agent/notes.txt", "")
+        write(self.folder, "src/agent.py", "")
+        write(self.folder, "src/other.py", "")
+        text, _, _ = files.file_search(FakeContext(self.folder), {"query": "agent"})
+        self.assertEqual(text.split("\n"), ["src/agent.py", "agent/notes.txt", "agent/readme.txt"])
+
+    def test_edit_file_with_several_edits_is_one_write_or_none(self):
+        """The user reviews each write, so several edits to one file must
+        arrive as one diff. When one edit does not match, nothing is
+        written: half of a change is worse than none."""
+        path = os.path.join(self.folder, "a.txt")
+        context = FakeContext(self.folder, {path: "one\ntwo\nthree\n"})
+        files.edit_file(context, {"path": "a.txt", "edits": [{"old_text": "one", "new_text": "1"},
+                                                              {"old_text": "three", "new_text": "3"}]})
+        writes = [params for method, params in context.requests if method == "fs/write_text_file"]
+        self.assertEqual(writes, [{"path": path, "content": "1\ntwo\n3\n"}])
+
+        context = FakeContext(self.folder, {path: "one\ntwo\nthree\n"})
+        with self.assertRaises(tools.ToolError):
+            files.edit_file(context, {"path": "a.txt", "edits": [{"old_text": "one", "new_text": "1"},
+                                                                  {"old_text": "four", "new_text": "4"}]})
+        self.assertEqual([method for method, _ in context.requests], ["fs/read_text_file"])
+
+
+class IndexTests(TemporaryFolderTest):
+    """The code index behind codebase_search, on a temporary folder."""
+
+    def create(self, kind, embedder=None):
+        created = index.create(kind, self.folder, os.path.join(self.folder, ".crlf", "data"), embedder,
+                               lambda: tools.walk(self.folder))
+        # Windows does not delete the folder while the index has its file open.
+        self.addCleanup(created.close)
+        return created
+
+    def embedder(self, vector):
+        fake = fake_embeddings(vector)
+        self.addCleanup(fake.close)
+        return fake, embeddings.create("openai-compatible", "fake-model", fake.url)
+
+    def test_grep_ranks_by_how_many_words_match(self):
+        """The grep index is what answers with --index grep and while
+        another index is still being built, so its ranking is what a model
+        sees first: the passage with more of the query's words wins."""
+        write(self.folder, "one.txt", "the parser reads a header\n")
+        write(self.folder, "two.txt", "the parser\n")
+        write(self.folder, "three.txt", "nothing here\n")
+        found = self.create("grep").search("parser header", 8)
+        self.assertEqual([result[:3] for result in found], [("one.txt", 1, 1), ("two.txt", 1, 1)])
+
+    @needs_fts5
+    def test_fts_finds_a_chunk_and_an_edit_after_refresh(self):
+        """The default index. A search finds the passage by its stemmed
+        words, and a refresh reads only the file that changed: that is what
+        keeps the refresh before each search cheap."""
+        write(self.folder, "parser.py", "def parse_header(line):\n    return line.split(':')\n")
+        write(self.folder, "notes.txt", "Shopping: milk and eggs.\n")
+        fts = self.create("fts")
+        progress = []
+        self.assertFalse(fts.ready)
+        fts.refresh(lambda done, total: progress.append((done, total)))
+        self.assertTrue(fts.ready)
+        self.assertEqual(progress, [(1, 2), (2, 2)])
+        self.assertEqual([result[:3] for result in fts.search("parsing headers", 8)], [("parser.py", 1, 2)])
+        self.assertEqual(fts.search("tokenizer", 8), [])
+        # The index folder keeps itself out of git.
+        with open(os.path.join(self.folder, ".crlf", "data", ".gitignore")) as handle:
+            self.assertEqual(handle.read(), "*\n")
+
+        write(self.folder, "notes.txt", "The tokenizer splits a line into words.\n")
+        del progress[:]
+        fts.refresh(lambda done, total: progress.append((done, total)))
+        self.assertEqual(progress, [(1, 1)])
+        self.assertEqual([result[0] for result in fts.search("tokenizer", 8)], ["notes.txt"])
+
+    def test_vector_ranks_the_nearest_chunk_first(self):
+        """The vector index ranks by the angle between the query's
+        embedding and each chunk's. The comparison is the plain Python one,
+        which every install has; sqlite-vec and numpy only make it faster."""
+        topics = ("apple", "river", "engine")
+        fake, embedder = self.embedder(lambda text: [text.count(topic) for topic in topics])
+        write(self.folder, "fruit.txt", "apple pie and apple juice\n")
+        write(self.folder, "water.txt", "the river runs to the river mouth\n")
+        write(self.folder, "car.txt", "engine oil for the engine\n")
+        with mock.patch.dict(sys.modules, {"sqlite_vec": None, "numpy": None}):
+            vectors = self.create("vector", embedder)
+        self.assertEqual(vectors.comparison, "python")
+        vectors.refresh(lambda done, total: None)
+        found = vectors.search("where does the river go", 2)
+        self.assertEqual(found[0][0], "water.txt")
+        self.assertAlmostEqual(found[0][4], 1.0, places=5)
+
+    def test_vector_embeds_only_text_it_has_not_seen(self):
+        """Embedding is the part of the vector index that costs time and
+        money. An edit must embed only the chunks whose text changed, and
+        text that comes back, as it does when a branch is switched and
+        switched again, must embed nothing."""
+        fake, embedder = self.embedder(lambda text: [1.0, 0.0])
+        original = "".join("line %d of the module\n" % number for number in range(1, 151))
+        write(self.folder, "module.py", original)
+        vectors = self.create("vector", embedder)
+        vectors.refresh(lambda done, total: None)
+        chunks = len(embedded(fake))
+        self.assertGreater(chunks, 2)
+
+        write(self.folder, "module.py", original.replace("line 140 of", "line 140, edited, of"))
+        vectors.refresh(lambda done, total: None)
+        changed = embedded(fake)[chunks:]
+        self.assertEqual(len(changed), 1)
+        self.assertIn("line 140, edited, of", changed[0])
+
+        write(self.folder, "module.py", original)
+        vectors.refresh(lambda done, total: None)
+        self.assertEqual(len(embedded(fake)), chunks + 1)
+
+
+class HistoryTests(unittest.TestCase):
+    def test_a_conversation_over_the_budget_loses_its_oldest_tool_results(self):
+        """Old tool results are most of what every model call sends again.
+        Over the budget, the oldest become a line that names the call, down
+        to 70 percent of the budget. The calls and the newest result stay,
+        because a provider rejects a tool call that has no result."""
+        calls = [{"id": "c%d" % number, "name": "read_file", "arguments": {"path": "%d.txt" % number}}
+                 for number in range(3)]
+        conversation = [{"role": "user", "content": "read them"},
+                        {"role": "assistant", "content": "", "tool_calls": calls, "provider_state": None}]
+        conversation += [{"role": "tool", "tool_call_id": call["id"], "name": "read_file", "content": "x" * 4000,
+                          "is_error": False} for call in calls]
+        before = copy.deepcopy(conversation)
+
+        self.assertEqual(history.shorten(conversation, history.UNLIMITED), 0)
+        self.assertEqual(conversation, before)
+
+        # 2,000 tokens are 8,000 characters, and the three results are 12,000.
+        self.assertEqual(history.shorten(conversation, "2000"), 2)
+        self.assertEqual(conversation[2]["content"],
+                         '[The result of read_file({"path": "0.txt"}) was dropped to save context. '
+                         'Call it again if you need it.]')
+        self.assertTrue(conversation[3]["content"].startswith("[The result of read_file("))
+        self.assertEqual(conversation[4], before[4])
+        self.assertEqual(conversation[:2], before[:2])
+        self.assertEqual([message["tool_call_id"] for message in conversation[2:]], ["c0", "c1", "c2"])
+        self.assertLessEqual(history.estimate(conversation), 2000 * history.TARGET)
+        # Under the budget again, nothing more is touched until it is passed again.
+        self.assertEqual(history.shorten(conversation, "2000"), 0)
+
+
+class AgentTests(TemporaryFolderTest):
+    """The agent as the editor sees it: over ACP, with a scripted provider
+    and a scripted client."""
 
     def setUp(self):
+        super().setUp()
+        # The events of each model reply, in order. With none left, the model says its name.
+        self.replies = []
+
         def answer(path, body):
+            if self.replies:
+                return self.replies.pop(0)
             return [{"choices": [{"delta": {"content": "I am " + body["model"]}, "finish_reason": "stop"}]}]
-        self.fake = FakeProvider(answer, {"data": [{"id": "small"}, {"id": "large"}]})
+        self.fake = fake_provider(answer, {"data": [{"id": "small"}, {"id": "large"}]})
         self.addCleanup(self.fake.close)
+        # What the client answers the agent's requests with, by method, and the requests it was sent.
+        self.answers = {}
+        self.requests = []
+        self.next_id = 0
+
+    def start(self, *flags):
+        """Starts the agent with these flags and returns the reply to session/new."""
         self.agent = subprocess.Popen(
             [sys.executable, os.path.join(AGENT_DIRECTORY, "crlf_agent.py"), "--provider", "openai-compatible",
-             "--base-url", self.fake.url, "--model", "small", "--max-tokens", "1234"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+             "--base-url", self.fake.url, "--model", "small"] + list(flags),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.addCleanup(self.stop)
-        self.next_id = 0
+        # The log is read as it is written, so the agent never waits on a full pipe.
+        self.log = queue.Queue()
+        threading.Thread(target=lambda: [self.log.put(line.decode()) for line in self.agent.stderr],
+                         daemon=True).start()
+        self.call("initialize", {"protocolVersion": 1, "clientInfo": {"name": "CRLF"}})
+        created, _ = self.call("session/new", {"cwd": self.folder, "mcpServers": []})
+        self.session = created["result"].get("sessionId") if "result" in created else None
+        return created
 
     def stop(self):
         self.agent.stdin.close()
-        self.agent.stdout.close()
         self.agent.wait()
+        self.agent.stdout.close()
+        self.agent.stderr.close()
+
+    def send(self, message):
+        self.agent.stdin.write((json.dumps(dict(message, jsonrpc="2.0")) + "\n").encode())
+        self.agent.stdin.flush()
 
     def call(self, method, params):
-        """The reply to one request, and the notifications that came before it."""
+        """The reply to one request, and the session updates that came
+        before it. The agent's own requests are answered from `answers`."""
         self.next_id += 1
-        message = {"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}
-        self.agent.stdin.write((json.dumps(message) + "\n").encode())
-        self.agent.stdin.flush()
+        self.send({"id": self.next_id, "method": method, "params": params})
         updates = []
         while True:
-            reply = json.loads(self.agent.stdout.readline())
-            if reply.get("id") == self.next_id:
-                return reply, updates
-            updates.append(reply["params"]["update"])
+            message = json.loads(self.agent.stdout.readline())
+            if "method" not in message:
+                return message, updates
+            if "id" in message:
+                self.requests.append((message["method"], message["params"]))
+                self.send({"id": message["id"], "result": self.answers[message["method"]]})
+            else:
+                updates.append(message["params"]["update"])
+
+    def prompt(self, text):
+        return self.call("session/prompt", {"sessionId": self.session, "prompt": [{"type": "text", "text": text}]})
+
+    def wait_for_log(self, start):
+        """Reads the agent's log up to a line that starts with `start`."""
+        while not self.log.get(timeout=30).startswith(start):
+            pass
 
     def test_the_client_picks_the_model_and_settings(self):
         """session/new offers the provider's models and the settings, at the
         values the command line gave. A choice is answered with the whole
         list and used by the next reply; a value that was not offered is
         refused."""
-        self.call("initialize", {"protocolVersion": 1, "clientInfo": {"name": "CRLF"}})
-        created, _ = self.call("session/new", {"cwd": tempfile.gettempdir(), "mcpServers": []})
-        session = created["result"]["sessionId"]
+        created = self.start("--max-tokens", "1234")
+        session = self.session
         options = {option["id"]: option for option in created["result"]["configOptions"]}
-        self.assertEqual(list(options), ["model", "max_tokens"])
+        self.assertEqual(list(options), ["model", "max_tokens", "context_budget"])
         self.assertEqual(options["model"]["category"], "model")
         self.assertEqual([choice["value"] for choice in options["model"]["options"]], ["large", "small"])
         self.assertEqual(options["model"]["currentValue"], "small")
@@ -279,11 +574,142 @@ class AgentTests(unittest.TestCase):
                                {"sessionId": session, "configId": "model", "value": "huge"})
         self.assertEqual(refused["error"]["code"], -32602)
 
-        ended, updates = self.call("session/prompt",
-                                   {"sessionId": session, "prompt": [{"type": "text", "text": "who are you"}]})
+        ended, updates = self.prompt("who are you")
         self.assertEqual(ended["result"], {"stopReason": "end_turn"})
         self.assertEqual(updates[0]["content"]["text"], "I am large")
         self.assertEqual(self.fake.posts[0]["max_tokens"], 1234)
+
+    def test_the_context_option_shortens_the_conversation(self):
+        """The Context option is the session's own, not the provider's. It
+        starts at --context-budget, a count the list does not have is added
+        to it, and the value the client sets is the budget of the next model
+        call. The provider is never sent the setting, which it would refuse."""
+        created = self.start("--context-budget", "75000")
+        option = created["result"]["configOptions"][-1]
+        self.assertEqual((option["id"], option["name"], option["currentValue"]),
+                         (history.OPTION_ID, "Context", "75000"))
+        self.assertEqual([choice["value"] for choice in option["options"]],
+                         ["unlimited", "50000", "100000", "200000", "75000"])
+
+        changed, _ = self.call("session/set_config_option",
+                               {"sessionId": self.session, "configId": history.OPTION_ID, "value": "50000"})
+        self.assertEqual(changed["result"]["configOptions"][-1]["currentValue"], "50000")
+
+        # Eight reads of 30,000 characters are 60,000 tokens: under the 75,000 it started with, over the 50,000 set.
+        self.answers["fs/read_text_file"] = {"content": "x" * 30000}
+        self.replies.append(tool_calls(*[("read_file", {"path": "%d.txt" % number}) for number in range(8)]))
+        ended, _ = self.prompt("read them all")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        sent = self.fake.posts[1]
+        results = tool_results(sent)
+        self.assertEqual(len(results), 8)
+        self.assertTrue(results[0].startswith('[The result of read_file({"path": "0.txt"}) was dropped'))
+        self.assertTrue(results[-1].startswith("     1|xxx"))
+        self.assertEqual(len(sent["messages"][2]["tool_calls"]), 8)
+        self.assertNotIn(history.OPTION_ID, sent)
+
+    def test_a_background_command_returns_before_it_exits(self):
+        """A server or a watcher never exits, so a turn that waited for it
+        would never end. The command's id comes back at once, its output is
+        read later by that id, and its terminal is released when the
+        session ends, so the editor is not left holding it."""
+        self.start()
+        self.answers = {"terminal/create": {"terminalId": "term-1"},
+                        "terminal/output": {"output": "listening on 8080\n", "truncated": False}}
+        self.replies += [tool_calls(("run_terminal_cmd", {"command": "python -m http.server", "background": True})),
+                         tool_calls(("read_command_output", {"id": "term-1"}))]
+        ended, _ = self.prompt("start the server")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        # Nothing waited for the command to exit, and nothing released it.
+        self.assertEqual([method for method, _ in self.requests], ["terminal/create", "terminal/output"])
+        self.assertIn("the id term-1", tool_results(self.fake.posts[1])[0])
+        self.assertEqual(tool_results(self.fake.posts[2])[1], "Still running.\nlistening on 8080\n")
+
+        self.agent.stdin.close()
+        last = [json.loads(line) for line in self.agent.stdout]
+        self.assertEqual([(message["method"], message["params"]["terminalId"]) for message in last],
+                         [("terminal/release", "term-1")])
+
+    @needs_fts5
+    def test_codebase_search_asks_the_index_built_in_the_background(self):
+        """With --index fts, session/new answers at once and the index is
+        built behind it, with its progress in the log as the status. Once
+        it is built, codebase_search answers from it: "parsing" finds
+        "parse", which matching the words in the files would not."""
+        write(self.folder, "parser.py", "def parse_header(line):\n    return line.split(':')\n")
+        self.start("--index", "fts")
+        self.wait_for_log("CRLF_STATUS: indexing 1/1")
+        # The status goes back to what it was when the refresh ends.
+        self.wait_for_log("CRLF_STATUS: ready: small")
+        self.replies.append(tool_calls(("codebase_search", {"query": "parsing headers"})))
+        ended, _ = self.prompt("where are headers parsed")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        self.assertEqual(tool_results(self.fake.posts[1]),
+                         ["parser.py:1-2\ndef parse_header(line):\n    return line.split(':')"])
+
+    @needs_fts5
+    def test_the_default_index_and_rules_are_under_the_crlf_folder(self):
+        """A project keeps what the agent uses in its .crlf folder, so an
+        agent started with no folder options must find both there: the
+        index is made in .crlf/data, along with the .crlf folder above it,
+        and keeps itself out of git, and the rules are read from
+        .crlf/rules. Nothing is left at the old .crlf-data."""
+        write(self.folder, ".crlf/rules/style.md", "# Short lines\n")
+        self.start()
+        self.assertEqual(sorted(name for name in os.listdir(os.path.join(self.folder, ".crlf", "data"))
+                                if not name.startswith("index.sqlite-")), [".gitignore", "index.sqlite"])
+        with open(os.path.join(self.folder, ".crlf", "data", ".gitignore")) as handle:
+            self.assertEqual(handle.read(), "*\n")
+        self.assertEqual(sorted(os.listdir(self.folder)), [".crlf"])
+
+        self.replies.append(tool_calls(("fetch_rules", {})))
+        ended, _ = self.prompt("what are the rules")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        self.assertIn("The project has rules: style.", self.fake.posts[0]["messages"][0]["content"])
+        self.assertEqual(tool_results(self.fake.posts[1]), ["style: Short lines"])
+
+    def test_rules_come_from_every_folder_and_the_first_wins_a_name(self):
+        """--rules is given twice so a project's rules and the
+        application's are both offered: the first folder relative to the
+        working directory, the second absolute. Each folder adds the names
+        only it has, and a name in both is the first folder's rule, so a
+        project can replace an application rule."""
+        application = tempfile.TemporaryDirectory()
+        self.addCleanup(application.cleanup)
+        write(self.folder, "rules/style.md", "# Project style\n")
+        write(self.folder, "rules/tests.md", "# Project tests\n")
+        write(application.name, "style.md", "# Application style\n")
+        write(application.name, "commits.md", "# Application commits\n")
+        self.start("--index", "grep", "--rules", "rules", "--rules", application.name)
+        self.replies += [tool_calls(("fetch_rules", {})),
+                         tool_calls(("fetch_rules", {"name": "style"}), ("fetch_rules", {"name": "commits"}))]
+        ended, _ = self.prompt("what are the rules")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        self.assertIn("The project has rules: commits, style, tests.", self.fake.posts[0]["messages"][0]["content"])
+        self.assertEqual(tool_results(self.fake.posts[2]),
+                         ["commits: Application commits\nstyle: Project style\ntests: Project tests",
+                          "# Project style\n", "# Application commits\n"])
+
+    def test_a_refresh_that_fails_leaves_search_on_word_matches(self):
+        """An embedding server that is down must not take the agent with
+        it. The failure is logged, the session goes on, and codebase_search
+        answers with word matches and says the index is not ready."""
+        def refuse(path, body):
+            return 500, "application/json", json.dumps({"error": {"message": "down"}}).encode()
+        embedder = FakeServer(refuse)
+        self.addCleanup(embedder.close)
+        write(self.folder, "parser.py", "def parse_header(line):\n    return line.split(':')\n")
+        self.start("--index", "vector", "--embed-provider", "openai-compatible", "--embed-base-url", embedder.url,
+                   "--embed-model", "fake-model")
+        self.wait_for_log("The index could not be refreshed")
+        self.replies.append(tool_calls(("codebase_search", {"query": "parse_header"})))
+        ended, _ = self.prompt("where are headers parsed")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        result = tool_results(self.fake.posts[1])[0]
+        self.assertTrue(result.startswith("[The index is still being built"))
+        self.assertIn("parser.py:1-2\n", result)
+        # The search started another refresh. It is let fail before the agent is stopped under it.
+        self.wait_for_log("The index could not be refreshed")
 
 
 if __name__ == "__main__":

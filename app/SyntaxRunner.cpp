@@ -2,20 +2,12 @@
 
 #include "app/ProcessLaunch.h"
 #include "app/ProcessOrchestrator.h"
-#include "io/WslPath.h"
 
 #include <QHash>
 #include <QProcess>
 
 namespace {
 
-QString linuxPath(const QString &windowsPath)
-{
-    if (windowsPath.isEmpty())
-        return windowsPath;
-    const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
-    return converted.valid() ? converted.path : windowsPath;
-}
 
 QString decoded(const QByteArray &bytes, bool utf8)
 {
@@ -180,18 +172,7 @@ void SyntaxRunner::launch(const SyntaxRequest &request)
     running->errors.clear();
     running->input = request.text.toUtf8();
 
-    CommandVariables vars = request.variables;
-    vars.cwd = request.workingDirectory;
-#ifdef Q_OS_WIN
-    const WslPath::LinuxPath linux = WslPath::toLinux(request.workingDirectory);
-    if (linux.valid()) {
-        vars.file = linuxPath(vars.file);
-        vars.fileDir = linuxPath(vars.fileDir);
-        vars.project = linuxPath(vars.project);
-        vars.folder = linuxPath(vars.folder);
-        vars.cwd = linux.path;
-    }
-#endif
+    const CommandVariables vars = launchVariables(request.variables, request.workingDirectory);
     running->process->setProcessChannelMode(QProcess::SeparateChannels);
     running->launch.startShell(running->process, request.workingDirectory, expandCommand(request.command, vars));
     if (running->process->state() != QProcess::NotRunning) {

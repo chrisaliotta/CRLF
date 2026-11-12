@@ -1,22 +1,10 @@
 #include "app/JsonLineProcess.h"
 
 #include "app/ProcessOrchestrator.h"
-#include "io/WslPath.h"
 
 #include <QJsonDocument>
 #include <QProcess>
 
-namespace {
-
-QString linuxPath(const QString &windowsPath)
-{
-    if (windowsPath.isEmpty())
-        return windowsPath;
-    const WslPath::LinuxPath converted = WslPath::toLinux(windowsPath);
-    return converted.valid() ? converted.path : windowsPath;
-}
-
-} // namespace
 
 JsonLineProcess::JsonLineProcess(const QString &key, QObject *parent)
     : QObject(parent)
@@ -57,20 +45,9 @@ void JsonLineProcess::start(const QString &command, const QString &workingDirect
     }
     m_pending.clear();
 
-    CommandVariables vars = variables;
-    vars.cwd = workingDirectory;
-#ifdef Q_OS_WIN
-    const WslPath::LinuxPath linux = WslPath::toLinux(workingDirectory);
-    if (linux.valid()) {
-        vars.file = linuxPath(vars.file);
-        vars.fileDir = linuxPath(vars.fileDir);
-        vars.project = linuxPath(vars.project);
-        vars.folder = linuxPath(vars.folder);
-        vars.cwd = linux.path;
-    }
-#endif
     m_process->setProcessChannelMode(QProcess::SeparateChannels);
-    m_launch.startShell(m_process, workingDirectory, expandCommand(command, vars));
+    m_launch.startShell(m_process, workingDirectory,
+                        expandCommand(command, launchVariables(variables, workingDirectory)));
     if (m_process->state() == QProcess::NotRunning && m_process->error() == QProcess::FailedToStart)
         emit failedToStart(m_process->errorString());
 }

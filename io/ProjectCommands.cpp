@@ -1,7 +1,8 @@
 #include "io/ProjectCommands.h"
 
+#include "io/CommandVariables.h"
+#include "io/ProjectMerge.h"
 #include "io/WslPath.h"
-#include "syntax/LanguageRegistry.h"
 
 #include <QDir>
 #include <QFile>
@@ -11,6 +12,9 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStandardPaths>
+
+#include <algorithm>
 
 namespace {
 
@@ -40,7 +44,12 @@ void readCommands(Project &project, const QJsonArray &entries, const QString &di
     for (const QJsonValue &value : entries) {
         const QJsonObject obj = value.toObject();
         const QString name = obj.value(QLatin1String("name")).toString();
-        const QString command = obj.value(QLatin1String("command")).toString();
+        QString workingDirectory = directory;
+        const QString cwd = obj.value(QLatin1String("cwd")).toString();
+        if (!cwd.isEmpty())
+            workingDirectory = QDir(directory).filePath(cwd);
+        workingDirectory = QDir(workingDirectory).absolutePath();
+        const QString command = commandFor(obj.value(QLatin1String("command")), workingDirectory);
         if (name.isEmpty() || command.isEmpty())
             continue;
         bool duplicate = false;
@@ -48,10 +57,6 @@ void readCommands(Project &project, const QJsonArray &entries, const QString &di
             duplicate = duplicate || existing.name == name;
         if (duplicate)
             continue;
-        QString workingDirectory = directory;
-        const QString cwd = obj.value(QLatin1String("cwd")).toString();
-        if (!cwd.isEmpty())
-            workingDirectory = QDir(directory).filePath(cwd);
 
         QKeySequence key;
         const QString keyText = obj.value(QLatin1String("key")).toString();
@@ -69,7 +74,7 @@ void readCommands(Project &project, const QJsonArray &entries, const QString &di
         }
         const bool outputToEditor =
             obj.value(QLatin1String("output")).toString() == QLatin1String("editor");
-        project.commands.append({name, command, QDir(workingDirectory).absolutePath(),
+        project.commands.append({name, command, workingDirectory,
                                  menuPath(obj.value(QLatin1String("menu"))), key, outputToEditor});
     }
 }
@@ -121,11 +126,11 @@ IndentRule readIndentRule(const QJsonObject &obj, const IndentRule &base)
 // `command`, `cwd`, and `watch`, shared by the services and the agents.
 void readProcess(ServiceSettings &service, const QJsonObject &obj, const QString &directory)
 {
-    service.command = obj.value(QLatin1String("command")).toString();
     const QString cwd = obj.value(QLatin1String("cwd")).toString();
     if (!cwd.isEmpty())
         service.workingDirectory = QDir(directory).filePath(cwd);
     service.workingDirectory = QDir(service.workingDirectory).absolutePath();
+    service.command = commandFor(obj.value(QLatin1String("command")), service.workingDirectory);
     for (const QJsonValue &path : obj.value(QLatin1String("watch")).toArray())
         service.watch.append(QDir(service.workingDirectory).absoluteFilePath(path.toString()));
 }
@@ -227,22 +232,74 @@ void readHide(QStringList &hide, const QJsonArray &entries)
     }
 }
 
-QString findProjectFile(const QString &start)
+QJsonObject groupObject(const FileGroup &group)
 {
+    QJsonObject obj;
+    obj.insert(QLatin1String("name"), group.name);
+    if (!group.icon.isEmpty())
+        obj.insert(QLatin1String("icon"), group.icon);
+    if (!group.path.isEmpty())
+        obj.insert(QLatin1String("path"), group.path);
+    if (group.recursive)
+        obj.insert(QLatin1String("recursive"), true);
+    if (group.showIfEmpty)
+        obj.insert(QLatin1String("showIfEmpty"), true);
+    QJsonArray files;
+    for (const QString &pattern : group.files)
+        files.append(pattern);
+    obj.insert(QLatin1String("files"), files);
+    return obj;
+}
+
+QJsonObject iconRuleObject(const IconRule &rule)
+{
+    QJsonObject obj;
+    obj.insert(QLatin1String("kind"), rule.kind);
+    obj.insert(QLatin1String("pattern"), rule.pattern);
+    obj.insert(QLatin1String("from"), rule.from);
+    obj.insert(QLatin1String("icon"), rule.icon);
+    if (!rule.iconOpen.isEmpty())
+        obj.insert(QLatin1String("iconOpen"), rule.iconOpen);
+    return obj;
+}
+
+// The nearest folder, walking up from `start`, that holds a settings file.
+// The application folder is not a project: its file is the application's.
+QString findProjectDirectory(const QString &start, const QString &applicationFolder)
+{
+    if (start.isEmpty())
+        return {};
     const QFileInfo info(start);
     QDir dir = info.isDir() ? QDir(info.absoluteFilePath()) : info.absoluteDir();
     while (true) {
-        const QString candidate = dir.filePath(QStringLiteral(".crlf"));
-        if (QFileInfo::exists(candidate))
-            return QFileInfo(candidate).absoluteFilePath();
+        if (dir != QDir(applicationFolder) && !settingsFiles(dir.absolutePath()).isEmpty())
+            return dir.absolutePath();
         // \\wsl.localhost is not a parent of the distro.
         if (WslPath::isDistroRoot(dir.absolutePath()) || !dir.cdUp())
             return {};
     }
 }
 
-// Loads an existing project object. An array of commands becomes an object.
-// A missing file yields an empty object. Invalid JSON returns false.
+// `.crlf` used to be the one project file. The name now belongs to the
+// project's folder, which cannot be created while a file holds it.
+void renameLegacyFile(Project &project)
+{
+    const QDir dir(project.directory);
+    const QString legacy = dir.filePath(QLatin1String(kProjectFolder));
+    if (!QFileInfo(legacy).isFile())
+        return;
+    QString target = dir.filePath(QLatin1String(kWorkspaceFile));
+    if (QFileInfo::exists(target))
+        target = dir.filePath(QStringLiteral("legacy.crlf"));
+    // A read-only folder refuses. The file is then read under its old name.
+    if (!QFile::rename(legacy, target))
+        return;
+    project.renamedFrom = legacy;
+    project.renamedTo = target;
+}
+
+// Reads one settings file. An array of commands becomes an object. A
+// missing file yields an empty object. Invalid JSON returns false.
 bool loadProjectObject(const QString &filePath, QJsonObject *root)
 {
     if (!QFileInfo::exists(filePath))
@@ -269,37 +326,156 @@ bool writeProjectObject(const QString &filePath, const QJsonObject &root)
     return true;
 }
 
+struct SettingsFile
+{
+    QString path;
+    QJsonObject root;
+    // False for a file that is not JSON. It applies nothing.
+    bool readable = false;
+};
+
+QList<SettingsFile> loadSettings(const QStringList &paths)
+{
+    QList<SettingsFile> files;
+    for (const QString &path : paths) {
+        SettingsFile file;
+        file.path = path;
+        file.readable = loadProjectObject(path, &file.root);
+        files.append(file);
+    }
+    return files;
+}
+
+QList<QJsonObject> readableObjects(const QList<SettingsFile> &files)
+{
+    QList<QJsonObject> objects;
+    for (const SettingsFile &file : files) {
+        if (file.readable)
+            objects.append(file.root);
+    }
+    return objects;
+}
+
+QString applicationFile(const QString &applicationFolder)
+{
+    return QDir(applicationFolder).filePath(QLatin1String(kApplicationFile));
+}
+
+// What the workspace files in `files` take from application.crlf. A save
+// leaves these out, so an inherited entry is not copied into the workspace.
+QJsonObject inheritedBy(const QList<SettingsFile> &files, const QString &applicationFolder)
+{
+    QJsonObject application;
+    loadProjectObject(applicationFile(applicationFolder), &application);
+    return inheritedSettings(readableObjects(files), application);
+}
+
+// Puts `value` under `key` in the workspace file that owns the key: the
+// first one that has it. The later files lose the key, so one file owns it
+// afterwards. With no owner, workspace.crlf in `directory` becomes it. An
+// undefined `value` removes the key.
+bool writeOwnedKey(const QString &directory, const QList<SettingsFile> &files, const QString &key,
+                   const QJsonValue &value)
+{
+    QString owner;
+    bool written = true;
+    for (const SettingsFile &file : files) {
+        if (!file.readable || !file.root.contains(key))
+            continue;
+        if (owner.isEmpty()) {
+            owner = file.path;
+            continue;
+        }
+        QJsonObject root = file.root;
+        root.remove(key);
+        written = writeProjectObject(file.path, root) && written;
+    }
+    if (owner.isEmpty()) {
+        if (value.isUndefined())
+            return written;
+        owner = QDir(directory).filePath(QLatin1String(kWorkspaceFile));
+    }
+    QJsonObject root;
+    if (!loadProjectObject(owner, &root))
+        return false;
+    // The folder's first settings file would otherwise replace the
+    // application's settings, which applied alone until now.
+    if (files.isEmpty())
+        root.insert(QLatin1String("inherit"), true);
+    if (value.isUndefined())
+        root.remove(key);
+    else
+        root.insert(key, value);
+    return writeProjectObject(owner, root) && written;
+}
+
 } // namespace
 
-Project projectFor(const QString &start)
+QString applicationFolder()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+}
+
+QStringList settingsFiles(const QString &directory)
+{
+    const QDir dir(directory);
+    QStringList names = dir.entryList({QStringLiteral("*.crlf")}, QDir::Files | QDir::Hidden);
+    std::sort(names.begin(), names.end(), [](const QString &a, const QString &b) {
+        return a.compare(b, Qt::CaseInsensitive) < 0;
+    });
+    QStringList paths;
+    for (const QString &name : std::as_const(names))
+        paths.append(dir.absoluteFilePath(name));
+    return paths;
+}
+
+void seedApplicationFolder(const QString &applicationFolder, const QString &programFolder)
+{
+    const QString target = applicationFile(applicationFolder);
+    if (QFileInfo::exists(target))
+        return;
+    const QDir folder(applicationFolder);
+    for (const char *name : {"scripts", "keys", "rules"})
+        folder.mkpath(QLatin1String(kProjectFolder) + QLatin1Char('/') + QLatin1String(name));
+    // Before application.crlf, the user's defaults were the file named .crlf
+    // beside the program. An upgrade leaves that file there, so it is kept.
+    const QDir program(programFolder);
+    const QString previous = program.filePath(QLatin1String(kProjectFolder));
+    QFile::copy(QFileInfo(previous).isFile() ? previous : program.filePath(QLatin1String(kApplicationFile)), target);
+}
+
+Project projectFor(const QString &start, const QString &applicationFolder)
 {
     Project project;
-    if (!start.isEmpty())
-        project.filePath = findProjectFile(start);
-    // A workspace file wins. The application copy is only the fallback.
-    if (project.filePath.isEmpty()) {
-        const QString fallback = QDir(programDirectory()).filePath(QStringLiteral(".crlf"));
-        if (QFileInfo::exists(fallback))
-            project.filePath = QFileInfo(fallback).absoluteFilePath();
+    project.directory = findProjectDirectory(start, applicationFolder);
+    QList<SettingsFile> files;
+    if (!project.directory.isEmpty()) {
+        renameLegacyFile(project);
+        files = loadSettings(settingsFiles(project.directory));
     }
-    if (project.filePath.isEmpty())
-        return project;
-
-    QFile file(project.filePath);
-    (void)file.open(QIODevice::ReadOnly);
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || (!document.isArray() && !document.isObject())) {
-        project.error = QStringLiteral("Couldn't read .crlf");
-        return project;
+    const QList<QJsonObject> workspace = readableObjects(files);
+    QJsonObject application;
+    if (project.directory.isEmpty() || inheritsApplication(workspace)) {
+        files += loadSettings({applicationFile(applicationFolder)});
+        application = files.last().root;
     }
 
-    const QString directory = QFileInfo(project.filePath).absolutePath();
-    if (document.isArray()) {
-        readCommands(project, document.array(), directory);
-        return project;
+    QStringList unreadable;
+    for (const SettingsFile &file : std::as_const(files)) {
+        project.files.append(file.path);
+        if (!file.readable)
+            unreadable.append(QFileInfo(file.path).fileName());
     }
-    const QJsonObject root = document.object();
+    if (!unreadable.isEmpty())
+        project.error = QStringLiteral("Couldn't read ") + unreadable.join(QStringLiteral(", "));
+
+    // Every relative path in the merged settings resolves against one
+    // folder, whichever file the entry came from.
+    QString directory = project.directory;
+    if (directory.isEmpty())
+        directory = QFileInfo(start).isDir() ? start : applicationFolder;
+
+    const QJsonObject root = mergeProjects(workspace, application);
     readCommands(project, root.value(QLatin1String("commands")).toArray(), directory);
     readGroups(project, root.value(QLatin1String("groups")).toArray());
     readHide(project.hide, root.value(QLatin1String("hide")).toArray());
@@ -329,59 +505,59 @@ IndentRule indentForFileName(const IndentSettings &settings, const QString &file
     return settings.standard;
 }
 
-bool saveProjectGroups(const QString &filePath, const QList<FileGroup> &groups)
+bool saveProjectGroups(const QString &directory, const QList<FileGroup> &groups, const QString &applicationFolder)
 {
-    QJsonObject root;
-    if (!loadProjectObject(filePath, &root))
-        return false;
+    const QList<SettingsFile> files = loadSettings(settingsFiles(directory));
+    Project inherited;
+    readGroups(inherited, inheritedBy(files, applicationFolder).value(QLatin1String("groups")).toArray());
+    QJsonArray unchanged;
+    for (const FileGroup &group : std::as_const(inherited.groups))
+        unchanged.append(groupObject(group));
 
     QJsonArray stored;
     for (const FileGroup &group : groups) {
-        QJsonObject obj;
-        obj.insert(QLatin1String("name"), group.name);
-        if (!group.icon.isEmpty())
-            obj.insert(QLatin1String("icon"), group.icon);
-        if (!group.path.isEmpty())
-            obj.insert(QLatin1String("path"), group.path);
-        if (group.recursive)
-            obj.insert(QLatin1String("recursive"), true);
-        if (group.showIfEmpty)
-            obj.insert(QLatin1String("showIfEmpty"), true);
-        QJsonArray files;
-        for (const QString &pattern : group.files)
-            files.append(pattern);
-        obj.insert(QLatin1String("files"), files);
-        stored.append(obj);
+        const QJsonObject obj = groupObject(group);
+        if (!unchanged.contains(obj))
+            stored.append(obj);
     }
-    root.insert(QLatin1String("groups"), stored);
-    return writeProjectObject(filePath, root);
+    return writeOwnedKey(directory, files, QStringLiteral("groups"),
+                         stored.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(stored));
 }
 
-bool saveProjectIcons(const QString &filePath, const ProjectIcons &icons)
+bool saveProjectIcons(const QString &directory, const ProjectIcons &icons, const QString &applicationFolder)
 {
-    QJsonObject root;
-    if (!loadProjectObject(filePath, &root))
-        return false;
-    if (icons.theme.isEmpty() && icons.rules.isEmpty()) {
-        root.remove(QLatin1String("icons"));
-        return writeProjectObject(filePath, root);
-    }
+    const QList<SettingsFile> files = loadSettings(settingsFiles(directory));
+    ProjectIcons inherited;
+    readIcons(inherited, inheritedBy(files, applicationFolder).value(QLatin1String("icons")));
+    QJsonArray unchanged;
+    for (const IconRule &rule : std::as_const(inherited.rules))
+        unchanged.append(iconRuleObject(rule));
+    // A theme a workspace file names is the workspace's, even when the
+    // application names the same one.
+    bool workspaceTheme = false;
+    for (const SettingsFile &file : files)
+        workspaceTheme = workspaceTheme
+                         || file.root.value(QLatin1String("icons")).toObject().contains(QLatin1String("theme"));
 
     QJsonObject stored;
-    if (!icons.theme.isEmpty())
+    if (!icons.theme.isEmpty() && (workspaceTheme || icons.theme != inherited.theme))
         stored.insert(QLatin1String("theme"), icons.theme);
     QJsonArray rules;
     for (const IconRule &rule : icons.rules) {
-        QJsonObject obj;
-        obj.insert(QLatin1String("kind"), rule.kind);
-        obj.insert(QLatin1String("pattern"), rule.pattern);
-        obj.insert(QLatin1String("from"), rule.from);
-        obj.insert(QLatin1String("icon"), rule.icon);
-        if (!rule.iconOpen.isEmpty())
-            obj.insert(QLatin1String("iconOpen"), rule.iconOpen);
-        rules.append(obj);
+        const QJsonObject obj = iconRuleObject(rule);
+        // Each inherited rule accounts for one rule in the list.
+        int match = -1;
+        for (int i = 0; i < unchanged.size() && match < 0; ++i) {
+            if (unchanged.at(i) == obj)
+                match = i;
+        }
+        if (match < 0)
+            rules.append(obj);
+        else
+            unchanged.removeAt(match);
     }
-    stored.insert(QLatin1String("rules"), rules);
-    root.insert(QLatin1String("icons"), stored);
-    return writeProjectObject(filePath, root);
+    if (!rules.isEmpty())
+        stored.insert(QLatin1String("rules"), rules);
+    return writeOwnedKey(directory, files, QStringLiteral("icons"),
+                         stored.isEmpty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(stored));
 }

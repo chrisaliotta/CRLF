@@ -76,7 +76,7 @@ DiffView::DiffView(const LanguageRegistry *registry, const Theme *theme, QWidget
         tool->setAutoRaise(true);
         return tool;
     };
-    // .crlf commands claim bare function keys, so these carry Alt.
+    // Project commands claim bare function keys, so these carry Alt.
     QToolButton *previous = button(QStringLiteral("\u2191"), QStringLiteral("Previous Change (Shift+Alt+F5)"));
     QToolButton *next = button(QStringLiteral("\u2193"), QStringLiteral("Next Change (Alt+F5)"));
     QToolButton *open = button(QStringLiteral("Open File"), QStringLiteral("Open the working copy"));

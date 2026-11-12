@@ -38,10 +38,11 @@ const CommandKey kCommandKeys[] = {
     {"buffer", "Path of a file holding the focused editor's text, including unsaved edits"},
     {"terminal", "Path of a file holding the current terminal's plain text"},
     {"language", "Language of the focused document"},
-    {"project", "Directory that contains the .crlf file"},
+    {"project", "Project root: the folder that holds the .crlf files"},
     {"folder", "Folder the explorer is scoped to"},
     {"cwd", "This command's working directory"},
     {"programDir", "Folder beside the program that holds styles, themes, and scripts"},
+    {"appDir", "The application's .crlf folder: scripts, keys, and rules shared by every workspace"},
 };
 
 void hideUnless(QListWidget *list, const QString &text)

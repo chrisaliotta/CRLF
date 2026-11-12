@@ -36,6 +36,9 @@ private:
 
     void readFile(const AgentRequest &request);
     void writeFile(const AgentRequest &request);
+    // A write as far as the policy goes. An open tab keeps its text, as it
+    // does when the explorer deletes its file.
+    void deleteFile(const AgentRequest &request);
     void requestPermission(const AgentRequest &request);
     void createTerminal(const AgentRequest &request);
     void editorState(const AgentRequest &request);

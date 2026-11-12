@@ -136,7 +136,7 @@ void AgentController::setAgents(const QList<AgentSettings> &agents)
         stop();
     if (m_started)
         return;
-    m_panel->setStatus(agent == nullptr ? QStringLiteral("Add an agent to the `agents` list in .crlf to start one.")
+    m_panel->setStatus(agent == nullptr ? QStringLiteral("Add an agent to the `agents` list in a .crlf file to start one.")
                                         : QString());
 }
 

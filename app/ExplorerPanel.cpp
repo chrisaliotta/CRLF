@@ -259,7 +259,7 @@ private:
 };
 
 // Drops directories whose names start with '.' while leaving dot files,
-// such as .crlf, in the tree. The scoped folder itself is the model's only
+// such as .gitignore, in the tree. The scoped folder itself is the model's only
 // top-level row and stays visible even when its name starts with '.'.
 class DirectoryFilter : public QSortFilterProxyModel
 {
@@ -464,6 +464,11 @@ void ExplorerPanel::setGroups(const QString &directory, const QList<FileGroup> &
 void ExplorerPanel::setHidden(const QStringList &patterns)
 {
     m_filter->setHidden(patterns);
+}
+
+void ExplorerPanel::refresh(const QString &directory)
+{
+    m_model->refresh(QDir::cleanPath(directory));
 }
 
 void ExplorerPanel::setOrchestrator(ProcessOrchestrator *orchestrator)
@@ -751,7 +756,7 @@ void ExplorerPanel::createVirtualFolder(const QString &directory)
     const bool inside = samePath(cleanDirectory, cleanBase)
                         || cleanDirectory.startsWith(cleanBase + QLatin1Char('/'), Qt::CaseInsensitive);
     if (!inside) {
-        warn(QStringLiteral("Virtual folders belong to the folder that contains .crlf."));
+        warn(QStringLiteral("Virtual folders belong to the folder that holds the .crlf files."));
         return;
     }
 
@@ -961,26 +966,14 @@ void ExplorerPanel::finishNewFile(int hint)
 void ExplorerPanel::deletePath(const QString &path)
 {
     const QString name = QFileInfo(path).fileName();
-    if (WslPath::toLinux(path).valid()) {
-        const auto choice = QMessageBox::question(
-            this, QCoreApplication::applicationName(), QStringLiteral("Delete \"%1\"?").arg(name));
-        if (choice != QMessageBox::Yes)
-            return;
-        const bool removed = QFileInfo(path).isDir() ? QDir(path).removeRecursively() : QFile::remove(path);
-        if (!removed)
-            warn(QStringLiteral("Could not delete \"%1\".").arg(name));
-        else
-            m_model->discard(path);
-        return;
-    }
-
+    const bool recycled = FileOperations::usesRecycleBin(path);
     const auto choice = QMessageBox::question(
         this, QCoreApplication::applicationName(),
-        QStringLiteral("Move \"%1\" to the Recycle Bin?").arg(name));
+        (recycled ? QStringLiteral("Move \"%1\" to the Recycle Bin?") : QStringLiteral("Delete \"%1\"?")).arg(name));
     if (choice != QMessageBox::Yes)
         return;
-    if (!FileOperations::moveToTrash(path))
-        warn(QStringLiteral("Could not delete \"%1\".").arg(QDir::toNativeSeparators(path)));
+    if (!FileOperations::remove(path))
+        warn(QStringLiteral("Could not delete \"%1\".").arg(recycled ? QDir::toNativeSeparators(path) : name));
     else
         m_model->discard(path);
 }

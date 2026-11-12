@@ -8,11 +8,11 @@ CRLF tracks the git repositories in the scoped folder. It shows what changed, co
 
 ## Which repositories
 
-The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the folder that holds `.crlf`.
+The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the project root, the folder that holds the `.crlf` files.
 
 - The repository that contains that folder is tracked, even when its root is above it. Scoping `src` inside a checkout tracks the checkout.
 - Folders up to `depth` levels below it are checked for a `.git` entry. A `.git` directory and the `.git` file of a submodule or worktree both count. A repository's own subfolders are searched too, so nested repositories are found. `depth` 0 checks only the scoped folder itself.
-- The walk skips folders whose names start with `.`, `node_modules`, and names in the `.crlf` `hide` list.
+- The walk skips folders whose names start with `.`, `node_modules`, and names in the project's `hide` list.
 
 The search runs again when the scoped folder, `depth`, or `hide` changes.
 

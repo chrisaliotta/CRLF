@@ -15,7 +15,7 @@ bool isRepositoryRoot(const QDir &dir)
 }
 
 // The nearest folder at or above `scope` that holds `.git`. Stops at the
-// drive root or the distro root, as the .crlf search does.
+// drive root or the distro root, as the search for the project root does.
 QString enclosingRepository(const QString &scope)
 {
     QDir dir(scope);

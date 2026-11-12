@@ -38,8 +38,11 @@ public:
     void setOrchestrator(ProcessOrchestrator *orchestrator);
     void setIconTheme(const FileIconTheme *theme);
     void setGroups(const QString &directory, const QList<FileGroup> &groups);
-    // Name patterns from .crlf `hide`. A pattern with * or ? is a wildcard.
+    // Name patterns from `hide`. A pattern with * or ? is a wildcard.
     void setHidden(const QStringList &patterns);
+    // Lists `directory` again, after files were written there outside the
+    // panel.
+    void refresh(const QString &directory);
     // Expands the folders above `path` and selects that file.
     void reveal(const QString &path);
     // Source-control letters keyed by lower-case absolute path. A changed
@@ -56,7 +59,7 @@ signals:
     // A file or folder was renamed or moved, so open tabs can follow it.
     void pathMoved(const QString &from, const QString &to);
     void closeRequested();
-    // The edited group list. MainWindow writes it into .crlf.
+    // The edited group list. MainWindow writes it into a workspace file.
     void virtualFoldersEdited(const QList<FileGroup> &groups);
 
 private:

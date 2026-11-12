@@ -76,9 +76,10 @@ class Reply:
         self.provider_state = None
 
 
-def _key(key_file, key_name):
+def read_key(key_file, key_name, file_flag="--api-key-file"):
     """A key file wins over the environment. Its path is relative to the
-    agent's working directory, and surrounding whitespace is dropped."""
+    agent's working directory, and surrounding whitespace is dropped.
+    `file_flag` is the flag the error names. embeddings.py reads its key here too."""
     if key_file:
         path = os.path.abspath(key_file)
         try:
@@ -91,8 +92,8 @@ def _key(key_file, key_name):
         return key
     key = os.environ.get(key_name, "") if key_name else ""
     if key_name and not key:
-        raise ProviderError("%s is not set. Set it in the environment CRLF starts from, or pass --api-key-file."
-                            % key_name)
+        raise ProviderError("%s is not set. Set it in the environment CRLF starts from, or pass %s."
+                            % (key_name, file_flag))
     return key
 
 
@@ -104,7 +105,7 @@ def create(name, base_url=None, api_key_env=None, api_key_file=None):
     base_url = (base_url or default_url or "").rstrip("/")
     if not base_url:
         raise ProviderError("--base-url is required for %s" % name)
-    key = _key(api_key_file, api_key_env or default_key)
+    key = read_key(api_key_file, api_key_env or default_key)
     if wire == "anthropic":
         return Anthropic(base_url, key)
     if wire == "responses":
@@ -131,11 +132,20 @@ def _get(url, headers):
         return json.loads(response.read().decode("utf-8"))
 
 
+def _post(url, headers, body):
+    return _open(urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
+                                        headers=dict(headers, **{"Content-Type": "application/json"}), method="POST"))
+
+
+def post(url, headers, body):
+    """The JSON a POST answers with. embeddings.py sends its requests here."""
+    with _post(url, headers, body) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def _events(url, headers, body, cancel):
     """Yields the JSON of each server-sent `data:` line of a streamed POST."""
-    request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
-                                     headers=dict(headers, **{"Content-Type": "application/json"}), method="POST")
-    with _open(request) as response:
+    with _post(url, headers, body) as response:
         for raw in response:
             if cancel.is_set():
                 raise Cancelled()
@@ -160,7 +170,7 @@ def _chat_models(ids):
     return [(id, id) for id in sorted(ids) if not _NOT_CHAT.search(id) and not _DATED.search(id)]
 
 
-def _select(id, name, category, description, values):
+def select(id, name, category, description, values):
     return {"id": id, "name": name, "description": description, "category": category, "type": "select",
             "options": [{"value": value, "name": label} for value, label in values]}
 
@@ -170,8 +180,8 @@ def _levels(*values):
 
 
 def _max_tokens_option(values):
-    return _select("max_tokens", "Max tokens", "model_config", "The longest reply the model may write",
-                   [(value, "Default" if value == DEFAULT else "{:,}".format(int(value))) for value in values])
+    return select("max_tokens", "Max tokens", "model_config", "The longest reply the model may write",
+                  [(value, "Default" if value == DEFAULT else "{:,}".format(int(value))) for value in values])
 
 
 def _chosen(settings, id):
@@ -204,8 +214,8 @@ class ChatCompletions:
     def config_options(self, model):
         options = []
         if self._takes_effort(model):
-            options.append(_select("reasoning_effort", "Reasoning", "thought_level",
-                                   "How much the model thinks before it answers", _levels("low", "high")))
+            options.append(select("reasoning_effort", "Reasoning", "thought_level",
+                                  "How much the model thinks before it answers", _levels("low", "high")))
         options.append(_max_tokens_option([DEFAULT, "4096", "8192", "16384", "32768"]))
         return options
 
@@ -296,14 +306,14 @@ class OpenAIResponses:
         options = []
         if self._reasons(model):
             options += [
-                _select("reasoning_effort", "Reasoning", "thought_level",
-                        "How much the model thinks before it answers. Not every model takes every level",
-                        _levels("minimal", "low", "medium", "high")),
-                _select("reasoning_summary", "Thinking", "model_config",
-                        "Ask for a summary of the model's reasoning, shown as its thinking",
-                        [("auto", "Summary"), ("off", "Off")]),
-                _select("verbosity", "Verbosity", "model_config", "How long the model's answers run",
-                        _levels("low", "medium", "high")),
+                select("reasoning_effort", "Reasoning", "thought_level",
+                       "How much the model thinks before it answers. Not every model takes every level",
+                       _levels("minimal", "low", "medium", "high")),
+                select("reasoning_summary", "Thinking", "model_config",
+                       "Ask for a summary of the model's reasoning, shown as its thinking",
+                       [("auto", "Summary"), ("off", "Off")]),
+                select("verbosity", "Verbosity", "model_config", "How long the model's answers run",
+                       _levels("low", "medium", "high")),
             ]
         options.append(_max_tokens_option([DEFAULT, "4096", "8192", "16384", "32768"]))
         return options
@@ -416,6 +426,8 @@ class Anthropic:
 
     # Tokens the model may spend thinking, by the value of the `thinking` setting.
     BUDGETS = {"4k": 4000, "16k": 16000, "32k": 32000}
+    # Marks the end of a part of the request to cache.
+    CACHED = {"type": "ephemeral"}
 
     def __init__(self, base_url, key):
         self.base_url = base_url
@@ -427,11 +439,11 @@ class Anthropic:
 
     def config_options(self, model):
         return [
-            _select("thinking", "Thinking", "thought_level",
-                    "Extended thinking, and how many tokens it may use. Adaptive lets the model decide, "
-                    "on the models that support it",
-                    [("off", "Off"), ("4k", "4k tokens"), ("16k", "16k tokens"), ("32k", "32k tokens"),
-                     ("adaptive", "Adaptive")]),
+            select("thinking", "Thinking", "thought_level",
+                   "Extended thinking, and how many tokens it may use. Adaptive lets the model decide, "
+                   "on the models that support it",
+                   [("off", "Off"), ("4k", "4k tokens"), ("16k", "16k tokens"), ("32k", "32k tokens"),
+                    ("adaptive", "Adaptive")]),
             _max_tokens_option(["4096", "8192", "16384", "32000", "64000"]),
         ]
 
@@ -471,13 +483,21 @@ class Anthropic:
         model = settings["model"]
         thinking = settings.get("thinking", "off")
         max_tokens = int(settings.get("max_tokens", "8192"))
+        # Anthropic caches a prompt only up to a marked block: the system
+        # prompt, the tools, and the conversation so far. The next request
+        # then reads all three from the cache. Each marked block is built
+        # for this request, so the history and its kept thinking stay unmarked.
+        messages = self._messages(history, model, thinking != "off")
+        messages[-1]["content"][-1] = dict(messages[-1]["content"][-1], cache_control=self.CACHED)
+        definitions = [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
+                       for t in tools]
+        definitions[-1]["cache_control"] = self.CACHED
         body = {
             "model": model,
-            "system": system,
+            "system": [{"type": "text", "text": system, "cache_control": self.CACHED}],
             "max_tokens": max_tokens,
-            "messages": self._messages(history, model, thinking != "off"),
-            "tools": [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
-                      for t in tools],
+            "messages": messages,
+            "tools": definitions,
             "stream": True,
         }
         if thinking == "adaptive":

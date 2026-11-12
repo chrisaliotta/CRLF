@@ -1,16 +1,16 @@
 # Project commands
 
-A `.crlf` file defines commands for one project. CRLF finds that file, adds each command to the menu bar, and runs it when you choose it. The command string can include values from the document that is focused at the moment the command starts. Every key the file can carry, and the cases where a key is ignored, are in [crlf.md](crlf.md).
+A project's `.crlf` files define its commands. CRLF finds those files, adds each command to the menu bar, and runs it when you choose it. The command string can include values from the document that is focused at the moment the command starts. Every key a file can carry, how several files merge, and the cases where a key is ignored, are in [crlf.md](crlf.md).
 
-## Finding the file
+## Finding the files
 
-CRLF looks for a file named `.crlf`. The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the directory of the focused document. It walks parent folders and stops at the drive root, or at the distro root of a `\\wsl.localhost` path.
+CRLF looks for files with the `.crlf` extension, such as `workspace.crlf`. The search starts at the folder the explorer is scoped to. When no folder is scoped, it starts at the directory of the focused document. It walks parent folders and stops at the drive root, or at the distro root of a `\\wsl.localhost` path.
 
-The first `.crlf` found is the project file. When the walk finds none, CRLF uses the `.crlf` in the application directory, next to `styles` and `themes`. A workspace file replaces that default for as long as it is the one the walk finds. Saving the file in use, or switching to a document that resolves to a different one, reloads the menus. A command that disappeared from the file is stopped.
+The first folder that holds a `<name>.crlf` file is the project root. Every such file in it is read, in name order, and merged; the earlier file wins a shared command name. When the walk finds no project root, CRLF uses `application.crlf` in the application folder, `%APPDATA%\CRLF\CRLF`. A workspace replaces those settings unless one of its files sets `inherit`. Saving a file in use, or switching to a document that resolves to a different project, reloads the menus. A command that is no longer defined is stopped. The rules are in [crlf.md](crlf.md#which-files-are-in-use).
 
-View, Edit Defaults opens the application `.crlf`, and the theme and syntax files beside it, as text. Saving the application `.crlf` reloads commands only while that file is the one in use.
+View > Edit Defaults > Commands opens `application.crlf` as text. Themes and Syntax, on the same menu, open the theme and syntax files beside the program. Saving `application.crlf` reloads commands only while that file is in use.
 
-The file is a JSON array of commands, or an object with a `commands` array and an optional `groups` array. An entry needs `name` and `command`. A second entry with the same `name` is ignored, because the name identifies the running process and its output log. A file that is neither an array nor an object leaves Run hidden and shows "Couldn't read .crlf" in the status bar.
+Each file is a JSON array of commands, or an object with a `commands` array and the other keys. An entry needs `name` and `command`. A second entry with the same `name` is ignored, because the name identifies the running process and its output log. A file that is neither an array nor an object is skipped, and the status bar says "Couldn't read" and its name; the other files still apply.
 
 ```json
 [
@@ -32,21 +32,21 @@ The file is a JSON array of commands, or an object with a `commands` array and a
 | Field | Required | Meaning |
 |---|---|---|
 | `name` | yes | Menu label, and the name of the process and its output log |
-| `command` | yes | The shell command. Variables are filled in when it starts |
-| `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
+| `command` | yes | The shell command, as a string or as an object with `windows` and `wsl` (see [Running a command](#running-a-command)). Variables are filled in when it starts |
+| `cwd` | no | Working directory, relative to the project root. The default is that folder |
 | `menu` | no | Where the command appears on the menu bar. The default is Run |
 | `key` | no | A function key, F1 through F35, with no modifiers |
 | `output` | no | `editor` sends the focused editor's text to the process and replaces that editor with standard output. Any other value, or leaving it out, keeps output in the panel |
 
-A `key` that is not a bare function key is ignored. When two commands ask for the same key, the first one in the file keeps it.
+A `key` that is not a bare function key is ignored. When two commands ask for the same key, the first one in the merged list keeps it.
 
-Run is shown only when at least one command in the file in use is placed in it. When neither a workspace file nor the application `.crlf` exists, Run stays hidden.
+Run is shown only when at least one command in the files in use is placed in it.
 
 ## Virtual folders
 
-`groups` is read only from the object form. Each group is a virtual folder in the explorer. Nothing is created on disk. A file is claimed by the first group whose pattern matches its name, and directories are left where they are.
+`groups` is read only from the object form of a file. Each group is a virtual folder in the explorer. Nothing is created on disk. A file is claimed by the first group whose pattern matches its name, and directories are left where they are.
 
-With no `path`, the group applies in the directory that contains `.crlf`. `path` limits it to a folder under that directory. `recursive` also applies it in subfolders of that location. A group with no matching files is not shown, including in the directory named by `path`. `showIfEmpty` set to `true` shows the folder anyway.
+With no `path`, the group applies in the project root. `path` limits it to a folder under that directory. `recursive` also applies it in subfolders of that location. A group with no matching files is not shown, including in the directory named by `path`. `showIfEmpty` set to `true` shows the folder anyway.
 
 ```json
 {
@@ -69,11 +69,11 @@ With no `path`, the group applies in the directory that contains `.crlf`. `path`
 | `name` | yes | The folder's label in the explorer |
 | `files` | no | File names to fold into the folder. A pattern that contains `*` or `?` is a wildcard; any other pattern is an exact name |
 | `icon` | no | Folder name passed to the file-icon theme. The default is `name`. View > File Icons > Templates lists every icon key |
-| `path` | no | Folder under the `.crlf` directory. The default is the `.crlf` directory itself |
+| `path` | no | Folder under the project root. The default is the root itself |
 | `recursive` | no | Also apply the group in subfolders of `path` |
 | `showIfEmpty` | no | When `false` (the default), hide the folder wherever it has no matching files |
 
-Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `recursive` field, and it can be toggled on the virtual folder's menu. Drag a file from that same folder onto the virtual folder to add its name to `files`. The file stays where it is on disk. Saving `.crlf`, or either of those actions, reloads the groups.
+Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `recursive` field, and it can be toggled on the virtual folder's menu. Drag a file from that same folder onto the virtual folder to add its name to `files`. The file stays where it is on disk. Saving a `.crlf` file in use, or either of those actions, reloads the groups. The actions write to a workspace file; which one, and what happens to a group inherited from `application.crlf`, is in [crlf.md](crlf.md#saving-from-the-editor).
 
 ## Icon theme
 
@@ -92,7 +92,7 @@ Right-click a folder and choose New Virtual Folder. Apply in subfolders is the `
 
 ## Hidden names
 
-`hide` is a list of file and folder names to leave out of the explorer. A pattern that contains `*` or `?` is a wildcard. Any other pattern is an exact name. Matching ignores case. The files stay on disk.
+`hide` is a list of file and folder names to leave out of the explorer. A pattern that contains `*` or `?` is a wildcard. Any other pattern is an exact name. Matching ignores case. The files stay on disk. No name is built in: the `.crlf` folder is a dot folder and follows Hide Dot Folders on the explorer's menu.
 
 ```json
 "hide": ["node_modules", "dist", "*.log"]
@@ -169,10 +169,11 @@ Write a variable as `${name}` inside `command`. The value is taken when the comm
 | `${buffer}` | Path of a UTF-8 file written for this launch. The file is the focused editor's text, including unsaved edits. Empty in the hex view, and when the command does not name it |
 | `${terminal}` | Path of a UTF-8 file written for this launch. The file is the current terminal session: scrollback, then the screen, as plain text. Empty when no session is open |
 | `${language}` | Language of the focused document. The hex view reports `Hex` |
-| `${project}` | Directory that contains the `.crlf` file |
+| `${project}` | The project root: the folder that holds the `.crlf` files. Empty when only `application.crlf` applies |
 | `${folder}` | Folder the explorer is scoped to |
 | `${cwd}` | This command's working directory, after `cwd` is resolved |
 | `${programDir}` | The folder beside the program that holds `styles`, `themes`, and `scripts`: the build folder for a dev build, the install folder otherwise. The shipped agent is `"${programDir}/scripts/agent/crlf_agent.py"` |
+| `${appDir}` | The application's `.crlf` folder, `%APPDATA%\CRLF\CRLF\.crlf`, which holds the `scripts`, `keys`, and `rules` shared by every workspace. A key file there is `"${appDir}/keys/openai"` |
 
 `${file}`, `${fileDir}`, and `${relativeFile}` are empty when the focused document has never been saved. `${line}`, `${column}`, and `${selection}` are empty in the hex view.
 
@@ -187,11 +188,22 @@ Write a variable as `${name}` inside `command`. The value is taken when the comm
 
 `cwd` in the JSON file is a path, not a command string, so variables are not substituted there. `${cwd}` inside `command` is the directory the process actually starts in.
 
-When the working directory is inside a WSL distro, the command runs in that distro and the path variables (`${file}`, `${fileDir}`, `${project}`, `${folder}`, and `${cwd}`) are Linux paths when they point into a distro. `${buffer}` and `${terminal}` are `/mnt/<drive>/...` paths. `${relativeFile}`, the file name, and the extension stay as they are.
+When the working directory is inside a WSL distro, the command runs in that distro and the path variables are Linux paths: `${file}`, `${fileDir}`, `${project}`, `${folder}`, `${buffer}`, `${terminal}`, `${programDir}`, `${appDir}`, and `${cwd}`. A path inside the distro loses its `\\wsl.localhost\<Distro>` prefix. A path on a Windows drive becomes `/mnt/<drive>/...`, which is how the two temp files, the install folder, and the application folder are reached. That depends on WSL mounting the Windows drives, which it does by default. `${relativeFile}`, the file name, and the extension stay as they are.
 
 ## Running a command
 
 On Windows, a command whose working directory is a normal path runs through `cmd.exe /d /s /c`. A working directory under `\\wsl.localhost` or `\\wsl$` runs through `wsl.exe` in that distro: `bash -lc` starts in the Linux directory, and the panel shows the command's own output. Elsewhere the command runs through `/bin/sh -c`.
+
+`command` may be an object with one line for each environment, for an entry that is used in both, such as one in `application.crlf`:
+
+```json
+{
+  "name": "Lint",
+  "command": { "windows": "python tools\\lint.py \"${file}\"", "wsl": "python3 tools/lint.py \"${file}\"" }
+}
+```
+
+A working directory inside a distro takes `wsl`; any other takes `windows`. A string serves both. A side that is left out is an empty command, so the entry is skipped in that environment. `syntax`, `autocomplete`, and `agents` take the same form. [crlf.md](crlf.md#windows-and-wsl) lists what has to be installed in each environment.
 
 Standard output and standard error are merged into one log. The panel opens at the bottom of the window when the command starts. A command with `"output": "editor"` is the exception: its streams are described below.
 
@@ -238,7 +250,7 @@ An empty editor may be replaced with empty output. A command that exits 0 and wr
 |---|---|---|
 | `enabled` | no | `false` stops scheduling. The command stays in the file. Missing `syntax` means off |
 | `command` | when enabled | The shell command. Variables are filled in when a check starts, the same names as a menu command |
-| `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
+| `cwd` | no | Working directory, relative to the project root. The default is that folder |
 
 The editor's text is standard input, UTF-8 with LF line endings. `${file}` tells the tool which language the buffer is and where its includes live. A tool that opens `${file}` checks the saved copy and misses unsaved edits.
 
@@ -267,7 +279,7 @@ The Problems page at the bottom lists every span from the editors that have been
 
 ## Completion
 
-`unlimitedLog` set to `true` keeps every line of a process log. Left out, or in an array-shaped file, the log keeps its last 2,000 lines. It is read again when `.crlf` reloads.
+`unlimitedLog` set to `true` keeps every line of a process log. Left out, or in an array-shaped file, the log keeps its last 2,000 lines. It is read again when the project reloads.
 
 `autocomplete` keeps one external process for the project and asks it for completions. Leaving the key out leaves completion off. `"autocomplete": false` does the same. The session is described in [autocomplete.md](autocomplete.md). Adding `--verbose` to the command, or setting `CRLF_AUTOCOMPLETE_VERBOSE=1`, keeps the language server's information messages.
 
@@ -282,7 +294,7 @@ The Problems page at the bottom lists every span from the editors that have been
 |---|---|---|
 | `enabled` | no | `false` stops the session. The command stays in the file. Missing `autocomplete` means off |
 | `command` | when enabled | The shell command. It stays running and reads one JSON object per line |
-| `cwd` | no | Working directory, relative to the `.crlf` directory. The default is that directory |
+| `cwd` | no | Working directory, relative to the project root. The default is that folder |
 
 Each request is one line. `kind` is `completion`, `signature` for the parameter hint inside a call, `open` to load a file before anything is asked about it, or `resolve` for the documentation of one row. `line` and `column` start at 1. `text` is the editor buffer. `revision` is the document revision at the moment the request was sent. A completion that a typed character asked for carries that character as `trigger`.
 

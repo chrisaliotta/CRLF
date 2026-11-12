@@ -19,9 +19,24 @@ protocol; the log is standard error.
 session starts. The session offers the provider's models and the settings
 the chosen model takes as ACP config options, and the client changes them
 with session/set_config_option.
+
+--rules names a folder of rule files the model can list and read, by
+default .crlf/rules in the session's working directory. It may be given
+more than once, as for a project's rules and then the application's. A
+rule name found in two folders is the earlier folder's rule.
+
+--index picks what codebase_search asks: grep, fts (the default), or
+vector, which needs --embed-provider. The index is kept in --index-dir, by
+default .crlf/data in the session's working directory. See index.py and
+embeddings.py.
+
+--context-budget is where the session's Context option starts: unlimited,
+or the tokens the conversation may reach before old tool results are
+shortened. See history.py.
 """
 
 import argparse
+import difflib
 import json
 import os
 import platform
@@ -30,10 +45,16 @@ import threading
 import urllib.parse
 import uuid
 
+import embeddings
+import history
+import index
 import providers
-from tools import Tools, ToolError, clip
+from tools import Tools, ToolError, clip, shown_path, walk
+from tools.context import rule_files
 
 PROTOCOL_VERSION = 1
+DEFAULT_RULES = ".crlf/rules"
+DEFAULT_INDEX_DIRECTORY = ".crlf/data"
 # Model replies in one turn before the turn ends with max_turn_requests.
 MAX_STEPS = 60
 
@@ -115,6 +136,11 @@ def path_from_uri(uri):
     return path
 
 
+def session_path(cwd, path):
+    """A folder a command-line option names: relative to the session's working directory, or absolute."""
+    return os.path.normpath(os.path.join(cwd, path))
+
+
 def prompt_text(blocks):
     """The model sees one user message: the text, then what was attached."""
     parts = []
@@ -130,22 +156,28 @@ def prompt_text(blocks):
     return "\n\n".join(parts)
 
 
-def system_prompt(cwd, crlf_client):
+def system_prompt(cwd, crlf_client, rules):
+    """`rules` is the names of the project's rules."""
     shell = "cmd.exe" if os.name == "nt" else "bash"
-    editor = ("The editor is CRLF. editor_state, problems, git_status, and read_terminal show what the user sees."
+    editor = ("The editor is CRLF. editor_state, problems, git_status, and read_terminal show what the user sees. "
               if crlf_client else "")
+    ruled = ("The project has rules: %s. Read the ones that bear on the task with fetch_rules before you start. "
+             % ", ".join(rules) if rules else "")
     return (
         "You are a coding agent working in the user's editor on the project at %s, on %s. "
-        "Read files before you change them. Make focused changes with edit_file; use write_file for new files. "
+        "Find code with codebase_search when you know what it does, grep_search when you know its text, and "
+        "file_search when you know its name. "
+        "Read files before you change them; read_file with outline shows a long file's shape first. "
+        "Make focused changes with edit_file; use write_file for new files. "
         "The user reviews every write and may reject it; when that happens, ask what they want instead. "
-        "run_command runs one command line in %s and may need the user's approval. "
-        "%s Answer in Markdown, briefly, and say what you changed."
-        % (cwd, platform.system(), shell, editor)
+        "run_terminal_cmd runs one command line in %s and may need the user's approval. "
+        "%s%sAnswer in Markdown, briefly, and say what you changed."
+        % (cwd, platform.system(), shell, editor, ruled)
     )
 
 
 class Session:
-    def __init__(self, agent, cwd, adapter, models, settings):
+    def __init__(self, agent, cwd, adapter, models, settings, index):
         self.agent = agent
         self.id = "session-" + uuid.uuid4().hex[:12]
         self.cwd = cwd
@@ -153,12 +185,25 @@ class Session:
         # [(id, display name)], as the provider listed them.
         self.models = models
         # {"model": id, option id: value}. The command line's values start
-        # it; a setting it does not name takes the adapter's default.
+        # it; a setting it does not name takes the adapter's default. The
+        # Context option is the session's own, and the adapter does not read it.
         self.settings = settings
         self.history = []
         self.cancel = threading.Event()
-        self.tools = Tools(self, agent.crlf_client)
         self.tool_call = None
+        # The folders of rule files, for fetch_rules. An earlier folder's rule wins a shared name.
+        self.rules = [session_path(cwd, folder) for folder in agent.options.rules]
+        # The code index codebase_search asks.
+        self.index = index
+        # [(path, lines added, lines removed)] for each write the user accepted, for diff_history.
+        self.writes = []
+        # Ids of the commands left running in the background, released when the session ends.
+        self.terminals = []
+        # Where the next command runs when it names no directory: where the last one was told to.
+        self.command_cwd = cwd
+        self.tools = Tools(self, agent.crlf_client)
+        # Built once, so every request of the session starts with the same text.
+        self.system = system_prompt(cwd, agent.crlf_client, list(rule_files(self.rules)))
 
     def config_options(self):
         """The ACP config options for the model in use, each with its
@@ -167,7 +212,7 @@ class Session:
         model = {"id": "model", "name": "Model", "category": "model", "type": "select",
                  "description": "The model that answers",
                  "options": [{"value": id, "name": name} for id, name in self.models]}
-        options = [model] + self.adapter.config_options(self.settings["model"])
+        options = [model] + self.adapter.config_options(self.settings["model"]) + [history.config_option()]
         defaults = self.adapter.defaults(self.settings["model"])
         for option in options:
             current = self.settings.setdefault(option["id"], defaults.get(option["id"]))
@@ -186,17 +231,53 @@ class Session:
         options = self.config_options()
         if id == "model":
             # Another model can take other settings, so the client is told the whole list again.
-            status("ready: %s" % value)
+            self.agent.status("ready: %s" % value)
             self.update({"sessionUpdate": "config_option_update", "configOptions": options})
         return options
 
-    # The context tools.py calls.
+    # The context the tools call.
 
     def request(self, method, params, timeout=None):
         try:
             return self.agent.connection.request(method, dict(params, sessionId=self.id), timeout)
         except RpcError as error:
             raise ToolError(str(error))
+
+    def record_write(self, path, old, new):
+        """`old` is None for a file that did not exist."""
+        before, after = (old or "").splitlines(), new.splitlines()
+        added = removed = 0
+        for kind, i1, i2, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+            if kind != "equal":
+                removed += i2 - i1
+                added += j2 - j1
+        self.writes.append((shown_path(self, path), added, removed))
+
+    def refresh_index(self):
+        """Brings the index up to date with the disk on a thread of its own.
+        Nothing waits for it: a search made meanwhile sees the index as it was."""
+        threading.Thread(target=self._refresh_index, daemon=True).start()
+
+    def _refresh_index(self):
+        reported = []
+
+        def progress(done, total):
+            reported.append(done)
+            status("indexing %d/%d" % (done, total))
+        try:
+            self.index.refresh(progress)
+        except Exception as error:  # The session goes on without the index, as with an embedding server that is down.
+            log("The index could not be refreshed: %s" % error)
+        self.index.close()
+        if reported:
+            self.agent.status(self.agent.activity)
+
+    def close(self):
+        """Releases the commands left running in the background. The client
+        is going away, so nothing waits for its replies."""
+        for terminal in self.terminals:
+            self.agent.connection.send({"id": "release-" + terminal, "method": "terminal/release",
+                                        "params": {"sessionId": self.id, "terminalId": terminal}})
 
     def show_terminal(self, terminal_id):
         self.update({"sessionUpdate": "tool_call_update", "toolCallId": self.tool_call,
@@ -212,12 +293,14 @@ class Session:
         """Returns the ACP stop reason."""
         self.cancel.clear()
         self.history.append({"role": "user", "content": prompt_text(blocks)})
-        system = system_prompt(self.cwd, self.agent.crlf_client)
         for _ in range(MAX_STEPS):
+            shortened = history.shorten(self.history, self.settings[history.OPTION_ID])
+            if shortened:
+                log("The conversation passed the context budget: %d old tool results were shortened." % shortened)
             try:
                 # The settings are read for each reply, so a change made during a turn applies to the next one.
                 reply = self.adapter.stream(
-                    system, self.history, self.tools.schemas(), dict(self.settings),
+                    self.system, self.history, self.tools.schemas(), dict(self.settings),
                     lambda text: self.say("agent_message_chunk", text),
                     lambda text: self.say("agent_thought_chunk", text),
                     self.cancel)
@@ -250,13 +333,14 @@ class Session:
             try:
                 text, content, locations = definition["run"](call["arguments"])
                 failed = False
-            except (ToolError, KeyError, ValueError, OSError) as error:
+            # ProviderError is codebase_search's, when the embedding server does not answer.
+            except (ToolError, KeyError, ValueError, OSError, providers.ProviderError) as error:
                 text, content, locations, failed = "Error: %s" % error, [], [], True
         shown = [{"type": "content", "content": {"type": "text", "text": clip(text, 2000)}}]
         self.update({"sessionUpdate": "tool_call_update", "toolCallId": call["id"],
                      "status": "failed" if failed else "completed",
                      "content": content + shown, "locations": locations})
-        result.update(content=clip(text), is_error=failed)
+        result.update(content=clip(text, definition["limit"]), is_error=failed)
         return result
 
 
@@ -266,6 +350,12 @@ class Agent:
         self.connection = Connection()
         self.sessions = {}
         self.crlf_client = False
+        # The last status set, which the row goes back to when indexing ends.
+        self.activity = ""
+
+    def status(self, text):
+        self.activity = text
+        status(text)
 
     def initialize(self, params):
         self.crlf_client = (params.get("clientInfo") or {}).get("name") == "CRLF"
@@ -287,19 +377,28 @@ class Agent:
         except providers.ProviderError as error:
             log("Could not list the models, so only %s is offered: %s" % (self.options.model, error))
             models = [(self.options.model, self.options.model)]
-        settings = {"model": self.options.model}
+        settings = {"model": self.options.model, history.OPTION_ID: self.options.context_budget}
         for id, value in (("max_tokens", self.options.max_tokens), ("reasoning_effort", self.options.reasoning_effort),
                           ("thinking", self.options.thinking)):
             if value is not None:
                 settings[id] = str(value)
-        session = Session(self, params["cwd"], adapter, models, settings)
+        cwd = params["cwd"]
+        # Only the vector index embeds, so only it needs the embedder's package or key.
+        embedder = (embeddings.create(self.options.embed_provider, self.options.embed_model,
+                                      self.options.embed_base_url, self.options.embed_api_key_env,
+                                      self.options.embed_api_key_file)
+                    if self.options.index == "vector" else None)
+        session = Session(self, cwd, adapter, models, settings,
+                          index.create(self.options.index, cwd, session_path(cwd, self.options.index_dir), embedder,
+                                       lambda: walk(cwd)))
         self.sessions[session.id] = session
-        status("ready: %s" % self.options.model)
+        self.status("ready: %s" % self.options.model)
+        session.refresh_index()
         return {"sessionId": session.id, "configOptions": session.config_options()}
 
     def prompt(self, id, params):
         session = self.sessions[params["sessionId"]]
-        status("working")
+        self.status("working")
         try:
             self.connection.respond(id, {"stopReason": session.turn(params["prompt"])})
         except providers.ProviderError as error:
@@ -308,7 +407,9 @@ class Agent:
         except Exception as error:  # A bug here must still end the turn the editor is waiting on.
             log("turn failed: %r" % error)
             self.connection.fail(id, -32603, "The agent failed: %s" % error)
-        status("ready")
+        # A search in this turn opened this thread's connection to the index.
+        session.index.close()
+        self.status("ready")
 
     def dispatch(self, message):
         method = message.get("method")
@@ -346,6 +447,15 @@ class Agent:
             line = raw.decode("utf-8", "replace").strip()
             if line:
                 self.dispatch(json.loads(line))
+        # The client closed standard input, which ends every session.
+        for session in self.sessions.values():
+            session.close()
+
+
+def context_budget(text):
+    """The value of --context-budget as the Context option holds it. A
+    count that is not a number raises ValueError, which argparse reports."""
+    return text if text == history.UNLIMITED else str(int(text))
 
 
 def main():
@@ -360,7 +470,32 @@ def main():
     parser.add_argument("--reasoning-effort", help="Reasoning level to start with, for OpenAI and xAI: "
                                                    "minimal, low, medium, or high")
     parser.add_argument("--thinking", help="Thinking to start with, for Anthropic: off, 4k, 16k, 32k, or adaptive")
-    Agent(parser.parse_args()).run()
+    # No default here: argparse would add the folders given to it instead of replacing it.
+    parser.add_argument("--rules", action="append", metavar="FOLDER",
+                        help="Folder of .md rule files the model can read, relative to the session's working "
+                             "directory or absolute. By default %s. Give it more than once for several folders; "
+                             "a rule name in two of them is the earlier folder's rule" % DEFAULT_RULES)
+    parser.add_argument("--index", default="fts", choices=["grep", "fts", "vector"],
+                        help="What codebase_search asks: grep reads the files for every search, fts keeps a "
+                             "full-text index, and vector keeps embeddings and needs --embed-provider")
+    parser.add_argument("--index-dir", default=DEFAULT_INDEX_DIRECTORY,
+                        help="Folder the index is kept in, relative to the session's working directory or "
+                             "absolute. By default %(default)s")
+    parser.add_argument("--embed-provider", choices=embeddings.PROVIDERS,
+                        help="Where the vector index gets its embeddings. local runs a model in this process "
+                             "and needs the fastembed package")
+    parser.add_argument("--embed-model", help="The embedding model. local has a default; the others need one")
+    parser.add_argument("--embed-base-url", help="Embedding server address, for openai-compatible or another port")
+    parser.add_argument("--embed-api-key-file", help="File that holds the embedding server's API key")
+    parser.add_argument("--embed-api-key-env", help="Environment variable that holds the embedding server's API key")
+    parser.add_argument("--context-budget", type=context_budget, default=history.UNLIMITED, metavar="TOKENS",
+                        help="Where the Context option starts: unlimited, or the tokens the conversation may "
+                             "reach before old tool results are shortened")
+    options = parser.parse_args()
+    options.rules = options.rules or [DEFAULT_RULES]
+    if options.index == "vector" and not options.embed_provider:
+        parser.error("--index vector needs --embed-provider")
+    Agent(options).run()
 
 
 if __name__ == "__main__":

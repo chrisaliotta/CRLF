@@ -1,5 +1,7 @@
 #include "io/FileOperations.h"
 
+#include "io/WslPath.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -48,9 +50,16 @@ bool move(const QString &source, const QString &destination)
            && QDir(source).removeRecursively();
 }
 
-bool moveToTrash(const QString &path)
+bool usesRecycleBin(const QString &path)
 {
-    return QFile::moveToTrash(path);
+    return !WslPath::toLinux(path).valid();
+}
+
+bool remove(const QString &path)
+{
+    if (usesRecycleBin(path))
+        return QFile::moveToTrash(path);
+    return QFileInfo(path).isDir() ? QDir(path).removeRecursively() : QFile::remove(path);
 }
 
 void revealInFileExplorer(const QString &path)

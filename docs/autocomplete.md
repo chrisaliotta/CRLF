@@ -6,7 +6,7 @@ User-facing behavior is in [commands.md](commands.md). Threading is in [processe
 
 ## Why a session
 
-A check is one process per buffer: standard input is the text, standard output is a JSON array, and the process exits. `clangd` and the C# language server spend their time building an index and a preamble. Starting one for every keystroke would not complete in time. `autocomplete` in `.crlf` is the same kind of command string as `syntax`, and the process stays up for the project.
+A check is one process per buffer: standard input is the text, standard output is a JSON array, and the process exits. `clangd` and the C# language server spend their time building an index and a preamble. Starting one for every keystroke would not complete in time. `autocomplete` in a `.crlf` file is the same kind of command string as `syntax`, and the process stays up for the project.
 
 The editor writes one JSON object per line and reads one JSON object per line. `scripts/autocomplete.py` is the only place that speaks LSP. Adding a language means adding one entry to that script's provider list. The popup, the document, and the orchestrator stay as they are.
 
@@ -142,4 +142,4 @@ A `.cs` file that belongs to no project uses one shared server with no solution.
 
 **One timing line.** Each handled request logs once: `completion test.cs 8:16: 18 items in 140ms`.
 
-**Quieter OmniSharp.** `window/logMessage` is logged only for errors and warnings. `--verbose`, or `CRLF_AUTOCOMPLETE_VERBOSE=1`, keeps information messages too and starts OmniSharp at `-l Information` instead of `-l Error`. `scripts/autocomplete.sh` forwards its arguments, so the command in `.crlf` can be `scripts/autocomplete.sh --verbose`.
+**Quieter OmniSharp.** `window/logMessage` is logged only for errors and warnings. `--verbose`, or `CRLF_AUTOCOMPLETE_VERBOSE=1`, keeps information messages too and starts OmniSharp at `-l Information` instead of `-l Error`. `scripts/autocomplete.sh` forwards its arguments, so the command in the `.crlf` file can be `scripts/autocomplete.sh --verbose`.

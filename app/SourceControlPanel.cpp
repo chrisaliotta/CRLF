@@ -224,7 +224,7 @@ void SourceControlPanel::refreshActions()
 void SourceControlPanel::rebuild()
 {
     if (!m_control->enabled()) {
-        m_empty->setText(QStringLiteral("Source control is off for this folder.\nAdd \"git\": true to .crlf to turn it on."));
+        m_empty->setText(QStringLiteral("Source control is off for this folder.\nAdd \"git\": true to a .crlf file to turn it on."));
         m_stack->setCurrentWidget(m_empty);
         return;
     }

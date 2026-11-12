@@ -26,10 +26,10 @@ public:
     void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
 
     void setIconTheme(const FileIconTheme *theme);
-    // Virtual folders for one directory, usually the folder that holds .crlf.
+    // Virtual folders for one directory, usually the project root.
     // An empty directory clears them. A directory that is already listed is
     // read again so the groups show up.
-    // `directory` is the folder that contains .crlf. Groups may name a path
+    // `directory` is the project root. Groups may name a path
     // under it, and a recursive group also applies in that path's subfolders.
     void setGroups(const QString &directory, const QList<FileGroup> &groups);
     QList<FileGroup> groups() const { return m_groups; }
