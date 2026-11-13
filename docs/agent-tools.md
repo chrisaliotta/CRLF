@@ -30,8 +30,8 @@ An agent is one entry under `agents` in a `.crlf` file. Everything in this guide
 | `--embed-api-key-env` | A variable name | `OPENAI_API_KEY` for `openai` | The variable that holds the embedding server's key |
 | `--rules` | A folder, relative to the session's working directory, or absolute. May be given more than once | `.crlf/rules` | The rule folders. Giving the flag replaces the default. See [Rules](#rules) |
 | `--context-budget` | `unlimited`, or a count of tokens | `unlimited` | Where the Context option starts. See [Keeping it fast and cheap](#keeping-it-fast-and-cheap) |
-| `--prices` | A JSON file, relative to the agent's working directory, or absolute | none | Prices and context windows by model, for the panel's usage line. See [Usage and prices](#usage-and-prices) |
-| `--context-window` | A count of tokens | none | The model's context window, when the prices file does not list it |
+| `--prices` | A JSON file, relative to the agent's working directory, or absolute | none | Your own prices and context sizes by model, read over the shipped `models.json`, for the panel's usage line. See [Usage and prices](#usage-and-prices) |
+| `--context-window` | A count of tokens | none | The model's context size, for a model no list has. It comes before a listed size |
 
 The chat flags (`--provider`, `--model`, `--api-key-file`, `--max-tokens`, `--reasoning-effort`, `--thinking`) are in [agent.md](agent.md#the-reference-agent). The chat provider and the embedding provider are independent: Claude can answer while a local model embeds.
 
@@ -1038,53 +1038,72 @@ Set the budget below the model's own context size. A lower budget costs less for
 
 ### Usage and prices
 
-The Agent panel shows a usage line under the status when the agent reports what the session has used; [agent.md](agent.md#usage) describes the line. The agent takes the token counts from each provider reply. Two things no provider reports come from a prices file: what a token costs, and how large a model's context window is.
+The Agent panel shows a usage line under the status after each model reply; [agent.md](agent.md#usage) describes the line. The agent takes the token counts from each provider reply. Two things no provider reports come from lists of models: what a token costs, and how large a model's context is.
+
+There are two lists, with one shape:
+
+| List | Where | Who keeps it |
+| --- | --- | --- |
+| The shipped list | `models.json`, beside `crlf_agent.py` | It ships with the agent and every upgrade replaces it. It is always read and needs no flag. Copy Application Files to Workspace carries it with the scripts |
+| Your own | The file `--prices` names. The shipped agents name `${appDir}/prices.json`, which is `%APPDATA%\CRLF\CRLF\.crlf\prices.json` | You. It ships with no models in it, is copied there once, and is never replaced |
+
+Your file is read over the shipped list, field by field: a field you set wins, a field you leave out is the shipped one, and a model only you list is added. So one line corrects one price and keeps the model's sizes:
 
 ```json
 {
   "currency": "USD",
   "models": {
-    "gpt-5": { "input": 1.25, "cached_input": 0.125, "output": 10.0, "context": 400000 },
-    "claude-sonnet-4-5": { "input": 3.0, "cached_input": 0.3, "cache_write": 3.75, "output": 15.0, "context": 200000 },
+    "gpt-6-astra": { "output": 45.0 },
     "qwen3-coder": { "context": 32768 }
   }
 }
 ```
 
-| Field | Meaning | When it is left out |
+A whole entry, as the shipped list has it:
+
+```json
+{
+  "currency": "USD",
+  "models": {
+    "gpt-6-astra": {
+      "input": 10.0, "cached_input": 1.0, "cache_write": 12.5, "output": 50.0,
+      "context": 1050000, "max_input": 922000,
+      "long": { "over": 272000, "input": 20.0, "cached_input": 2.0, "cache_write": 25.0, "output": 75.0 }
+    }
+  }
+}
+```
+
+| Field | Meaning | When no list has it |
 | --- | --- | --- |
 | `currency` | The ISO 4217 code the prices are in | `USD` |
 | `input` | The price of a million input tokens | The model has no cost |
 | `output` | The price of a million output tokens | The model has no cost |
 | `cached_input` | The price of a million input tokens read from the provider's cache | The `input` price |
-| `cache_write` | The price of a million input tokens written to the cache, which Anthropic charges more for | The `input` price |
-| `context` | The model's context window, in tokens | No percentage, unless `--context-window` or a Context budget gives a size |
+| `cache_write` | The price of a million input tokens written to the cache | The `input` price |
+| `context` | The model's context window, in tokens. The window holds the conversation and the reply | See the sizes below |
+| `max_input` | The most input tokens the model accepts, which is less than the window | The size is `context` |
+| `long` | The prices of a long prompt: `over`, a count of input tokens, and any of the four prices | Every request is priced the same |
 
+- **`long`.** Some providers charge more for a request with a long prompt, and charge all of that request at the higher prices. A reply whose input, cached tokens included, is more than `over` is priced with the prices `long` gives; a price `long` leaves out stays the ordinary one. With the entry above, a request of 300,000 input tokens costs $20 a million for input and $75 for output, and one of 200,000 costs $10 and $50. Each request is priced on its own.
 - **Matching.** A model uses the entry with its exact id, or else the longest listed id it starts with. `gpt-5-2025-08-07` uses the `gpt-5` entry. `gpt-5-mini` uses its own entry when it has one, and the `gpt-5` entry when it does not, so list any model that should not take a shorter name's prices.
 - **An entry with only `context`,** as for the local model above, gives a percentage and no cost.
-- **A model that is not listed** has no cost. It has a percentage only when `--context-window` or a Context budget supplies a size.
-- **The file is read when a session starts,** so an edit applies after New. A file that is not there prices nothing. A file that is there and is not valid JSON fails the session with the file's path in the message.
+- **A model no list has** has no cost and, unless `--context-window` or a Context budget gives a size, no percentage: the line reads `Context 84k tokens`.
+- **Another currency.** The shipped prices are in US dollars. If your file names another currency, the shipped prices are dropped and the shipped sizes kept, so no cost mixes two currencies. Only the models your file prices have a cost.
+- **Both lists are read when a session starts,** so an edit applies after New. A `--prices` file that is not there leaves the shipped list as it is. A file that is there and is not valid JSON fails the session with the file's path in the message.
+- **A `prices.json` from an earlier version** lists `gpt-5`, `claude-sonnet-4-5`, and `grok-4.7` in full. Those entries still win, field by field, over the shipped ones. Delete them to get the shipped figures.
 
-The file that ships is `prices.json` in the application's `.crlf` folder, `%APPDATA%\CRLF\CRLF\.crlf\prices.json`, and the shipped agents name it as `--prices "${appDir}/prices.json"`. It is copied there once and never replaced, so it is yours to keep current. It lists three models:
-
-| Model | Checked against the provider's page on 12 November 2026 |
-| --- | --- |
-| `gpt-5` | Prices and the 400,000 window match OpenAI's model page, which lists the model as deprecated |
-| `claude-sonnet-4-5` | Prices match Anthropic's pricing page, which lists the model as deprecated. The 200,000 window was not checked |
-| `grok-4.7` | Prices and the 500,000 window match xAI's model page for prompts under 200,000 tokens. xAI charges twice as much for a request whose prompt is longer, which the file cannot express, so a long session's cost reads low |
-
-Prices change and models are replaced. A wrong price gives a wrong cost and nothing else, and a model missing from the file gives no cost.
-
-What the line measures against:
+What the percentage is measured against, first match first:
 
 | Setting | The context's size |
 | --- | --- |
 | A Context budget is set | The budget, because that is the limit the conversation is held to |
 | Unlimited, and `--context-window` is given | That count |
+| Unlimited, and the model's entry has `max_input` | That count: it is the limit a long conversation reaches first |
 | Unlimited, and the model's entry has `context` | That count |
-| None of these | Unknown. The agent reports nothing and the panel shows no line |
+| None of these | Unknown. CRLF shows the tokens without a percentage. Another ACP client is sent nothing, because ACP's `usage_update` cannot say the size is unknown |
 
-The cost is an estimate: the tokens each reply reported, at the listed prices. It leaves out anything a provider bills that is not a token of a chat reply, and embedding calls for a vector index. A provider's own usage page is the bill.
+The cost is an estimate: the tokens each reply reported, at the listed prices. It leaves out anything a provider bills that is not a token of a chat reply, embedding calls for a vector index, and any discount or surcharge for batch, priority, or regional processing. A provider's own usage page is the bill.
 
 A local model has a window and no price. `--context-window` gives its size with no file:
 
@@ -1095,7 +1114,81 @@ A local model has a window and no price. `--context-window` gives its size with 
 }
 ```
 
-To price a model, add its entry to `prices.json` under its id as the provider lists it, and start a new session.
+#### The shipped models
+
+`models.json` lists 53 models. Every figure was read from the provider's own page on 12 November 2026: each OpenAI model's page under `platform.openai.com/docs/models/`, Anthropic's models overview, pricing, and model deprecations pages, and xAI's models page. Prices are US dollars for a million tokens. An empty cell is a figure the page does not give, and the entry leaves that field out.
+
+| Model | Window | Most input | Input | Cached | Cache write | Output | Long prompt |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `gpt-4.1` | 1,047,576 |  | $2 | $0.5 |  | $8 |  |
+| `gpt-4.1-mini` | 1,047,576 |  | $0.4 | $0.1 |  | $1.6 |  |
+| `gpt-4o` | 128,000 |  | $2.5 | $1.25 |  | $10 |  |
+| `gpt-4o-mini` | 128,000 |  | $0.15 | $0.075 |  | $0.6 |  |
+| `gpt-5` | 400,000 | 272,000 | $1.25 | $0.125 |  | $10 |  |
+| `gpt-5-mini` | 400,000 | 272,000 | $0.25 | $0.025 |  | $2 |  |
+| `gpt-5-nano` | 400,000 | 272,000 | $0.05 | $0.005 |  | $0.4 |  |
+| `gpt-5-pro` | 400,000 |  | $15 |  |  | $120 |  |
+| `gpt-5.1` | 400,000 |  | $1.25 | $0.125 |  | $10 |  |
+| `gpt-5.2` | 400,000 |  | $1.75 | $0.175 |  | $14 |  |
+| `gpt-5.2-pro` | 400,000 |  | $21 |  |  | $168 |  |
+| `gpt-5.3-codex` | 400,000 | 272,000 | $1.75 | $0.175 |  | $14 |  |
+| `gpt-5.4` | 1,050,000 |  | $2.5 | $0.25 |  | $15 | over 272,000: input $5, output $22.5 |
+| `gpt-5.4-mini` | 400,000 | 272,000 | $0.75 | $0.075 |  | $4.5 |  |
+| `gpt-5.4-nano` | 400,000 | 272,000 | $0.2 | $0.02 |  | $1.25 |  |
+| `gpt-5.4-pro` | 1,050,000 |  | $30 |  |  | $180 | over 272,000: input $60, output $270 |
+| `gpt-5.5` | 1,050,000 |  | $5 | $0.5 |  | $30 | over 272,000: input $10, output $45 |
+| `gpt-5.5-pro` | 1,050,000 |  | $30 |  |  | $180 |  |
+| `gpt-5.6-luna` | 1,050,000 | 922,000 | $0.2 | $0.02 | $0.25 | $1.2 | over 272,000: input $0.4, output $1.8 |
+| `gpt-5.6-sol` | 1,050,000 | 922,000 | $4 | $0.4 | $5 | $20 | over 272,000: input $8, output $30 |
+| `gpt-5.6-terra` | 1,050,000 | 922,000 | $2 | $0.2 | $2.5 | $12 | over 272,000: input $4, output $18 |
+| `gpt-6-astra` | 1,050,000 | 922,000 | $10 | $1 | $12.5 | $50 | over 272,000: input $20, cached $2, write $25, output $75 |
+| `gpt-6-luna` | 1,050,000 | 922,000 | $0.1 | $0.01 | $0.125 | $0.5 | over 272,000: input $0.2, cached $0.02, write $0.25, output $0.75 |
+| `gpt-6-sol` | 1,050,000 | 922,000 | $2 | $0.2 | $2.5 | $10 | over 272,000: input $4, cached $0.4, write $5, output $15 |
+| `gpt-6.1-sol` | 1,050,000 | 922,000 | $2 | $0.1 | $2.5 | $10 | over 272,000: input $4, cached $0.2, write $5, output $15 |
+| `gpt-6.1-terra` | 1,050,000 | 922,000 | $1 | $0.05 | $1.25 | $5 | over 272,000: input $2, cached $0.1, write $2.5, output $7.5 |
+| `o3` | 200,000 |  | $2 | $0.5 |  | $8 |  |
+| `claude-fable-5-2` | 1,000,000 |  | $8 | $0.2 | $10 | $40 |  |
+| `claude-opus-5-5` | 1,000,000 |  | $4 | $0.2 | $5 | $20 |  |
+| `claude-sonnet-5-5` | 1,000,000 |  | $2 | $0.1 | $2.5 | $10 |  |
+| `claude-haiku-5-5` | 1,000,000 |  | $0.1 | $0.01 | $0.125 | $0.5 | over 100,000: input $0.5, cached $0.05, write $0.625, output $2.5 |
+| `claude-mythos-5-2` | 1,000,000 |  | $8 | $0.2 | $10 | $40 |  |
+| `claude-fable-5-1` | 1,000,000 |  | $10 | $0.25 | $12.5 | $50 |  |
+| `claude-mythos-5-1` | 1,000,000 |  | $10 | $0.25 | $12.5 | $50 |  |
+| `claude-fable-5` | 1,000,000 |  | $10 | $1 | $12.5 | $50 |  |
+| `claude-mythos-5` | 1,000,000 |  | $10 | $1 | $12.5 | $50 |  |
+| `claude-opus-5` | 1,000,000 |  | $5 | $0.5 | $6.25 | $25 |  |
+| `claude-opus-4-8` | 1,000,000 |  | $5 | $0.5 | $6.25 | $25 |  |
+| `claude-opus-4-7` | 1,000,000 |  | $5 | $0.5 | $6.25 | $25 |  |
+| `claude-opus-4-6` | 1,000,000 |  | $5 | $0.5 | $6.25 | $25 |  |
+| `claude-opus-4-5` | 200,000 |  | $5 | $0.5 | $6.25 | $25 |  |
+| `claude-sonnet-5` | 1,000,000 |  | $2 | $0.2 | $2.5 | $10 |  |
+| `claude-sonnet-4-6` | 1,000,000 |  | $3 | $0.3 | $3.75 | $15 |  |
+| `claude-sonnet-4-5` | 200,000 |  | $3 | $0.3 | $3.75 | $15 |  |
+| `claude-haiku-4-5` | 200,000 |  | $1 | $0.1 | $1.25 | $5 |  |
+| `grok-4.7` | 500,000 |  | $2 | $0.5 |  | $6 | over 199,999: input $4, cached $1, output $12 |
+| `grok-4.6` | 500,000 |  | $2 | $0.5 |  | $6 | over 199,999: input $4, cached $1, output $12 |
+| `grok-4.5` | 500,000 |  | $2 | $0.3 |  | $6 | over 199,999: input $4, cached $0.6, output $12 |
+| `grok-4.3` | 1,000,000 |  | $1.25 | $0.2 |  | $2.5 | over 199,999: input $2.5, cached $0.4, output $5 |
+| `grok-4.20-0309-reasoning` | 1,000,000 |  | $1.25 | $0.2 |  | $2.5 | over 199,999: input $2.5, cached $0.4, output $5 |
+| `grok-4.20-0309-non-reasoning` | 1,000,000 |  | $1.25 | $0.2 |  | $2.5 | over 199,999: input $2.5, cached $0.4, output $5 |
+| `grok-build-0.1` | 256,000 |  | $1 | $0.2 |  | $2 | over 199,999: input $2, cached $0.4, output $4 |
+| `grok-4.20-multi-agent-0309` | 1,000,000 |  | $1.25 | $0.2 |  | $2.5 | over 199,999: input $2.5, cached $0.4, output $5 |
+
+What the pages left open, and how the list reads them:
+
+- **Most input** is stated only on the OpenAI pages that have a "Maximum input tokens" line. For every other model, all of Anthropic's and xAI's included, the percentage is against the whole window, so the model refuses input somewhat before the line reaches 100 percent.
+- **The cache write price of the three GPT-5.6 models** is not a row on their pages. It is 1.25 times the input price, from the pages' sentence "Cache writes are billed at 1.25x the uncached input token rate."
+- **`gpt-5.6-sol`** is listed at a promotional price that its page says ends on 30 November 2026. The page does not give the price after that.
+- **The cache write price of `gpt-6.1-terra`** is the one its page gives for 30-minute retention. 12-hour retention costs twice as much.
+- **The long-prompt rule of `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.5`, and the GPT-5.6 models** names input and output only, so their cached price stays the ordinary one. The GPT-5.4 and GPT-5.5 pages say the higher prices apply "for the full session"; the agent prices each request on its own, so a session that passes 272,000 tokens and then shortens may read low.
+- **xAI** charges the higher prices at 200,000 prompt tokens or more, so its `over` is 199,999.
+- **`o3`** has two unlabeled price tables on its page. The list has the first, which matches the page's comparison row; the second is half of it.
+- **`gpt-5-pro`** has no "Maximum input tokens" line; its page gives 272,000 as the most output.
+- **The four `-pro` models** have no cached price on their pages, so cached input is priced as input.
+- **Anthropic's ids.** The overview gives ids for `claude-fable-5-2`, `claude-opus-5-5`, `claude-sonnet-5-5`, and `claude-haiku-5-5`. The other fourteen are named there without one, and their ids come from the model deprecations page. That page gives `claude-opus-4-5`, `claude-sonnet-4-5`, and `claude-haiku-4-5` only with a date on the end, such as `claude-sonnet-4-5-20250929`; they are listed without it so that both forms match.
+- **Deprecated models** are listed while their pages still give figures: the GPT-4 models, `gpt-5` and its mini, nano, and pro, `gpt-5.1`, `gpt-5.3-codex`, `gpt-5.4-nano`, `o3`, and `claude-sonnet-4-5`.
+
+Prices change and models are replaced. A wrong price gives a wrong cost and nothing else. To correct a figure or add a model before the next version of the editor does, put it in `prices.json` under its id as the provider lists it, and start a new session.
 
 ### Prompt caching
 

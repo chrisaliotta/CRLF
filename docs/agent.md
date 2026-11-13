@@ -11,7 +11,7 @@ The setup keys are in [crlf.md](crlf.md#agents). The reference agent's tools, it
 ```json
 "agents": [
   { "name": "Claude", "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5" },
-  { "name": "Grok", "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4" },
+  { "name": "Grok", "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4.7" },
   { "name": "Local", "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder" },
   { "name": "Claude Code", "command": "npx @zed-industries/claude-code-acp" }
 ]
@@ -61,16 +61,23 @@ Context 42% (84k of 200k) · session 312k in (250k cached), 18k out · about $0.
 
 It is drawn from ACP's `usage_update`, which an agent sends when it has the figures. The editor works none of them out, and shows only the parts that arrived.
 
+An agent that does not know the size of its model's context cannot send that update, which requires a size. The reference agent then sends the same figures without one, as `_crlf/usage`, and the line starts with the tokens alone:
+
+```
+Context 84k tokens · session 312k in (250k cached), 18k out
+```
+
 | Part | From | Meaning |
 | --- | --- | --- |
 | `Context 42% (84k of 200k)` | `used` and `size` | The tokens in the agent's context now, against the size it is measured by. At 90 percent or more the line adds "nearly full" |
 | `session 312k in (250k cached), 18k out` | `_meta.crlf`, which the reference agent adds | The tokens every request of the session sent, how many of them the provider read from its cache, and the tokens the model wrote. The same conversation is sent again with each request, so the input total grows faster than the context |
 | `about $0.42` | `cost` | The session's cost so far, in the currency the agent names. A currency other than US dollars is shown by its code, such as `about 0.42 EUR`. An amount under a cent reads `less than $0.01` |
 
-- **No line.** An agent that sends no `usage_update` has none. The update cannot say that the context's size is unknown, so an agent that does not know it sends nothing.
+- **No line.** An agent that sends neither `usage_update` nor `_crlf/usage` has none, and no agent has one before its first reply.
 - **When it changes.** The reference agent sends an update after each model reply, and when the model or the Context option changes.
 - **When it is cleared.** With the session: on New, on another agent, and when the agent stops.
-- **The cost is an estimate.** The reference agent multiplies the tokens the provider reported by prices from a file the user keeps; see [Usage and prices](agent-tools.md#usage-and-prices). No provider reports a price, and none gives an ordinary API key its balance, so the line has no funds remaining.
+- **The size.** The reference agent measures against the Context budget when one is set, and otherwise against the most input the model accepts, or its whole window when the provider does not state that.
+- **The cost is an estimate.** The reference agent multiplies the tokens the provider reported by prices from the list of models it ships with and a file the user keeps over it; see [Usage and prices](agent-tools.md#usage-and-prices). No provider reports a price, and none gives an ordinary API key its balance, so the line has no funds remaining.
 
 ## Permissions
 
@@ -112,6 +119,12 @@ The editor also answers six methods of its own. ACP reserves names that start wi
 | `_crlf/terminal/read` | `text`: the scrollback and screen of the terminal on screen |
 | `_crlf/terminal/send` | Types `text` into that terminal, after a `terminal` check |
 | `_crlf/fs/delete` | Deletes the file at `path`, after a `write` check: to the Recycle Bin, or for good inside a WSL distro. Files only: a folder is answered as a path that does not exist. An open tab keeps its text, and the explorer row stays until its folder is listed again. The answer is `{}` |
+
+It also takes one notification of its own:
+
+| Notification | Effect |
+| --- | --- |
+| `_crlf/usage` | `sessionId` and `update`, which has the fields of a `usage_update` less `sessionUpdate` and `size`: `used`, and optionally `cost` and `_meta.crlf`. The usage line shows them without a percentage |
 
 An agent that does not know these names never calls them. The reference agent offers them to its model only when `initialize` names the client `CRLF`.
 

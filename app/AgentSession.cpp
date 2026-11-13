@@ -174,9 +174,17 @@ void AgentSession::take(const QJsonObject &message)
         takeRequest(rpc);
         return;
     }
+    const QJsonObject body = rpc.params.value(QLatin1String("update")).toObject();
+    if (rpc.method == QLatin1String("_crlf/usage")) {
+        AgentUpdate usage;
+        usage.kind = AgentUpdateKind::Usage;
+        usage.usage = readUsage(body);
+        emit updated(usage);
+        return;
+    }
     if (rpc.method != QLatin1String("session/update"))
         return;
-    AgentUpdate update = readUpdate(rpc.params.value(QLatin1String("update")).toObject());
+    AgentUpdate update = readUpdate(body);
     if (update.kind == AgentUpdateKind::ConfigOptions) {
         takeConfigOptions(update.configOptions);
         return;

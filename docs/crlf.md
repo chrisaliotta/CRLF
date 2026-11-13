@@ -27,7 +27,7 @@ project/                       a workspace
     scripts/                   the user's own scripts, shared by every workspace
     keys/                      API key files shared by every workspace
     rules/                     agent rules shared by every workspace
-    prices.json                prices and context windows by model, for the agents' usage line
+    prices.json                your own prices and context sizes by model, read over the agents' shipped list
 
 <install folder>\scripts\      shipped scripts, refreshed by each upgrade
 ```
@@ -141,7 +141,7 @@ Two application files ship with the editor.
 
 `application.crlf` as shipped (`resources/default.crlf` in this repository) has:
 
-- **Four agents**, Claude, GPT, Grok, and Local, each running the shipped `${programDir}/scripts/agent/crlf_agent.py`. Each has a `windows` command line that starts `python` and a `wsl` one that starts `python3`. Claude, GPT, and Grok read their key from `${appDir}/keys/anthropic`, `${appDir}/keys/openai`, and `${appDir}/keys/xai`; Local talks to Ollama and needs none. Each reads the workspace's rules and then the application's, and the price list `${appDir}/prices.json`, from which it reports the session's context use and estimated cost; see [agent-tools.md](agent-tools.md#usage-and-prices). An agent works once its key file exists. The model names are examples to replace with the ones the account offers.
+- **Four agents**, Claude, GPT, Grok, and Local, each running the shipped `${programDir}/scripts/agent/crlf_agent.py`. Each has a `windows` command line that starts `python` and a `wsl` one that starts `python3`. Claude, GPT, and Grok read their key from `${appDir}/keys/anthropic`, `${appDir}/keys/openai`, and `${appDir}/keys/xai`; Local talks to Ollama and needs none. Each reads the workspace's rules and then the application's, and `${appDir}/prices.json`. It reports the session's context use and estimated cost from the list of models that ships beside the script, `models.json`, with `prices.json` read over it for the figures you want to differ; see [agent-tools.md](agent-tools.md#usage-and-prices). The shipped `prices.json` lists no models. An agent works once its key file exists. The model names are examples to replace with the ones the account offers.
 - **`syntax` and `autocomplete`**, running the shipped `syntax.sh` and `autocomplete.sh` with `bash`. The scripts are bash scripts, so only a `wsl` command line is given: they run for a project inside a WSL distro, and in a Windows folder neither starts. Neither lists its scripts under `watch`, which does not take variables; Reload on the Processes page reads an edited script again.
 - **No menu commands.**
 

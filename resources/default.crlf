@@ -30,8 +30,8 @@
     {
       "name": "Grok",
       "command": {
-        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\"",
-        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\""
+        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4.7 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\"",
+        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4.7 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\""
       }
     },
     {

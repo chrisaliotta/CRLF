@@ -373,10 +373,10 @@ install(FILES "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.py"
     DESTINATION scripts)
-# The reference agent: its modules and the tools package.
+# The reference agent: its modules, the tools package, and models.json.
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/scripts/agent/"
     DESTINATION scripts/agent
-    FILES_MATCHING PATTERN "*.py"
+    FILES_MATCHING PATTERN "*.py" PATTERN "*.json"
     PATTERN "__pycache__" EXCLUDE)
 
 qt_generate_deploy_app_script(

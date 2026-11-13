@@ -3,7 +3,10 @@
 // link reaches the agent, the agent's fs/read_text_file comes back to the
 // editor with an editor path and takes the editor's reply, an approved
 // terminal/create runs a command whose exit code and output the agent reads
-// back, and the turn ends with the agent's stop reason. A second case sets
+// back, and the turn ends with the agent's stop reason. The agent's
+// `_crlf/usage`, which is how it reports usage for a model whose context
+// size it does not know, reaches the panel as a usage update with no size.
+// A second case sets
 // one of the session's config options. The agent is
 // tests/fake_acp_agent.py, so the test needs python on PATH.
 
@@ -67,12 +70,19 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(ended.size(), 1, 30000);
         QCOMPARE(ended.first().at(0).toString(), QStringLiteral("end_turn"));
         QString text;
+        QList<AgentUsage> usage;
         for (const QList<QVariant> &arguments : std::as_const(updated)) {
             const AgentUpdate update = arguments.at(0).value<AgentUpdate>();
             if (update.kind == AgentUpdateKind::AgentText)
                 text += update.text;
+            if (update.kind == AgentUpdateKind::Usage)
+                usage.append(update.usage);
         }
         QCOMPARE(text, QStringLiteral("content=in the buffer|output=hello|exit=0"));
+        QCOMPARE(usage.size(), 1);
+        QCOMPARE(usage.first().used, qint64(84000));
+        QCOMPARE(usage.first().size, qint64(0));
+        QCOMPARE(usage.first().inputTokens, qint64(90000));
         session.stop();
     }
 

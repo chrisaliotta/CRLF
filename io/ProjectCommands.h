@@ -135,8 +135,9 @@ constexpr char kBlankFile[] = "blank.crlf";
 // The defaults a user had beside the program before the application folder.
 constexpr char kPreviousFile[] = "previous.crlf";
 // Shipped beside the program and kept in the application's .crlf folder:
-// prices and context windows by model, which the shipped agents read to
-// report what a session has used. See scripts/agent/usage.py.
+// the user's own prices and context sizes by model, which the shipped
+// agents read over their shipped list to report what a session has used.
+// See scripts/agent/usage.py.
 constexpr char kPricesFile[] = "prices.json";
 
 // The settings of one project: every <name>.crlf file in the project root,

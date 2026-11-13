@@ -34,10 +34,11 @@ embeddings.py.
 or the tokens the conversation may reach before old tool results are
 shortened. See history.py.
 
---prices names a file of prices and context windows by model. With it the
-session reports what it has used after each reply: the context in use
-against its size, and an estimated cost. --context-window gives the size
-for a model the file does not list. See usage.py.
+After each reply the session reports what it has used: the context in use
+against its size, and an estimated cost. Sizes and prices come from
+models.json beside this file, and --prices names a file of the user's own
+that is read over it. --context-window gives the size of a model neither
+lists. See usage.py.
 """
 
 import argparse
@@ -255,13 +256,15 @@ class Session:
 
     def context_size(self):
         """What the context is measured against, in tokens: the Context
-        budget when one is set, otherwise the model's window, from
-        --context-window or the prices file. None when neither is known."""
+        budget when one is set, otherwise --context-window, otherwise what
+        the model lists. Of a listed model's two sizes, the most input it
+        accepts comes before its whole window, because that is the limit a
+        long conversation reaches first. None when no size is known."""
         budget = self.settings[history.OPTION_ID]
         if budget != history.UNLIMITED:
             return int(budget)
-        entry = self.prices.entry(self.settings["model"])
-        return self.agent.options.context_window or (entry or {}).get("context")
+        entry = self.prices.entry(self.settings["model"]) or {}
+        return self.agent.options.context_window or entry.get("max_input") or entry.get("context")
 
     def account(self, reply, estimated):
         """Adds one reply to the session's totals and tells the client.
@@ -275,19 +278,25 @@ class Session:
         self.report_usage()
 
     def report_usage(self):
-        """ACP's usage_update: the context in use against its size, and the
-        session's cost when the model is priced. The update has no way to
-        say the size is unknown, so without one nothing is sent. The
-        session's token totals ride in _meta, which other clients ignore."""
-        size = self.context_size()
-        if self.context_used is None or not size:
+        """Tells the client what the session has used: the context in use,
+        and the session's cost when the model is priced. The session's
+        token totals ride in _meta, which other clients ignore.
+
+        With a size it is ACP's usage_update. That update has no way to say
+        the size is unknown, so for a model no list knows the same figures
+        go without one as _crlf/usage, which only CRLF reads."""
+        if self.context_used is None:
             return
-        update = {"sessionUpdate": "usage_update", "used": self.context_used, "size": size,
+        report = {"used": self.context_used,
                   "_meta": {"crlf": {"inputTokens": self.totals.input, "cachedTokens": self.totals.cached,
                                      "outputTokens": self.totals.output}}}
         if usage.priced(self.prices.entry(self.settings["model"])):
-            update["cost"] = {"amount": round(self.totals.cost, 6), "currency": self.prices.currency}
-        self.update(update)
+            report["cost"] = {"amount": round(self.totals.cost, 6), "currency": self.prices.currency}
+        size = self.context_size()
+        if size:
+            self.update(dict(report, sessionUpdate="usage_update", size=size))
+        elif self.agent.crlf_client:
+            self.agent.connection.notify("_crlf/usage", {"sessionId": self.id, "update": report})
 
     # The context the tools call.
 
@@ -550,11 +559,10 @@ def main():
                         help="Where the Context option starts: unlimited, or the tokens the conversation may "
                              "reach before old tool results are shortened")
     parser.add_argument("--prices", metavar="FILE",
-                        help="JSON file of prices and context windows by model, for the client's usage line. "
-                             "Without it no cost is reported, and a percentage needs --context-window or a "
-                             "context budget. See usage.py")
+                        help="JSON file of the user's own prices and context sizes by model, read over the "
+                             "shipped models.json, for the client's usage line. See usage.py")
     parser.add_argument("--context-window", type=int, metavar="TOKENS",
-                        help="The model's context window, when the prices file does not list it")
+                        help="The model's context size, for a model no list has. It comes before a listed size")
     options = parser.parse_args()
     options.rules = options.rules or [DEFAULT_RULES]
     if options.index == "vector" and not options.embed_provider:

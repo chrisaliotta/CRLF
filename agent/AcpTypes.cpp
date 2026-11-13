@@ -30,6 +30,23 @@ QString toolText(const QJsonArray &content)
 
 } // namespace
 
+AgentUsage readUsage(const QJsonObject &update)
+{
+    AgentUsage usage;
+    usage.used = update.value(QLatin1String("used")).toInteger();
+    usage.size = update.value(QLatin1String("size")).toInteger();
+    const QJsonValue cost = update.value(QLatin1String("cost"));
+    usage.hasCost = cost.isObject();
+    usage.cost = cost.toObject().value(QLatin1String("amount")).toDouble();
+    usage.currency = cost.toObject().value(QLatin1String("currency")).toString();
+    const QJsonValue totals = update.value(QLatin1String("_meta")).toObject().value(QLatin1String("crlf"));
+    usage.hasTotals = totals.isObject();
+    usage.inputTokens = totals.toObject().value(QLatin1String("inputTokens")).toInteger();
+    usage.cachedTokens = totals.toObject().value(QLatin1String("cachedTokens")).toInteger();
+    usage.outputTokens = totals.toObject().value(QLatin1String("outputTokens")).toInteger();
+    return usage;
+}
+
 AgentUpdate readUpdate(const QJsonObject &update)
 {
     AgentUpdate result;
@@ -68,18 +85,7 @@ AgentUpdate readUpdate(const QJsonObject &update)
         result.configOptions = readConfigOptions(update.value(QLatin1String("configOptions")).toArray());
     } else if (kind == QLatin1String("usage_update")) {
         result.kind = AgentUpdateKind::Usage;
-        AgentUsage &usage = result.usage;
-        usage.used = update.value(QLatin1String("used")).toInteger();
-        usage.size = update.value(QLatin1String("size")).toInteger();
-        const QJsonValue cost = update.value(QLatin1String("cost"));
-        usage.hasCost = cost.isObject();
-        usage.cost = cost.toObject().value(QLatin1String("amount")).toDouble();
-        usage.currency = cost.toObject().value(QLatin1String("currency")).toString();
-        const QJsonValue totals = update.value(QLatin1String("_meta")).toObject().value(QLatin1String("crlf"));
-        usage.hasTotals = totals.isObject();
-        usage.inputTokens = totals.toObject().value(QLatin1String("inputTokens")).toInteger();
-        usage.cachedTokens = totals.toObject().value(QLatin1String("cachedTokens")).toInteger();
-        usage.outputTokens = totals.toObject().value(QLatin1String("outputTokens")).toInteger();
+        result.usage = readUsage(update);
     }
     return result;
 }
@@ -115,12 +121,17 @@ QString money(double amount, const QString &currency)
 
 QString usageLine(const AgentUsage &usage)
 {
-    const int percent = usage.size > 0 ? qRound(usage.used * 100.0 / double(usage.size)) : 0;
-    QString line = QStringLiteral("Context %1% (%2 of %3)")
-                       .arg(percent)
-                       .arg(tokenCount(usage.used), tokenCount(usage.size));
-    if (percent >= kNearlyFullPercent)
-        line += QStringLiteral(", nearly full");
+    QString line;
+    if (usage.size > 0) {
+        const int percent = qRound(usage.used * 100.0 / double(usage.size));
+        line = QStringLiteral("Context %1% (%2 of %3)")
+                   .arg(percent)
+                   .arg(tokenCount(usage.used), tokenCount(usage.size));
+        if (percent >= kNearlyFullPercent)
+            line += QStringLiteral(", nearly full");
+    } else {
+        line = QStringLiteral("Context %1 tokens").arg(tokenCount(usage.used));
+    }
     if (usage.hasTotals) {
         line += QStringLiteral(" \u00B7 session %1 in").arg(tokenCount(usage.inputTokens));
         if (usage.cachedTokens > 0)

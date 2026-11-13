@@ -135,7 +135,12 @@ def chat_usage(prompt, cached, completion):
 
 
 def usage_updates(updates):
-    return [update for update in updates if update["sessionUpdate"] == "usage_update"]
+    return [update for update in updates if update.get("sessionUpdate") == "usage_update"]
+
+
+def unsized_usage(updates):
+    """The _crlf/usage reports among what a call returned. Only they have no sessionUpdate."""
+    return [update for update in updates if "sessionUpdate" not in update]
 
 
 class TemporaryFolderTest(unittest.TestCase):
@@ -530,27 +535,30 @@ class HistoryTests(unittest.TestCase):
 
 
 class UsageTests(TemporaryFolderTest):
+    def lists(self, shipped, own=None):
+        """The prices of a shipped list and, over it, a user's file."""
+        write(self.folder, "models.json", json.dumps(shipped))
+        if own is None:
+            return usage.load(None, os.path.join(self.folder, "models.json"))
+        write(self.folder, "prices.json", json.dumps(own))
+        return usage.load(os.path.join(self.folder, "prices.json"), os.path.join(self.folder, "models.json"))
+
     def test_prices_match_a_model_and_its_snapshots(self):
-        """No provider reports a price, so the cost comes from a file the
-        user keeps, by model id. Providers serve one model under several
-        ids, such as a dated snapshot, and nobody lists them all: an id uses
-        the longest listed name it starts with. A model that is not listed
-        has no price, and a missing file prices nothing, so the client
-        shows no cost instead of a wrong one. Cached input is cheaper and
-        cache writes dearer than fresh input, and each is charged at its own
-        price."""
-        path = os.path.join(self.folder, "prices.json")
-        write(self.folder, "prices.json", json.dumps({"currency": "EUR", "models": {
+        """No provider reports a price, so the cost comes from a list of
+        models, by model id. Providers serve one model under several ids,
+        such as a dated snapshot, and nobody lists them all: an id uses the
+        longest listed name it starts with. A model that is not listed has
+        no price, so the client shows no cost instead of a wrong one. Cached
+        input is cheaper and cache writes dearer than fresh input, and each
+        is charged at its own price."""
+        prices = self.lists({"currency": "EUR", "models": {
             "gpt-5": {"input": 3.0, "cached_input": 0.3, "cache_write": 3.75, "output": 15.0, "context": 400000},
-            "gpt-5-mini": {"input": 0.25, "output": 2.0}}}))
-        prices = usage.load(path)
+            "gpt-5-mini": {"input": 0.25, "output": 2.0}}})
         self.assertEqual(prices.currency, "EUR")
         self.assertEqual(prices.entry("gpt-5")["context"], 400000)
         self.assertEqual(prices.entry("gpt-5-2025-08-07")["input"], 3.0)
         self.assertEqual(prices.entry("gpt-5-mini-2025-08-07")["input"], 0.25)
         self.assertIsNone(prices.entry("gpt-4.1"))
-        self.assertIsNone(usage.load(os.path.join(self.folder, "none.json")).entry("gpt-5"))
-        self.assertIsNone(usage.load(None).entry("gpt-5"))
 
         # 100 fresh, 600 read from the cache, 300 written to it, and 50 out.
         reply = providers.token_usage(1000, 600, 300, 50)
@@ -558,6 +566,80 @@ class UsageTests(TemporaryFolderTest):
                                (100 * 3.0 + 600 * 0.3 + 300 * 3.75 + 50 * 15.0) / 1000000)
         # With no price of their own, cached tokens cost what fresh ones do.
         self.assertAlmostEqual(usage.cost(reply, prices.entry("gpt-5-mini")), (1000 * 0.25 + 50 * 2.0) / 1000000)
+
+    def test_the_users_file_is_read_over_the_shipped_list(self):
+        """The shipped list is replaced by every upgrade and the user's file
+        never is, so the user's file holds only what the user wants to
+        differ. One field set there changes that field and keeps the rest of
+        the shipped entry, so correcting a price does not lose the model's
+        size; a model only the user lists, such as a local one, is added.
+        With no file of the user's the shipped list stands alone. Shipped
+        prices are dropped when the user's file is in another currency,
+        because a cost summed from two currencies would be wrong, while the
+        sizes, which have no currency, stay."""
+        shipped = {"currency": "USD", "models": {
+            "big": {"input": 2.0, "output": 10.0, "context": 1000000, "max_input": 900000},
+            "other": {"input": 1.0, "output": 4.0, "context": 200000}}}
+        prices = self.lists(shipped, {"currency": "USD", "models": {
+            "big": {"input": 3.0}, "local": {"context": 32000}}})
+        self.assertEqual(prices.entry("big"), {"input": 3.0, "output": 10.0, "context": 1000000, "max_input": 900000})
+        self.assertEqual(prices.entry("other")["input"], 1.0)
+        self.assertEqual(prices.entry("local"), {"context": 32000})
+
+        self.assertEqual(self.lists(shipped).entry("big")["input"], 2.0)
+        self.assertEqual(usage.load(os.path.join(self.folder, "none.json"),
+                                    os.path.join(self.folder, "models.json")).entry("big")["input"], 2.0)
+
+        euros = self.lists(shipped, {"currency": "EUR", "models": {"big": {"input": 3.0, "output": 9.0}}})
+        self.assertEqual(euros.currency, "EUR")
+        self.assertEqual(euros.entry("big"), {"input": 3.0, "output": 9.0, "context": 1000000, "max_input": 900000})
+        self.assertEqual(euros.entry("other"), {"context": 200000})
+        self.assertFalse(usage.priced(euros.entry("other")))
+
+    def test_a_long_prompt_is_priced_at_the_long_prices(self):
+        """Some providers charge more for a request whose input passes a
+        threshold, and charge the whole request at the higher prices, not
+        only the tokens past it. `long` carries the threshold and those
+        prices. A request at the threshold is still ordinary; one token over
+        is long. A price `long` does not give stays the ordinary one, which
+        is how a provider that raises only input and output is listed."""
+        prices = self.lists({"currency": "USD", "models": {
+            "full": {"input": 10.0, "cached_input": 1.0, "cache_write": 12.5, "output": 50.0,
+                     "long": {"over": 272000, "input": 20.0, "cached_input": 2.0, "cache_write": 25.0,
+                              "output": 75.0}},
+            "partial": {"input": 5.0, "cached_input": 0.5, "output": 30.0,
+                        "long": {"over": 272000, "input": 10.0, "output": 45.0}}}})
+        # 71,000 fresh, 200,000 read from the cache, 1,000 written to it, and 1,000 out.
+        under = providers.token_usage(272000, 200000, 1000, 1000)
+        self.assertAlmostEqual(usage.cost(under, prices.entry("full")),
+                               (71000 * 10.0 + 200000 * 1.0 + 1000 * 12.5 + 1000 * 50.0) / 1000000)
+        over = providers.token_usage(272001, 200000, 1000, 1000)
+        self.assertAlmostEqual(usage.cost(over, prices.entry("full")),
+                               (71001 * 20.0 + 200000 * 2.0 + 1000 * 25.0 + 1000 * 75.0) / 1000000)
+        # Cache writes have no price here at all, so they cost what input does: the long input price.
+        self.assertAlmostEqual(usage.cost(over, prices.entry("partial")),
+                               (71001 * 10.0 + 200000 * 0.5 + 1000 * 10.0 + 1000 * 45.0) / 1000000)
+
+    def test_the_shipped_list_is_consistent(self):
+        """models.json is written by hand from the providers' pages, and a
+        slip in it shows as a wrong percentage or cost, not as an error.
+        This holds what must be true of every entry whatever the figures:
+        the list parses, every model has a size, the input limit is not
+        over the window, a long-prompt threshold is under the size it could
+        be reached within, and the long prices are not under the ordinary
+        ones. It cannot tell whether a figure matches the provider's page."""
+        prices = usage.load(None)
+        self.assertEqual(prices.currency, "USD")
+        self.assertGreater(len(prices.models), 0)
+        for name, entry in prices.models.items():
+            with self.subTest(model=name):
+                self.assertTrue(usage.priced(entry))
+                self.assertLessEqual(entry.get("max_input", 0), entry["context"])
+                if "long" in entry:
+                    self.assertLess(entry["long"]["over"], entry.get("max_input", entry["context"]))
+                    for price in ("input", "cached_input", "cache_write", "output"):
+                        if price in entry["long"]:
+                            self.assertGreaterEqual(entry["long"][price], entry[price])
 
 
 class AgentTests(TemporaryFolderTest):
@@ -580,8 +662,9 @@ class AgentTests(TemporaryFolderTest):
         self.requests = []
         self.next_id = 0
 
-    def start(self, *flags):
-        """Starts the agent with these flags and returns the reply to session/new."""
+    def start(self, *flags, client="CRLF"):
+        """Starts the agent with these flags, for a client of this name, and
+        returns the reply to session/new."""
         self.agent = subprocess.Popen(
             [sys.executable, os.path.join(AGENT_DIRECTORY, "crlf_agent.py"), "--provider", "openai-compatible",
              "--base-url", self.fake.url, "--model", "small"] + list(flags),
@@ -591,7 +674,7 @@ class AgentTests(TemporaryFolderTest):
         self.log = queue.Queue()
         threading.Thread(target=lambda: [self.log.put(line.decode()) for line in self.agent.stderr],
                          daemon=True).start()
-        self.call("initialize", {"protocolVersion": 1, "clientInfo": {"name": "CRLF"}})
+        self.call("initialize", {"protocolVersion": 1, "clientInfo": {"name": client}})
         created, _ = self.call("session/new", {"cwd": self.folder, "mcpServers": []})
         self.session = created["result"].get("sessionId") if "result" in created else None
         return created
@@ -717,15 +800,43 @@ class AgentTests(TemporaryFolderTest):
                                {"sessionId": self.session, "configId": history.OPTION_ID, "value": "50000"})
         self.assertEqual([(update["used"], update["size"]) for update in usage_updates(updates)], [(3200, 50000)])
 
-    def test_usage_is_not_reported_without_a_size(self):
+    def test_the_size_is_the_most_input_the_model_accepts(self):
+        """The percentage says how near the conversation is to being
+        refused. A model's window also holds its reply, so the input limit
+        is reached first, and the size is `max_input` when the model lists
+        one and its `context` when it does not. --context-window is the
+        user's word for this run and comes before either."""
+        write(self.folder, "prices.json", json.dumps({"currency": "USD", "models": {
+            "small": {"context": 1050000, "max_input": 922000}, "large": {"context": 128000}}}))
+        prices = os.path.join(self.folder, "prices.json")
+        self.start("--prices", prices)
+        self.replies.append([{"choices": [{"delta": {"content": "done"}}]}] + chat_usage(1000, 0, 100))
+        _, updates = self.prompt("hello")
+        self.assertEqual([update["size"] for update in usage_updates(updates)], [922000])
+        _, updates = self.call("session/set_config_option",
+                               {"sessionId": self.session, "configId": "model", "value": "large"})
+        self.assertEqual([update["size"] for update in usage_updates(updates)], [128000])
+        self.stop()
+
+        self.start("--prices", prices, "--context-window", "64000")
+        self.replies.append([{"choices": [{"delta": {"content": "done"}}]}] + chat_usage(1000, 0, 100))
+        _, updates = self.prompt("hello")
+        self.assertEqual([update["size"] for update in usage_updates(updates)], [64000])
+
+    def test_usage_without_a_size_goes_to_crlf_alone(self):
         """usage_update has no way to say the context's size is unknown, and
-        a percentage of a guess would mislead. With no prices file, no
-        --context-window, and no Context budget, the agent sends nothing,
-        and the client shows no line. A budget set later gives it a size."""
+        a percentage of a guess would mislead. For a model no list has, with
+        no --context-window and no Context budget, the agent sends no
+        usage_update. CRLF is told the tokens and totals anyway, as
+        _crlf/usage, so its line shows them without a percentage; another
+        client, which would not know the method, is sent nothing. A budget
+        set later gives the context a size, and usage_update takes over."""
         self.start()
         self.replies.append([{"choices": [{"delta": {"content": "done"}}]}] + chat_usage(1000, 0, 100))
         _, updates = self.prompt("hello")
         self.assertEqual(usage_updates(updates), [])
+        self.assertEqual(unsized_usage(updates), [
+            {"used": 1100, "_meta": {"crlf": {"inputTokens": 1000, "cachedTokens": 0, "outputTokens": 100}}}])
 
         _, updates = self.call("session/set_config_option",
                                {"sessionId": self.session, "configId": history.OPTION_ID, "value": "50000"})
@@ -733,6 +844,13 @@ class AgentTests(TemporaryFolderTest):
         self.assertEqual([(update["used"], update["size"]) for update in reported], [(1100, 50000)])
         # The model has no listed price, so no cost is claimed.
         self.assertNotIn("cost", reported[0])
+        self.assertEqual(unsized_usage(updates), [])
+        self.stop()
+
+        self.start(client="Another editor")
+        self.replies.append([{"choices": [{"delta": {"content": "done"}}]}] + chat_usage(1000, 0, 100))
+        _, updates = self.prompt("hello")
+        self.assertEqual([update["sessionUpdate"] for update in updates], ["agent_message_chunk"])
 
     def test_the_budget_counts_what_the_provider_counted(self):
         """The context budget is held against the tokens the provider counts,

@@ -22,12 +22,14 @@ enum class AgentUpdateKind {
     Ignored
 };
 
-// A `usage_update`: how full the session's context is, and what the session
-// has cost so far when the agent can say. The editor shows it and does not
-// work any of it out.
+// How full the session's context is, and what the session has cost so far
+// when the agent can say. The editor shows it and does not work any of it
+// out. It arrives as ACP's `usage_update`, or as `_crlf/usage` when the agent
+// does not know the size of the model's context.
 struct AgentUsage
 {
-    // Tokens in the context now, and the size it is measured against.
+    // Tokens in the context now, and the size it is measured against: 0 when
+    // the agent does not know it.
     qint64 used = 0;
     qint64 size = 0;
     // The session's cost so far, in `currency` (an ISO 4217 code).
@@ -42,8 +44,12 @@ struct AgentUsage
     qint64 outputTokens = 0;
 };
 
+// `update` is the `update` object of a `usage_update` or a `_crlf/usage`.
+AgentUsage readUsage(const QJsonObject &update);
+
 // The usage as one line, with only the parts the agent sent:
 // "Context 42% (84k of 200k) · session 312k in (250k cached), 18k out · about $0.42".
+// Without a size it starts "Context 84k tokens".
 QString usageLine(const AgentUsage &usage);
 
 // One value a select option can take. `group` is the label of the group the

@@ -138,6 +138,21 @@ private slots:
         QCOMPARE(usageLine(other), QStringLiteral("Context 42% (84k of 200k) \u00B7 less than 0.01 EUR"));
     }
 
+    // An agent that does not know the size of its model's context cannot
+    // send a usage_update, which requires one, and sends `_crlf/usage` with
+    // the same fields less the size. The line then shows the tokens in the
+    // context and no percentage, because a percentage of an unknown size
+    // would be made up; the totals and the cost are shown as before.
+    void readsUsageWithoutASize()
+    {
+        const AgentUsage usage = readUsage(json(R"({"used":84000,"cost":{"amount":0.4235,"currency":"USD"},
+            "_meta":{"crlf":{"inputTokens":312000,"cachedTokens":0,"outputTokens":18400}}})"));
+        QCOMPARE(usage.used, qint64(84000));
+        QCOMPARE(usage.size, qint64(0));
+        QCOMPARE(usageLine(usage),
+                 QStringLiteral("Context 84k tokens \u00B7 session 312k in, 18k out \u00B7 about $0.42"));
+    }
+
     // The panel draws one control per option from this list and knows
     // nothing else about it: a flat select, a grouped select flattened in
     // order, and a boolean. A type the editor cannot draw is left out, and

@@ -2,7 +2,8 @@
 
 One prompt reads the attached file through the editor, runs `echo hello`
 through terminal/create, and reports both in a message chunk. The session
-offers one setting, `model`, with the values small and large.
+offers one setting, `model`, with the values small and large. Before the
+turn ends it reports its usage without a context size, as _crlf/usage.
 """
 
 import json
@@ -70,4 +71,6 @@ while True:
         send({"method": "session/update", "params": {"sessionId": "s1", "update": {
             "sessionUpdate": "agent_message_chunk",
             "content": {"type": "text", "text": "content=%s|output=%s|exit=%s" % (content, output, status["exitCode"])}}}})
+        send({"method": "_crlf/usage", "params": {"sessionId": "s1", "update": {
+            "used": 84000, "_meta": {"crlf": {"inputTokens": 90000, "cachedTokens": 0, "outputTokens": 2000}}}}})
         send({"id": message["id"], "result": {"stopReason": "end_turn"}})

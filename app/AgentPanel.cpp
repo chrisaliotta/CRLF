@@ -118,7 +118,9 @@ AgentPanel::AgentPanel(QWidget *parent)
     m_usage->setWordWrap(true);
     m_usage->setToolTip(QStringLiteral(
         "How full the agent's context is, the tokens this session has used, and what they cost at the agent's "
-        "price list. The cost is an estimate."));
+        "price list. The percentage is measured against the Context budget when one is set, and otherwise "
+        "against the most input the model accepts. A model whose size the agent does not know shows its "
+        "tokens without a percentage. The cost is an estimate."));
     m_usage->hide();
 
     m_transcript = new QTextBrowser(this);
