@@ -8,6 +8,8 @@
 #include <QList>
 #include <QObject>
 
+#include <functional>
+
 class JsonLineProcess;
 class ProcessOrchestrator;
 
@@ -40,6 +42,7 @@ public:
     explicit CompletionSession(QObject *parent = nullptr);
 
     void setOrchestrator(ProcessOrchestrator *orchestrator);
+    void setLaunchAllowed(std::function<bool(const QString &id)> allowed);
 
     // Replaces a session already running for a different command. `restart`
     // replaces it even when the command is the same, so an edited script is

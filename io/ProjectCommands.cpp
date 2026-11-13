@@ -448,6 +448,27 @@ QString activeApplicationFile(const QString &applicationFolder, const QString &n
     return folder.filePath(named ? name : QString::fromLatin1(kApplicationFile));
 }
 
+// A name in the workspace merge is that file's entry: workspace files are
+// merged first, and the first definition of a name wins. syntax and
+// autocomplete are one value each, so the key's presence is enough.
+static void markWorkspaceOrigin(Project &project, const QJsonObject &workspace)
+{
+    QSet<QString> commands;
+    for (const QJsonValue &value : workspace.value(QLatin1String("commands")).toArray())
+        commands.insert(value.toObject().value(QLatin1String("name")).toString());
+    for (ProjectCommand &command : project.commands)
+        command.workspaceOrigin = commands.contains(command.name);
+
+    QSet<QString> agents;
+    for (const QJsonValue &value : workspace.value(QLatin1String("agents")).toArray())
+        agents.insert(value.toObject().value(QLatin1String("name")).toString());
+    for (AgentSettings &agent : project.agents)
+        agent.workspaceOrigin = agents.contains(agent.name);
+
+    project.syntax.workspaceOrigin = workspace.contains(QLatin1String("syntax"));
+    project.autocomplete.workspaceOrigin = workspace.contains(QLatin1String("autocomplete"));
+}
+
 QString seedApplicationFolder(const QString &applicationFolder, const QString &programFolder)
 {
     const QDir folder(applicationFolder);
@@ -530,6 +551,7 @@ Project projectFor(const QString &start, const QString &applicationFile)
     readAgents(project, root.value(QLatin1String("agents")).toArray(), directory);
     project.unlimitedLog = root.value(QLatin1String("unlimitedLog")).toBool(false);
     readGit(project.git, root.value(QLatin1String("git")));
+    markWorkspaceOrigin(project, mergeProjects(workspace, {}));
     return project;
 }
 

@@ -17,6 +17,8 @@ Actions::Actions(QObject *parent)
     openWslFolder = make(QStringLiteral("Open &WSL Folder..."), QKeySequence());
     copyApplicationFiles = make(QStringLiteral("Copy Application Files to Wor&kspace..."), QKeySequence());
     copyApplicationFiles->setEnabled(false);
+    workspaceScripts = make(QStringLiteral("Workspace &Scripts..."), QKeySequence());
+    workspaceScripts->setEnabled(false);
     save = make(QStringLiteral("&Save"), QKeySequence::Save);
     saveAs = make(QStringLiteral("Save &As..."), QKeySequence::SaveAs);
     persistEdits = make(QStringLiteral("&Remember Unsaved Edits"), QKeySequence());

@@ -62,6 +62,10 @@ set(APP_SOURCES
     app/Actions.cpp
     app/FindBar.h
     app/FindBar.cpp
+    app/TrustBar.h
+    app/TrustBar.cpp
+    app/ProjectTrustGate.h
+    app/ProjectTrustGate.cpp
     app/DocumentTabBar.h
     app/DocumentTabBar.cpp
     app/ExplorerPanel.h
@@ -200,6 +204,8 @@ set(IO_SOURCES
     io/SessionStore.cpp
     io/ProjectCommands.h
     io/ProjectCommands.cpp
+    io/ProjectTrust.h
+    io/ProjectTrust.cpp
     io/ProjectMerge.h
     io/ProjectMerge.cpp
     io/WorkspaceSeed.h
@@ -263,7 +269,7 @@ if(CRLF_BUILD_TESTS)
     # The .crlf files: merging, discovery, saving, the command variables, and
     # the copy into a workspace. No widgets; Gui is for QKeySequence.
     add_executable(ProjectTests tests/ProjectTests.cpp io/ProjectCommands.cpp io/ProjectMerge.cpp
-        io/WorkspaceSeed.cpp io/CommandVariables.cpp io/WslPath.cpp agent/AgentPolicy.cpp)
+        io/ProjectTrust.cpp io/WorkspaceSeed.cpp io/CommandVariables.cpp io/WslPath.cpp agent/AgentPolicy.cpp)
     target_include_directories(ProjectTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(ProjectTests PRIVATE
         SHIPPED_APPLICATION_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/default.crlf")

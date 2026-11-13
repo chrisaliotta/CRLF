@@ -172,6 +172,12 @@ void SyntaxRunner::launch(const SyntaxRequest &request)
     running->errors.clear();
     running->input = request.text.toUtf8();
 
+    if (m_allowed && !m_allowed(QStringLiteral("syntax"))) {
+        if (m_orchestrator != nullptr)
+            m_orchestrator->release(QStringLiteral("syntax:%1").arg(request.editorId), running->token);
+        return;
+    }
+
     const CommandVariables vars = launchVariables(request.variables, request.workingDirectory);
     running->process->setProcessChannelMode(QProcess::SeparateChannels);
     running->launch.startShell(running->process, request.workingDirectory, expandCommand(request.command, vars));

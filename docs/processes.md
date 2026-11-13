@@ -48,7 +48,7 @@ Cancel and Reload act on the selected Active row. `MainWindow` routes them by ke
 
 Reload starts the command string again, so an edited script is read from disk. Nothing watches the script.
 
-Restart Services, on Active, needs no selection. It starts autocomplete again and checks every open editor, for whichever of the two the project enables. Those are the processes that run without being chosen from a menu, so this brings them back after a Cancel. Menu commands are left alone, and so is the agent, because a new session ends the conversation.
+Restart Services, on Active, needs no selection. It starts autocomplete again and checks every open editor, for whichever of the two the project enables. Those are the processes that run without being chosen from a menu, so this brings them back after a Cancel. Menu commands are left alone, and so is the agent, because a new session ends the conversation. A project script or command line that is not the pin last trusted does not start; the trust bar is what allows it. See [crlf.md](crlf.md#workspace-trust).
 
 `ProcessLaunch` is the one place a child process is started: `cmd.exe`, `bash` inside a distro, or a program with plain arguments, each inside a kill-on-close job. `CommandRunner`, `SyntaxRunner`, `JsonLineProcess`, `AgentTerminals`, and `GitClient` each hold one per process. `JsonLineProcess` is the long-lived process that reads and writes one JSON object per line; the autocomplete session and the agent are each one. Stopping a process closes the kill-on-close job and calls `QProcess::kill()` on the orchestrator thread. It does not wait. The WSL process-group kill is started there and not waited on. A replacement check starts from the `finished` handler on that same thread.
 
@@ -67,6 +67,7 @@ Restart Services, on Active, needs no selection. It starts autocomplete again an
 | Explorer listing | Pool. The first read of a folder is a History row; reading it again is not, because that repeats on its own | The model update: the first read fills the folder, a later read changes only the rows that differ |
 | Explorer changes on disk | `FolderWatch`: one Windows directory handle on the scoped folder, reporting its whole subtree to the UI thread. Each folder it names is read again on the pool 200ms later. A WSL share reports nothing, so its listed folders are read again every 3 seconds while the explorer is showing and the window is in front | Gathering the folder names, and the model update |
 | Open file, restore session, `projectFor` | Pool | Applying the text or the project |
+| Workspace trust pin | Pool. The directory walk and the file hashes. `allows()` only reads the result | The bar, and starting or holding syntax, autocomplete, agents, and shortcuts |
 | First-run copy of `application.crlf`, the legacy `.crlf` rename | Pool, in the same task as `projectFor` | Retargeting an open tab and the status bar message |
 | Saving `groups` or `icons` into a workspace file, Copy Application Files to Workspace | Pool | The dialog, the status bar message, and the reload |
 | `WslPath::distros` and `home` | Orchestrator thread, before the folder picker reads the names | The dialogs |

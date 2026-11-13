@@ -18,6 +18,7 @@ struct Actions
     QAction *openWslFolder;
     // Enabled while the explorer is scoped to a folder, which is the target.
     QAction *copyApplicationFiles;
+    QAction *workspaceScripts;
     QAction *save;
     QAction *saveAs;
     QAction *persistEdits;

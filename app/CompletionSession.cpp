@@ -26,11 +26,19 @@ CompletionSession::CompletionSession(QObject *parent)
             [this] { emit failed(QStringLiteral("Couldn't read completion results.")); });
     connect(m_process, &JsonLineProcess::exited, this, [this] { emit failed(QStringLiteral("Completion stopped.")); });
     connect(m_process, &JsonLineProcess::failedToStart, this, &CompletionSession::failed);
+    connect(m_process, &JsonLineProcess::blocked, this, [this] {
+        emit failed(QStringLiteral("The scripts in this folder are not trusted."));
+    });
 }
 
 void CompletionSession::setOrchestrator(ProcessOrchestrator *orchestrator)
 {
     m_process->setOrchestrator(orchestrator);
+}
+
+void CompletionSession::setLaunchAllowed(std::function<bool(const QString &id)> allowed)
+{
+    m_process->setLaunchAllowed(std::move(allowed));
 }
 
 void CompletionSession::start(const QString &command, const QString &workingDirectory,
@@ -41,7 +49,7 @@ void CompletionSession::start(const QString &command, const QString &workingDire
         return;
     }
     m_editorPaths.clear();
-    m_process->start(command, workingDirectory, variables);
+    m_process->start(command, workingDirectory, variables, QStringLiteral("autocomplete"));
 }
 
 void CompletionSession::request(const CompletionRequest &request)

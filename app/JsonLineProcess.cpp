@@ -18,7 +18,7 @@ JsonLineProcess::~JsonLineProcess()
 }
 
 void JsonLineProcess::start(const QString &command, const QString &workingDirectory,
-                            const CommandVariables &variables)
+                            const CommandVariables &variables, const QString &trustId)
 {
     stopTree();
     m_command = command;
@@ -44,6 +44,13 @@ void JsonLineProcess::start(const QString &command, const QString &workingDirect
         });
     }
     m_pending.clear();
+
+    if (m_allowed && !trustId.isEmpty() && !m_allowed(trustId)) {
+        if (m_orchestrator != nullptr)
+            m_orchestrator->release(m_key, m_token);
+        emit blocked();
+        return;
+    }
 
     m_process->setProcessChannelMode(QProcess::SeparateChannels);
     m_launch.startShell(m_process, workingDirectory,

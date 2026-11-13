@@ -5,7 +5,10 @@
 #include "app/ProcessOrchestrator.h"
 #include "editor/CompletionItem.h"
 #include "editor/Diagnostic.h"
+#include "app/ProjectTrustGate.h"
 #include "io/CommandVariables.h"
+#include "io/ProjectCommands.h"
+#include "io/ProjectTrust.h"
 #include "io/SessionStore.h"
 #include "syntax/LanguageRegistry.h"
 #include "syntax/Theme.h"
@@ -45,6 +48,7 @@ class QTimer;
 class QToolButton;
 class TabWorkspace;
 class TitleBar;
+class TrustBar;
 
 class MainWindow : public QMainWindow
 {
@@ -103,6 +107,15 @@ private:
     void fillApplicationMenu(QMenu *menu);
     // File > Copy Application Files to Workspace, for the scoped folder.
     void copyApplicationFiles();
+    void showTrustReview();
+    void onTrustChecked(TrustFollowup followup);
+    void updateTrustBar();
+    // Syntax, autocomplete, agents, and command shortcuts. `pending` holds
+    // every one of them: the pin is still being read off the UI thread.
+    void applyExecutables(const Project &project, bool restart, bool pending);
+    // The agents the panel may start: gated ones are left out while this
+    // folder is not allowed to run them.
+    QList<AgentSettings> agentsForPanel(const Project &project) const;
     void finishStartup(const QStringList &paths);
     CommandVariables commandVariables() const;
     CommandVariables variablesFor(QWidget *page) const;
@@ -176,6 +189,12 @@ private:
     TabWorkspace *m_tabs = nullptr;
     ExplorerPanel *m_explorer = nullptr;
     FindBar *m_findBar = nullptr;
+    TrustBar *m_trustBar = nullptr;
+    ProjectTrustGate *m_trust = nullptr;
+    // The project whose pin is in flight or was just applied, and whether
+    // that load should restart services once the pin is known.
+    Project m_trustProject;
+    bool m_trustRestart = false;
     BottomPanel *m_bottom = nullptr;
     OutputPanel *m_output = nullptr;
     bool m_syncingTerminal = false;

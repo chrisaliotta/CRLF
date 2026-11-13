@@ -19,9 +19,11 @@
 #include "app/ProcessesPanel.h"
 #include "app/ProblemsPanel.h"
 #include "app/TabWorkspace.h"
+#include "app/ProjectTrustGate.h"
 #include "app/TemplateDialog.h"
 #include "app/TerminalPanel.h"
 #include "app/TitleBar.h"
+#include "app/TrustBar.h"
 #include "io/ProjectCommands.h"
 #include "io/WorkspaceSeed.h"
 #include "io/WslPath.h"
@@ -409,6 +411,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_tabs = new TabWorkspace(&m_registry, startupTheme, this);
     m_findBar = new FindBar(this);
+    m_trustBar = new TrustBar(this);
+    m_trust = new ProjectTrustGate(this);
     m_explorer = new ExplorerPanel(this);
     m_bottom = new BottomPanel(this);
     m_output = m_bottom->output();
@@ -434,6 +438,12 @@ MainWindow::MainWindow(QWidget *parent)
     m_runner->moveToThread(m_thread);
     m_gitClient->moveToThread(m_thread);
     m_agentSession->moveToThread(m_thread);
+    const auto allowed = [gate = m_trust](const QString &id) { return gate->allows(id); };
+    m_syntax->setLaunchAllowed(allowed);
+    m_completion->setLaunchAllowed(allowed);
+    m_runner->setLaunchAllowed(allowed);
+    m_agentSession->setLaunchAllowed(allowed);
+    m_trust->setOrchestrator(m_orchestrator);
     m_syntax->setOrchestrator(m_orchestrator);
     m_completion->setOrchestrator(m_orchestrator);
     m_runner->setOrchestrator(m_orchestrator);
@@ -572,6 +582,7 @@ MainWindow::MainWindow(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(m_findBar);
+    layout->addWidget(m_trustBar);
     layout->addWidget(vertical, 1);
     setCentralWidget(central);
 
@@ -833,6 +844,7 @@ void MainWindow::buildMenus()
     file->addAction(m_actions.openFolder);
     file->addAction(m_actions.openWslFolder);
     file->addAction(m_actions.copyApplicationFiles);
+    file->addAction(m_actions.workspaceScripts);
     file->addSeparator();
     file->addAction(m_actions.save);
     file->addAction(m_actions.saveAs);
@@ -954,6 +966,15 @@ void MainWindow::connectActions()
     });
     connect(m_actions.openWslFolder, &QAction::triggered, this, &MainWindow::chooseWslFolder);
     connect(m_actions.copyApplicationFiles, &QAction::triggered, this, &MainWindow::copyApplicationFiles);
+    connect(m_actions.workspaceScripts, &QAction::triggered, this, &MainWindow::showTrustReview);
+    connect(m_trustBar, &TrustBar::reviewRequested, this, &MainWindow::showTrustReview);
+    connect(m_trustBar, &TrustBar::trustRequested, this, [this] { m_trust->schedule(TrustFollowup::Trust); });
+    connect(m_trustBar, &TrustBar::restrictRequested, this, [this] {
+        m_trust->restrictFolder();
+        reloadCommands();
+    });
+    connect(m_trust, &ProjectTrustGate::blocked, this, &MainWindow::updateTrustBar, Qt::QueuedConnection);
+    connect(m_trust, &ProjectTrustGate::checked, this, &MainWindow::onTrustChecked);
     connect(m_actions.explorer, &QAction::toggled, this, [this](bool visible) {
         if (visible && m_explorer->rootPath().isEmpty() && !chooseExplorerFolder()) {
             m_actions.explorer->setChecked(false);
@@ -1810,6 +1831,12 @@ void MainWindow::applyFileState(const QString &path, const CompletionFileState &
 
 void MainWindow::runCommand(const QString &name)
 {
+    // allows() does not touch the disk. A pin that is still being read, or
+    // one that refuses this command, opens the review once that read ends.
+    if (!m_trust->allows(QStringLiteral("command:") + name)) {
+        m_trust->schedule(TrustFollowup::Review);
+        return;
+    }
     if (m_editorCommands.contains(name) && m_tabs->currentEditor() != nullptr)
         m_output->allowReveal();
     else
@@ -2036,7 +2063,25 @@ void MainWindow::applyProject(const Project &project, bool restart)
     m_sourceControl->setProject(project.git,
                                 m_explorer->rootPath().isEmpty() ? project.directory : m_explorer->rootPath(),
                                 project.hide);
-    const bool syntaxEnabled = project.syntax.enabled && !project.syntax.command.isEmpty();
+    m_trustProject = project;
+    m_trustRestart = restart;
+    m_trust->setProject(project);
+    if (!project.error.isEmpty())
+        statusBar()->showMessage(project.error, 5000);
+    // Scripts stay off until the pool reports the pin. This returns at once.
+    applyExecutables(project, restart, true);
+    m_trust->schedule(TrustFollowup::None);
+}
+
+void MainWindow::applyExecutables(const Project &project, bool restart, bool pending)
+{
+    const bool holdScripts = pending || m_trust->decision() != TrustDecision::Allow;
+    const ProjectPin trustPin = m_trust->pin();
+    const auto held = [&](const QString &id) {
+        return pending || (holdScripts && trustPin.gates(id));
+    };
+    const bool syntaxEnabled = project.syntax.enabled && !project.syntax.command.isEmpty()
+                               && !held(QStringLiteral("syntax"));
     const bool syntaxChanged = syntaxEnabled != m_syntaxEnabled || project.syntax.command != m_syntaxCommand
                               || project.syntax.workingDirectory != m_syntaxDirectory;
     m_syntaxEnabled = syntaxEnabled;
@@ -2050,7 +2095,8 @@ void MainWindow::applyProject(const Project &project, bool restart)
         m_bottom->problems()->clear();
         m_diagnosticKeys.clear();
     }
-    const bool autocompleteEnabled = project.autocomplete.enabled && !project.autocomplete.command.isEmpty();
+    const bool autocompleteEnabled = project.autocomplete.enabled && !project.autocomplete.command.isEmpty()
+                                     && !held(QStringLiteral("autocomplete"));
     const bool autocompleteChanged = autocompleteEnabled != m_autocompleteEnabled || project.autocomplete.command != m_autocompleteCommand
                                  || project.autocomplete.workingDirectory != m_autocompleteDirectory;
     m_autocompleteEnabled = autocompleteEnabled;
@@ -2066,25 +2112,78 @@ void MainWindow::applyProject(const Project &project, bool restart)
     if (restart)
         restartServices();
     refreshCompletionStatus();
-    m_agents->setAgents(project.agents);
+    m_agents->setAgents(agentsForPanel(project));
     if (m_actions.agent->isChecked())
         m_agents->ensureStarted();
     m_commandTexts.clear();
     for (const ProjectCommand &command : project.commands)
         m_commandTexts.insert(command.name, command.command);
     clearProjectCommands(m_menuBar);
-    // A file that is not JSON is skipped, and the others still apply.
-    if (!project.error.isEmpty())
-        statusBar()->showMessage(project.error, 5000);
     for (const ProjectCommand &command : project.commands) {
         QAction *action = addProjectAction(menuAt(m_menuBar, m_runMenu, command.menu), command.name);
         action->setCheckable(true);
         action->setChecked(m_runningCommands.contains(command.name));
-        if (!command.key.isEmpty()) {
+        if (!command.key.isEmpty() && !held(QStringLiteral("command:") + command.name)) {
             action->setShortcut(command.key);
             action->setShortcutContext(Qt::WindowShortcut);
         }
         connect(action, &QAction::triggered, this, [this, name = command.name] { runCommand(name); });
     }
     m_runMenu->menuAction()->setVisible(!m_runMenu->actions().isEmpty());
+    updateTrustBar();
+}
+
+QList<AgentSettings> MainWindow::agentsForPanel(const Project &project) const
+{
+    // The pin is still on the pool. No agent starts from a guess.
+    if (!m_trust->ready())
+        return {};
+    if (m_trust->decision() == TrustDecision::Allow)
+        return project.agents;
+    const ProjectPin pin = m_trust->pin();
+    QList<AgentSettings> agents;
+    for (const AgentSettings &agent : project.agents) {
+        if (!pin.gates(QStringLiteral("agent:") + agent.name))
+            agents.append(agent);
+    }
+    return agents;
+}
+
+void MainWindow::showTrustReview()
+{
+    if (m_projectDirectory.isEmpty())
+        return;
+    m_trust->schedule(TrustFollowup::Review);
+}
+
+void MainWindow::onTrustChecked(TrustFollowup followup)
+{
+    if (followup == TrustFollowup::Trust || followup == TrustFollowup::Restrict) {
+        reloadCommands();
+        return;
+    }
+    applyExecutables(m_trustProject, m_trustRestart, false);
+    if (followup != TrustFollowup::Review)
+        return;
+    const TrustChoice choice = execTrustReview(this, trustReviewText(m_trust->pin(), m_trust->difference()));
+    if (choice == TrustChoice::Trust)
+        m_trust->schedule(TrustFollowup::Trust);
+    else if (choice == TrustChoice::Restrict) {
+        m_trust->restrictFolder();
+        reloadCommands();
+    }
+}
+
+void MainWindow::updateTrustBar()
+{
+    m_actions.workspaceScripts->setEnabled(!m_projectDirectory.isEmpty());
+    if (!m_trust->ready()) {
+        m_trustBar->hide();
+        return;
+    }
+    const TrustDecision decision = m_trust->decision();
+    if (decision == TrustDecision::Untrusted || decision == TrustDecision::Mismatch)
+        m_trustBar->showDecision(decision, m_trust->difference());
+    else
+        m_trustBar->hide();
 }

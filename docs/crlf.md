@@ -61,6 +61,20 @@ The watcher holds the settings files in use, the files listed under `watch` by `
 
 A file that is not JSON, or that is neither an array nor an object, is skipped. The status bar says "Couldn't read" and the file's name, such as "Couldn't read local.crlf", and the other files still apply. The file stays watched, so fixing it reloads the project. When every workspace file is unreadable, nothing applies; the application file is not used in their place.
 
+## Workspace trust
+
+A workspace file can name programs that start on their own: `syntax`, `autocomplete`, and an agent while the Agent panel is open, and it can bind a menu command to a function key. Those lines are a shell command. Trust decides whether they run. The decision is kept in the editor's settings, keyed by the project root, and a `<name>.crlf` file cannot set it. `indent`, `hide`, `icons`, `groups`, `navigation`, and `git` apply either way.
+
+An entry is held until the folder is trusted when it came from a workspace file. An entry inherited from `application.crlf` runs, unless a path in its command names a script inside the project (`.py`, `.sh`, `.cmd`, `.bat`, or `.ps1`) or names `.crlf/rules` while that directory exists. A command that only uses `${programDir}` or `${appDir}` is the application file's program, and it runs. With no project root, nothing is held.
+
+While the folder is held, syntax and autocomplete stay off, a held agent is left out of the Agent panel, and a held command's function key is not bound. Choosing that command opens the review instead of starting it.
+
+The first time a folder has something to hold, a bar says "This folder defines scripts that run on open." Review lists each held command and the scripts pinned for it. Trust stores that pin and starts the services. Stay restricted stores the refusal and hides the bar; the services stay off. File > Workspace Scripts opens the review again, including after the folder was trusted or left restricted.
+
+The pin is read on a background thread. The window does not wait for it, and until that read finishes the folder's scripts stay off. The pin is the unexpanded command line of each held entry, plus its working directory, a command's function key and editor output, and an agent's permissions. `${file}` and the other variables are filled in at launch, so they are not part of the pin. Each project script the line names also pins every `.py`, `.sh`, `.cmd`, `.bat`, and `.ps1` file under that script's directory, including subdirectories. A script in the project root pins only the scripts beside it, so a folder such as `.pnpm-store` is not walked at startup. `node_modules`, `.pnpm-store`, `.git`, `dist`, `bin`, `obj`, `build`, `target`, and `__pycache__` are never walked, and `.crlf/keys`, `.crlf/data`, and `.crlf/rules` are skipped. A command that names no project script, such as `cmake --build build`, pins its command line only, and the review says so. Rule files are read by the agent and are not hashed.
+
+Trust holds while the pin still matches. A pull that changes a command line, a permission, a pinned script, or adds a script in a pinned directory brings the bar back and names what changed. The new bytes do not run until Trust is chosen again. A script the command already calls from outside that directory is not in the pin. The same check runs again immediately before the process starts, so a watched script cannot restart into bytes that no longer match.
+
 ## Merging the files
 
 The files are merged as JSON, in order, and the result is read as one file. The earlier file wins.

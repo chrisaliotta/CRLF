@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QObject>
 
+#include <functional>
+
 class ProcessOrchestrator;
 class QProcess;
 
@@ -22,11 +24,17 @@ public:
     ~JsonLineProcess() override;
 
     void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
+    // Asked on this thread immediately before the process starts. False
+    // stops a process already running for `key` and does not start another.
+    // Empty allows every id.
+    void setLaunchAllowed(std::function<bool(const QString &id)> allowed) { m_allowed = std::move(allowed); }
     // Replaces a process that is still running. Called from the Hold work of
     // `key`, so the record's token is the current one. A working directory
     // inside a WSL distro runs the command there, and the path variables are
-    // given to it as Linux paths.
-    void start(const QString &command, const QString &workingDirectory, const CommandVariables &variables);
+    // given to it as Linux paths. `trustId` is the pin entry, or empty when
+    // this start is not gated.
+    void start(const QString &command, const QString &workingDirectory, const CommandVariables &variables,
+               const QString &trustId = QString());
     // Ends the process tree and drops the record. Does not wait.
     void stop();
     // Dropped once the process has been stopped.
@@ -46,6 +54,8 @@ signals:
     // The process ended without stop().
     void exited();
     void failedToStart(const QString &error);
+    // start() refused `trustId`. The record is already released.
+    void blocked();
 
 private:
     void absorbStdout(const QByteArray &bytes);
@@ -61,4 +71,5 @@ private:
     QByteArray m_pending;
     int m_token = 0;
     bool m_stopRequested = false;
+    std::function<bool(const QString &id)> m_allowed;
 };

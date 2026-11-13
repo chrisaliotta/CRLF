@@ -7,6 +7,8 @@
 #include <QList>
 #include <QObject>
 
+#include <functional>
+
 class ProcessOrchestrator;
 
 // One check of one editor. See docs/diagnostics.md. This is not a menu
@@ -35,6 +37,9 @@ public:
     ~SyntaxRunner() override;
 
     void setOrchestrator(ProcessOrchestrator *orchestrator) { m_orchestrator = orchestrator; }
+    // Asked on this thread immediately before the process starts. False
+    // leaves the check unstarted. Empty allows it.
+    void setLaunchAllowed(std::function<bool(const QString &id)> allowed) { m_allowed = std::move(allowed); }
 
     // A check already running for this editor is stopped and replaced.
     // The replacement starts from the finished handler on this thread.
@@ -55,4 +60,5 @@ private:
 
     QHash<quintptr, Running *> m_running;
     ProcessOrchestrator *m_orchestrator = nullptr;
+    std::function<bool(const QString &id)> m_allowed;
 };

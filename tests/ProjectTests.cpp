@@ -10,6 +10,7 @@
 #include "io/CommandVariables.h"
 #include "io/ProjectCommands.h"
 #include "io/ProjectMerge.h"
+#include "io/ProjectTrust.h"
 #include "io/WorkspaceSeed.h"
 
 #include <QDir>
@@ -18,6 +19,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -73,6 +75,15 @@ QStringList groupNames(const Project &project)
     for (const FileGroup &group : project.groups)
         result.append(group.name);
     return result;
+}
+
+QStringList entryFiles(const ProjectPin &pin, const QString &id)
+{
+    for (const TrustEntry &entry : pin.entries) {
+        if (entry.id == id)
+            return entry.files;
+    }
+    return {};
 }
 
 } // namespace
@@ -735,6 +746,234 @@ private slots:
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/scripts/syntax.sh"))), QByteArray("application syntax"));
         QCOMPARE(readFile(work.filePath(QStringLiteral(".crlf/scripts/own.sh"))), QByteArray("only here"));
         QCOMPARE(readFile(work.filePath(QLatin1String(kWorkspaceFile))), QByteArray(R"({"hide": ["build"]})"));
+    }
+
+    // A command pins the scripts it names and the scripts in that directory,
+    // including one the command line does not mention. ${file} is not a path.
+    // A key file and a bytecode cache are not scripts the editor will run.
+    void pinsTheScriptTreeAroundEachCommand()
+    {
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/build.cmd")), "cmd");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/build.ps1")), "ps1");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/autocomplete.sh")), "sh");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/autocomplete.py")), "py");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/readme.txt")), "notes");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/crlf_agent.py")), "agent");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/usage.py")), "usage");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/tools/files.py")), "files");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/__pycache__/cached.py")), "cached");
+        writeFile(QDir(m_work).filePath(QStringLiteral(".crlf/keys/anthropic")), "key");
+        writeFile(QDir(m_work).filePath(QStringLiteral(".crlf/keys/evil.py")), "evil");
+
+        Project project;
+        project.directory = m_work;
+        ProjectCommand package;
+        package.name = QStringLiteral("Package");
+        package.command = QStringLiteral("scripts\\build.cmd");
+        package.workingDirectory = m_work;
+        package.workspaceOrigin = true;
+        ProjectCommand build;
+        build.name = QStringLiteral("Build");
+        build.command = QStringLiteral("cmake --build build");
+        build.workingDirectory = m_work;
+        build.workspaceOrigin = true;
+        project.commands = {package, build};
+        AgentSettings agent;
+        agent.name = QStringLiteral("Claude");
+        agent.workspaceOrigin = true;
+        agent.process.command =
+            QStringLiteral("python scripts/agent/crlf_agent.py --api-key-file .crlf/keys/anthropic");
+        agent.process.workingDirectory = m_work;
+        project.agents = {agent};
+        project.autocomplete.enabled = true;
+        project.autocomplete.workspaceOrigin = true;
+        project.autocomplete.command = QStringLiteral("./scripts/autocomplete.sh \"${file}\"");
+        project.autocomplete.workingDirectory = m_work;
+
+        const ProjectPin pin = pinProject(project);
+        const QStringList agentFiles = entryFiles(pin, QStringLiteral("agent:Claude"));
+        QVERIFY(agentFiles.contains(QStringLiteral("scripts/agent/crlf_agent.py")));
+        QVERIFY(agentFiles.contains(QStringLiteral("scripts/agent/usage.py")));
+        QVERIFY(agentFiles.contains(QStringLiteral("scripts/agent/tools/files.py")));
+        QVERIFY(!agentFiles.contains(QStringLiteral("scripts/autocomplete.py")));
+        const QStringList completionFiles = entryFiles(pin, QStringLiteral("autocomplete"));
+        QVERIFY(completionFiles.contains(QStringLiteral("scripts/autocomplete.sh")));
+        QVERIFY(completionFiles.contains(QStringLiteral("scripts/autocomplete.py")));
+        QVERIFY(entryFiles(pin, QStringLiteral("command:Package")).contains(QStringLiteral("scripts/build.ps1")));
+        QVERIFY(entryFiles(pin, QStringLiteral("command:Build")).isEmpty());
+        QVERIFY(trustReviewText(pin, {}).contains(QStringLiteral("No project script is named.")));
+        for (const PinnedFile &file : pin.files) {
+            QVERIFY(!file.relative.contains(QStringLiteral("__pycache__")));
+            QVERIFY(!file.relative.contains(QStringLiteral(".crlf/keys")));
+            QVERIFY(file.relative != QStringLiteral("scripts/readme.txt"));
+        }
+    }
+
+    // Trust is the stored pin. The same bytes are allowed. A changed script
+    // or a new one in a pinned directory is not, and a folder the user left
+    // restricted stays held.
+    void trustedPinAllowsTheSameBytesOnly()
+    {
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/crlf_agent.py")), "agent");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/usage.py")), "usage");
+        Project project;
+        project.directory = m_work;
+        AgentSettings agent;
+        agent.name = QStringLiteral("Claude");
+        agent.workspaceOrigin = true;
+        agent.process.command = QStringLiteral("python scripts/agent/crlf_agent.py");
+        agent.process.workingDirectory = m_work;
+        project.agents = {agent};
+
+        const ProjectPin pin = pinProject(project);
+        TrustRecord trusted;
+        trusted.state = TrustState::Trusted;
+        for (const TrustEntry &entry : pin.entries)
+            trusted.templates.append({entry.id, entry.templateText});
+        trusted.files = pin.files;
+        TrustDifference changes;
+        QCOMPARE(decideTrust(pin, trusted, &changes), TrustDecision::Allow);
+        QCOMPARE(decideTrust(pin, {}, &changes), TrustDecision::Untrusted);
+        TrustRecord restricted;
+        restricted.state = TrustState::Restricted;
+        QCOMPARE(decideTrust(pin, restricted, &changes), TrustDecision::Restricted);
+
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/usage.py")), "changed");
+        QCOMPARE(decideTrust(pinProject(project), trusted, &changes), TrustDecision::Mismatch);
+        QVERIFY(changes.paths.contains(QStringLiteral("scripts/agent/usage.py")));
+
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/usage.py")), "usage");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/agent/extra.py")), "extra");
+        QCOMPARE(decideTrust(pinProject(project), trusted, &changes), TrustDecision::Mismatch);
+        QVERIFY(changes.paths.contains(QStringLiteral("scripts/agent/extra.py")));
+    }
+
+    // The record is outside the project. A later read of the same folder
+    // returns the pin that was stored.
+    void trustRecordRoundTrips()
+    {
+        QSettings settings(QDir(m_directory->path()).filePath(QStringLiteral("trust.ini")), QSettings::IniFormat);
+        TrustRecord record;
+        record.state = TrustState::Trusted;
+        record.templates.append({QStringLiteral("command:Build"), QStringLiteral("cmake --build build")});
+        record.files.append({QStringLiteral("scripts/build.cmd"), QStringLiteral("abc")});
+        saveTrust(settings, m_work, record);
+        settings.sync();
+        QSettings loaded(QDir(m_directory->path()).filePath(QStringLiteral("trust.ini")), QSettings::IniFormat);
+        const TrustRecord again = loadTrust(loaded, m_work);
+        QCOMPARE(again.state, TrustState::Trusted);
+        QCOMPARE(again.templates.size(), 1);
+        QCOMPARE(again.templates.at(0).id, QStringLiteral("command:Build"));
+        QCOMPARE(again.files.size(), 1);
+        QCOMPARE(again.files.at(0).relative, QStringLiteral("scripts/build.cmd"));
+        QCOMPARE(again.files.at(0).hash, QStringLiteral("abc"));
+    }
+
+    // A workspace command is the project's. A command inherited from the
+    // application file, which runs a script next to the program, is not.
+    void workspaceCommandIsWorkspaceOriginAndInheritedProgramDirCommandIsNot()
+    {
+        QJsonObject build;
+        build.insert(QLatin1String("name"), QStringLiteral("Build"));
+        build.insert(QLatin1String("command"), QStringLiteral("cmake --build build"));
+        QJsonObject workspace;
+        workspace.insert(QLatin1String("inherit"), QJsonArray{QStringLiteral("commands"), QStringLiteral("agents")});
+        workspace.insert(QLatin1String("commands"), QJsonArray{build});
+        writeFile(QDir(m_work).filePath(QStringLiteral("workspace.crlf")), QJsonDocument(workspace).toJson());
+
+        QJsonObject mine;
+        mine.insert(QLatin1String("name"), QStringLiteral("Mine"));
+        mine.insert(QLatin1String("command"),
+                    QStringLiteral("python \"${programDir}/scripts/agent/crlf_agent.py\""));
+        QJsonObject claude;
+        claude.insert(QLatin1String("name"), QStringLiteral("Claude"));
+        claude.insert(QLatin1String("command"),
+                      QStringLiteral("python \"${programDir}/scripts/agent/crlf_agent.py\""));
+        QJsonObject application;
+        application.insert(QLatin1String("commands"), QJsonArray{mine});
+        application.insert(QLatin1String("agents"), QJsonArray{claude});
+        writeFile(appFile(), QJsonDocument(application).toJson());
+
+        const Project project = projectFor(m_work, appFile());
+        bool buildOrigin = false;
+        bool mineOrigin = true;
+        bool sawBuild = false;
+        bool sawMine = false;
+        for (const ProjectCommand &command : project.commands) {
+            if (command.name == QLatin1String("Build")) {
+                sawBuild = true;
+                buildOrigin = command.workspaceOrigin;
+            }
+            if (command.name == QLatin1String("Mine")) {
+                sawMine = true;
+                mineOrigin = command.workspaceOrigin;
+            }
+        }
+        QVERIFY(sawBuild);
+        QVERIFY(buildOrigin);
+        QVERIFY(sawMine);
+        QVERIFY(!mineOrigin);
+        QCOMPARE(project.agents.size(), 1);
+        QVERIFY(!project.agents.at(0).workspaceOrigin);
+    }
+
+    // An application command that names a script in the project is gated.
+    // One that only names ${programDir} is not. Rule files are not pinned.
+    void applicationScriptIsGatedAndRulesAreNotPinned()
+    {
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/autocomplete.sh")), "sh");
+        writeFile(QDir(m_work).filePath(QStringLiteral("scripts/autocomplete.py")), "py");
+        writeFile(QDir(m_work).filePath(QStringLiteral(".crlf/rules/style.md")), "rule");
+        Project project;
+        project.directory = m_work;
+        project.autocomplete.enabled = true;
+        project.autocomplete.command = QStringLiteral("./scripts/autocomplete.sh");
+        project.autocomplete.workingDirectory = m_work;
+        AgentSettings agent;
+        agent.name = QStringLiteral("Claude");
+        agent.process.command =
+            QStringLiteral("python \"${programDir}/scripts/agent/crlf_agent.py\" --rules .crlf/rules");
+        agent.process.workingDirectory = m_work;
+        project.agents = {agent};
+        ProjectCommand mine;
+        mine.name = QStringLiteral("Mine");
+        mine.command = QStringLiteral("python \"${programDir}/scripts/agent/crlf_agent.py\"");
+        mine.workingDirectory = m_work;
+        project.commands = {mine};
+
+        const ProjectPin pin = pinProject(project);
+        QVERIFY(pin.gates(QStringLiteral("autocomplete")));
+        QVERIFY(pin.gates(QStringLiteral("agent:Claude")));
+        QVERIFY(!pin.gates(QStringLiteral("command:Mine")));
+        QVERIFY(entryFiles(pin, QStringLiteral("autocomplete")).contains(QStringLiteral("scripts/autocomplete.py")));
+        for (const PinnedFile &file : pin.files)
+            QVERIFY(!file.relative.endsWith(QStringLiteral("style.md")));
+        QVERIFY(trustReviewText(pin, {}).contains(QStringLiteral("Reads .crlf/rules.")));
+    }
+
+    // A script in the project root must not pull the rest of the tree into
+    // the pin. That walk is what stalls startup on a WSL project whose
+    // launch script sits next to .pnpm-store.
+    void rootScriptDoesNotPinSubdirectories()
+    {
+        writeFile(QDir(m_work).filePath(QStringLiteral("launch.sh")), "launch");
+        writeFile(QDir(m_work).filePath(QStringLiteral("format.sh")), "format");
+        writeFile(QDir(m_work).filePath(QStringLiteral(".pnpm-store/pkg/evil.py")), "evil");
+        writeFile(QDir(m_work).filePath(QStringLiteral("src/app.py")), "app");
+        Project project;
+        project.directory = m_work;
+        ProjectCommand launch;
+        launch.name = QStringLiteral("Launch");
+        launch.command = QStringLiteral("./launch.sh");
+        launch.workingDirectory = m_work;
+        launch.workspaceOrigin = true;
+        project.commands = {launch};
+
+        const QStringList files = entryFiles(pinProject(project), QStringLiteral("command:Launch"));
+        QVERIFY(files.contains(QStringLiteral("launch.sh")));
+        QVERIFY(files.contains(QStringLiteral("format.sh")));
+        QVERIFY(!files.contains(QStringLiteral(".pnpm-store/pkg/evil.py")));
+        QVERIFY(!files.contains(QStringLiteral("src/app.py")));
     }
 
 private:

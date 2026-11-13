@@ -62,6 +62,7 @@ public:
     explicit AgentSession(QObject *parent = nullptr);
 
     void setOrchestrator(ProcessOrchestrator *orchestrator);
+    void setLaunchAllowed(std::function<bool(const QString &id)> allowed);
     // Replaces a running agent.
     void start(const AgentLaunch &launch);
     void prompt(const AgentPrompt &prompt);

@@ -42,6 +42,9 @@ public:
     // Asked when a command's output is "editor", at the same moment as the
     // context, so stdin is the document that document's variables describe.
     void setEditorInputProvider(std::function<EditorFeed(const QString &name)> provider);
+    // Asked on this thread immediately before the process starts. False
+    // leaves the command unstarted. Empty allows every command.
+    void setLaunchAllowed(std::function<bool(const QString &id)> allowed) { m_allowed = std::move(allowed); }
     void requestLaunch(const QString &name);
     void start(const QString &name);
     void stop(const QString &name);
@@ -72,6 +75,7 @@ private:
     QList<ProjectCommand> m_commands;
     std::function<CommandVariables(const QString &command)> m_contextProvider;
     std::function<EditorFeed(const QString &name)> m_editorInput;
+    std::function<bool(const QString &id)> m_allowed;
     QHash<QString, Running *> m_running;
     QHash<QString, CommandVariables> m_launchVars;
     QHash<QString, EditorFeed> m_launchFeed;

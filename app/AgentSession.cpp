@@ -55,6 +55,7 @@ AgentSession::AgentSession(QObject *parent)
         emit stopped();
     });
     connect(m_process, &JsonLineProcess::failedToStart, this, &AgentSession::failed);
+    connect(m_process, &JsonLineProcess::blocked, this, &AgentSession::stopped);
     connect(m_terminals, &AgentTerminals::outputReceived, this, &AgentSession::terminalOutput);
     connect(m_terminals, &AgentTerminals::stateChanged, this, &AgentSession::terminalState);
 }
@@ -66,12 +67,18 @@ void AgentSession::setOrchestrator(ProcessOrchestrator *orchestrator)
     m_terminals->setOrchestrator(orchestrator);
 }
 
+void AgentSession::setLaunchAllowed(std::function<bool(const QString &id)> allowed)
+{
+    m_process->setLaunchAllowed(std::move(allowed));
+}
+
 void AgentSession::start(const AgentLaunch &launch)
 {
     reset();
     m_name = launch.name;
     m_workingDirectory = launch.workingDirectory;
-    m_process->start(launch.command, launch.workingDirectory, launch.variables);
+    m_process->start(launch.command, launch.workingDirectory, launch.variables,
+                     QStringLiteral("agent:") + launch.name);
 }
 
 void AgentSession::prompt(const AgentPrompt &prompt)

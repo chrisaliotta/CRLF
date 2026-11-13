@@ -226,6 +226,13 @@ void CommandRunner::launch(const QString &name)
         }
     }
 
+    if (m_allowed && !m_allowed(QStringLiteral("command:") + name)) {
+        if (m_orchestrator != nullptr)
+            m_orchestrator->release(QStringLiteral("command:%1").arg(name), running->token);
+        emit stateChanged(name, false, -1);
+        return;
+    }
+
     const CommandVariables vars = launchVariables(m_launchVars.value(name), spec->workingDirectory);
     running->process->setProcessChannelMode(running->captureEditor ? QProcess::SeparateChannels
                                                                    : QProcess::MergedChannels);

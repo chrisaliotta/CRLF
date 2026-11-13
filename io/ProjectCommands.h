@@ -77,6 +77,8 @@ struct ServiceSettings
     QString command;
     QString workingDirectory;
     QStringList watch;
+    // The command was defined by a workspace file, not by application.crlf.
+    bool workspaceOrigin = false;
 };
 
 // One entry of `agents`: an Agent Client Protocol program the Agent panel can
@@ -87,6 +89,8 @@ struct AgentSettings
     QString name;
     ServiceSettings process;
     AgentPermissions permissions;
+    // The entry was defined by a workspace file, not by application.crlf.
+    bool workspaceOrigin = false;
 };
 
 // Source control for the scoped folder. `depth` is how many folder levels
@@ -117,6 +121,8 @@ struct ProjectCommand
     QStringList menu;
     QKeySequence key;
     bool outputToEditor = false;
+    // The entry was defined by a workspace file, not by application.crlf.
+    bool workspaceOrigin = false;
 };
 
 // Every <name>.crlf file in a project root is a settings file. The folder
