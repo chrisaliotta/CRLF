@@ -41,7 +41,11 @@ Name: "{app}\fonts"
 Name: "{app}\icons"
 
 [Files]
-Source: "@INSTALLER_STAGING_DIR@\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; A file named .crlf in the install folder is the defaults file of an earlier
+; version. The first run of this version reads the user's own copy to carry
+; their settings over, so the installer never ships one, and a leftover in
+; the staging folder must not overwrite it.
+Source: "@INSTALLER_STAGING_DIR@\*"; DestDir: "{app}"; Excludes: "\.crlf"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\@PROJECT_NAME@"; Filename: "{#AppExe}"

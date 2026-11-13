@@ -8,8 +8,8 @@ budget. The messages stay, so each tool call keeps its result and the
 thinking a provider wants handed back stays valid.
 
     option = config_option()         -> ACP select option, without currentValue
-    estimate(history)                -> tokens
-    shorten(history, budget)         -> how many tool results were shortened
+    estimate(history)                -> tokens, at four characters to a token
+    shorten(history, budget, offset) -> how many tool results were shortened
 
 `history` is the neutral form providers.py documents. `budget` is a value
 of the option: UNLIMITED, or a count of tokens as a string.
@@ -29,7 +29,8 @@ BUDGETS = [(UNLIMITED, "Unlimited"), ("50000", "50k tokens"), ("100000", "100k t
 
 # Shortening stops at this share of the budget, which leaves room before the next time.
 TARGET = 0.7
-# There is no tokenizer here. Four characters to a token is close enough for a budget.
+# There is no tokenizer here. Four characters to a token is the starting
+# guess, and the session corrects it with each reply's real count.
 CHARACTERS_PER_TOKEN = 4
 # Kept of a call's arguments in the line that replaces its result.
 MAX_NOTE_ARGUMENTS = 200
@@ -58,15 +59,22 @@ def _note(call):
                                                                                                 arguments)
 
 
-def shorten(history, budget):
+def shorten(history, budget, offset=0):
     """Changes only the `content` of tool results, oldest first, so the
-    newest turn's results are the last to go."""
+    newest turn's results are the last to go.
+
+    `offset` is what the provider counted for the last request beyond
+    estimate() of the conversation it was sent: the system prompt and the
+    tool definitions, which are not in the history, and whatever the
+    four-characters rule got wrong. With it the budget is measured against
+    the tokens the provider counts, not only a guess at them."""
     if budget == UNLIMITED:
         return 0
+    room = int(budget) - offset
     size = sum(_size(message) for message in history)
-    if size <= int(budget) * CHARACTERS_PER_TOKEN:
+    if size <= room * CHARACTERS_PER_TOKEN:
         return 0
-    target = int(budget) * CHARACTERS_PER_TOKEN * TARGET
+    target = (int(budget) * TARGET - offset) * CHARACTERS_PER_TOKEN
     calls = {call["id"]: call for message in history for call in message.get("tool_calls") or []}
     shortened = 0
     for message in history:

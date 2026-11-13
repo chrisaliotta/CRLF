@@ -477,27 +477,33 @@ private slots:
     }
 
     // The application folder gets each shipped file it lacks: the configured
-    // application.crlf and blank.crlf, with the folders for the user's own
-    // scripts, keys, and rules. A file the user has is theirs and is never
-    // replaced, and a folder seeded by an earlier version still gains the
-    // files added since.
+    // application.crlf, blank.crlf, and the price list the shipped agents
+    // read, with the folders for the user's own scripts, keys, and rules. A
+    // file the user has is theirs and is never replaced, which matters most
+    // for the price list they keep current, and a folder seeded by an
+    // earlier version still gains the files added since.
     void seedingAddsTheShippedFilesTheFolderLacks()
     {
         const QDir program(m_program);
         const QDir application(m_application);
+        const QString prices = application.filePath(QStringLiteral(".crlf/prices.json"));
         writeFile(program.filePath(QLatin1String(kApplicationFile)), "configured");
         writeFile(program.filePath(QLatin1String(kBlankFile)), "{}");
+        writeFile(program.filePath(QLatin1String(kPricesFile)), "shipped prices");
 
         QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
         QCOMPARE(readFile(appFile()), QByteArray("configured"));
         QCOMPARE(readFile(application.filePath(QLatin1String(kBlankFile))), QByteArray("{}"));
+        QCOMPARE(readFile(prices), QByteArray("shipped prices"));
         for (const char *folder : {".crlf/scripts", ".crlf/keys", ".crlf/rules"})
             QVERIFY(QFileInfo(application.filePath(QLatin1String(folder))).isDir());
 
         writeFile(appFile(), "edited");
+        writeFile(prices, "my prices");
         QVERIFY(QFile::remove(application.filePath(QLatin1String(kBlankFile))));
         QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
         QCOMPARE(readFile(appFile()), QByteArray("edited"));
+        QCOMPARE(readFile(prices), QByteArray("my prices"));
         QCOMPARE(readFile(application.filePath(QLatin1String(kBlankFile))), QByteArray("{}"));
     }
 
@@ -532,6 +538,28 @@ private slots:
         QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
         QVERIFY(!QFileInfo::exists(QDir(m_application).filePath(QLatin1String(kPreviousFile))));
         QCOMPARE(readFile(appFile()), QByteArray("configured"));
+    }
+
+    // An earlier version seeded the application folder by copying the old
+    // defaults file as application.crlf. Where that file was never edited,
+    // the folder holds an empty command list under the name the configured
+    // file needs, and "never replace a file that is there" would keep the
+    // shipped agents away for good. That one content is replaced. A file
+    // with anything else in it is someone's settings and stays.
+    void anEmptyApplicationFileFromAnEarlierVersionIsReplaced()
+    {
+        const QDir program(m_program);
+        writeFile(program.filePath(QLatin1String(kApplicationFile)), "configured");
+        writeFile(program.filePath(QStringLiteral(".crlf")), R"({ "commands": [] })");
+        writeFile(appFile(), R"({ "commands": [] })");
+
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
+        QCOMPARE(readFile(appFile()), QByteArray("configured"));
+
+        const QByteArray mine = R"({ "commands": [], "hide": ["build"] })";
+        writeFile(appFile(), mine);
+        QCOMPARE(seedApplicationFolder(m_application, m_program), QString());
+        QCOMPARE(readFile(appFile()), mine);
     }
 
     // The user picks which application file is in use. The choice is a file

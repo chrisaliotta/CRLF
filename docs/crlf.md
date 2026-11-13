@@ -27,6 +27,7 @@ project/                       a workspace
     scripts/                   the user's own scripts, shared by every workspace
     keys/                      API key files shared by every workspace
     rules/                     agent rules shared by every workspace
+    prices.json                prices and context windows by model, for the agents' usage line
 
 <install folder>\scripts\      shipped scripts, refreshed by each upgrade
 ```
@@ -140,13 +141,17 @@ Two application files ship with the editor.
 
 `application.crlf` as shipped (`resources/default.crlf` in this repository) has:
 
-- **Four agents**, Claude, GPT, Grok, and Local, each running the shipped `${programDir}/scripts/agent/crlf_agent.py`. Each has a `windows` command line that starts `python` and a `wsl` one that starts `python3`. Claude, GPT, and Grok read their key from `${appDir}/keys/anthropic`, `${appDir}/keys/openai`, and `${appDir}/keys/xai`; Local talks to Ollama and needs none. Each reads the workspace's rules and then the application's. An agent works once its key file exists. The model names are examples to replace with the ones the account offers.
+- **Four agents**, Claude, GPT, Grok, and Local, each running the shipped `${programDir}/scripts/agent/crlf_agent.py`. Each has a `windows` command line that starts `python` and a `wsl` one that starts `python3`. Claude, GPT, and Grok read their key from `${appDir}/keys/anthropic`, `${appDir}/keys/openai`, and `${appDir}/keys/xai`; Local talks to Ollama and needs none. Each reads the workspace's rules and then the application's, and the price list `${appDir}/prices.json`, from which it reports the session's context use and estimated cost; see [agent-tools.md](agent-tools.md#usage-and-prices). An agent works once its key file exists. The model names are examples to replace with the ones the account offers.
 - **`syntax` and `autocomplete`**, running the shipped `syntax.sh` and `autocomplete.sh` with `bash`. The scripts are bash scripts, so only a `wsl` command line is given: they run for a project inside a WSL distro, and in a Windows folder neither starts. Neither lists its scripts under `watch`, which does not take variables; Reload on the Processes page reads an edited script again.
 - **No menu commands.**
 
-Each build and each install puts both files beside the program. A run copies each one the application folder does not have into it, and creates the three `.crlf` folders. A file already in the application folder is never replaced, so an edit survives an upgrade, and an upgrade does not bring a newer shipped version of a file that is already there. To get the shipped `application.crlf` again, delete or rename the one in the application folder and start the editor.
+Each build and each install puts both files, and `prices.json`, beside the program. A run copies each one the application folder does not have into it, with `prices.json` going into its `.crlf` folder, and creates the three `.crlf` folders. A file already in the application folder is never replaced, with the one exception under "Settings from an earlier version" below, so an edit survives an upgrade, and an upgrade does not bring a newer shipped version of a file that is already there. To get the shipped `application.crlf` again, delete or rename the one in the application folder and start the editor.
 
-**Settings from an earlier version.** Before the application folder, these settings were a file named `.crlf` beside the program. On the first run with the application folder, that file is copied in as `previous.crlf` and made the active file, so the same settings keep applying. `application.crlf` is there to switch to. An old file that was never edited, and so still holds only the empty command list it shipped with, is left behind, and `application.crlf` is active. A relative path in `previous.crlf` no longer resolves against the program folder; see [Paths](#paths). A folder that an earlier build already filled keeps the `application.crlf` it was given then, which holds those earlier settings and not the shipped scripts.
+**Settings from an earlier version.** Before the application folder, these settings were a file named `.crlf` beside the program. On the first run with the application folder, that file is copied in as `previous.crlf` and made the active file, so the same settings keep applying. `application.crlf` is there to switch to. An old file that was never edited, and so still holds only the empty command list it shipped with, is left behind, and `application.crlf` is active. A relative path in `previous.crlf` no longer resolves against the program folder; see [Paths](#paths).
+
+One earlier build copied that old file into the application folder under the name `application.crlf`. Where the old file was never edited, that left an `application.crlf` holding only an empty command list. A run replaces an `application.crlf` with exactly that content by the shipped one. An `application.crlf` with anything else in it is kept as the settings it is.
+
+The installer never ships a file named `.crlf`, so an upgrade leaves the old defaults file in the install folder as the user had it.
 
 ### Choosing the active file
 

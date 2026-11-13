@@ -33,6 +33,11 @@ embeddings.py.
 --context-budget is where the session's Context option starts: unlimited,
 or the tokens the conversation may reach before old tool results are
 shortened. See history.py.
+
+--prices names a file of prices and context windows by model. With it the
+session reports what it has used after each reply: the context in use
+against its size, and an estimated cost. --context-window gives the size
+for a model the file does not list. See usage.py.
 """
 
 import argparse
@@ -49,6 +54,7 @@ import embeddings
 import history
 import index
 import providers
+import usage
 from tools import Tools, ToolError, clip, shown_path, walk
 from tools.context import rule_files
 
@@ -177,7 +183,7 @@ def system_prompt(cwd, crlf_client, rules):
 
 
 class Session:
-    def __init__(self, agent, cwd, adapter, models, settings, index):
+    def __init__(self, agent, cwd, adapter, models, settings, index, prices):
         self.agent = agent
         self.id = "session-" + uuid.uuid4().hex[:12]
         self.cwd = cwd
@@ -189,6 +195,15 @@ class Session:
         # Context option is the session's own, and the adapter does not read it.
         self.settings = settings
         self.history = []
+        # What the session has used, for the client's usage line. See usage.py.
+        self.prices = prices
+        self.totals = usage.Totals()
+        # The tokens the next request will carry: the last reply's input and
+        # output. None until a provider has reported a reply's tokens.
+        self.context_used = None
+        # What the provider counted for the last request beyond the estimate
+        # of the conversation, which the context budget allows for.
+        self.context_offset = 0
         self.cancel = threading.Event()
         self.tool_call = None
         # The folders of rule files, for fetch_rules. An earlier folder's rule wins a shared name.
@@ -233,7 +248,46 @@ class Session:
             # Another model can take other settings, so the client is told the whole list again.
             self.agent.status("ready: %s" % value)
             self.update({"sessionUpdate": "config_option_update", "configOptions": options})
+        if id in ("model", history.OPTION_ID):
+            # Either one changes what the context is measured against.
+            self.report_usage()
         return options
+
+    def context_size(self):
+        """What the context is measured against, in tokens: the Context
+        budget when one is set, otherwise the model's window, from
+        --context-window or the prices file. None when neither is known."""
+        budget = self.settings[history.OPTION_ID]
+        if budget != history.UNLIMITED:
+            return int(budget)
+        entry = self.prices.entry(self.settings["model"])
+        return self.agent.options.context_window or (entry or {}).get("context")
+
+    def account(self, reply, estimated):
+        """Adds one reply to the session's totals and tells the client.
+        `estimated` is history.estimate of the conversation the request
+        carried. A server that reported no tokens changes nothing."""
+        if not reply.usage:
+            return
+        self.totals.add(reply.usage, self.prices.entry(self.settings["model"]))
+        self.context_used = reply.usage["input"] + reply.usage["output"]
+        self.context_offset = reply.usage["input"] - estimated
+        self.report_usage()
+
+    def report_usage(self):
+        """ACP's usage_update: the context in use against its size, and the
+        session's cost when the model is priced. The update has no way to
+        say the size is unknown, so without one nothing is sent. The
+        session's token totals ride in _meta, which other clients ignore."""
+        size = self.context_size()
+        if self.context_used is None or not size:
+            return
+        update = {"sessionUpdate": "usage_update", "used": self.context_used, "size": size,
+                  "_meta": {"crlf": {"inputTokens": self.totals.input, "cachedTokens": self.totals.cached,
+                                     "outputTokens": self.totals.output}}}
+        if usage.priced(self.prices.entry(self.settings["model"])):
+            update["cost"] = {"amount": round(self.totals.cost, 6), "currency": self.prices.currency}
+        self.update(update)
 
     # The context the tools call.
 
@@ -294,9 +348,10 @@ class Session:
         self.cancel.clear()
         self.history.append({"role": "user", "content": prompt_text(blocks)})
         for _ in range(MAX_STEPS):
-            shortened = history.shorten(self.history, self.settings[history.OPTION_ID])
+            shortened = history.shorten(self.history, self.settings[history.OPTION_ID], self.context_offset)
             if shortened:
                 log("The conversation passed the context budget: %d old tool results were shortened." % shortened)
+            estimated = history.estimate(self.history)
             try:
                 # The settings are read for each reply, so a change made during a turn applies to the next one.
                 reply = self.adapter.stream(
@@ -308,6 +363,7 @@ class Session:
                 return "cancelled"
             self.history.append({"role": "assistant", "content": reply.text, "tool_calls": reply.tool_calls,
                                  "provider_state": reply.provider_state})
+            self.account(reply, estimated)
             if not reply.tool_calls:
                 return "max_tokens" if reply.stop == "max_tokens" else "end_turn"
             for call in reply.tool_calls:
@@ -388,9 +444,11 @@ class Agent:
                                       self.options.embed_base_url, self.options.embed_api_key_env,
                                       self.options.embed_api_key_file)
                     if self.options.index == "vector" else None)
+        # Read for every session, so an edited price list is used after New.
         session = Session(self, cwd, adapter, models, settings,
                           index.create(self.options.index, cwd, session_path(cwd, self.options.index_dir), embedder,
-                                       lambda: walk(cwd)))
+                                       lambda: walk(cwd)),
+                          usage.load(self.options.prices))
         self.sessions[session.id] = session
         self.status("ready: %s" % self.options.model)
         session.refresh_index()
@@ -491,6 +549,12 @@ def main():
     parser.add_argument("--context-budget", type=context_budget, default=history.UNLIMITED, metavar="TOKENS",
                         help="Where the Context option starts: unlimited, or the tokens the conversation may "
                              "reach before old tool results are shortened")
+    parser.add_argument("--prices", metavar="FILE",
+                        help="JSON file of prices and context windows by model, for the client's usage line. "
+                             "Without it no cost is reported, and a percentage needs --context-window or a "
+                             "context budget. See usage.py")
+    parser.add_argument("--context-window", type=int, metavar="TOKENS",
+                        help="The model's context window, when the prices file does not list it")
     options = parser.parse_args()
     options.rules = options.rules or [DEFAULT_RULES]
     if options.index == "vector" and not options.embed_provider:

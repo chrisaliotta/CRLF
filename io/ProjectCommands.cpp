@@ -317,6 +317,16 @@ bool loadProjectObject(const QString &filePath, QJsonObject *root)
     return true;
 }
 
+// What every version before the configured application file shipped as the
+// defaults: an empty command list and nothing else.
+bool holdsOldDefault(const QString &filePath)
+{
+    QJsonObject root;
+    return QFileInfo(filePath).isFile() && loadProjectObject(filePath, &root) && root.size() == 1
+           && root.value(QLatin1String("commands")).isArray()
+           && root.value(QLatin1String("commands")).toArray().isEmpty();
+}
+
 bool writeProjectObject(const QString &filePath, const QJsonObject &root)
 {
     QFile file(filePath);
@@ -442,26 +452,34 @@ QString seedApplicationFolder(const QString &applicationFolder, const QString &p
 {
     const QDir folder(applicationFolder);
     const QDir program(programFolder);
-    const bool firstRun = !folder.exists(QLatin1String(kApplicationFile));
+    // An application.crlf that holds only the old default was put there by
+    // an earlier version, which copied the defaults file beside the program
+    // under that name. Nobody wrote it, and left in place it would keep the
+    // configured file from ever arriving, so it is treated as absent.
+    const QString application = folder.filePath(QLatin1String(kApplicationFile));
+    if (holdsOldDefault(application))
+        QFile::remove(application);
+    const bool firstRun = !QFileInfo::exists(application);
     for (const char *name : {"scripts", "keys", "rules"})
         folder.mkpath(QLatin1String(kProjectFolder) + QLatin1Char('/') + QLatin1String(name));
     // QFile::copy leaves a file that is already there as it is.
     for (const char *name : {kApplicationFile, kBlankFile})
         QFile::copy(program.filePath(QLatin1String(name)), folder.filePath(QLatin1String(name)));
+    // The price list the shipped agents read is the user's to keep current.
+    QFile::copy(program.filePath(QLatin1String(kPricesFile)),
+                folder.filePath(QLatin1String(kProjectFolder) + QLatin1Char('/') + QLatin1String(kPricesFile)));
 
     // Before the application folder, the user's defaults were the file named
     // .crlf beside the program. An upgrade leaves that file there. One that
-    // was never edited still holds what shipped then, an empty command list,
-    // and is not worth keeping in place of the configured file.
+    // was never edited still holds what shipped then, and one that sets
+    // nothing has nothing to keep; neither is worth having in place of the
+    // configured file.
     const QString previous = program.filePath(QLatin1String(kProjectFolder));
     if (!firstRun || !QFileInfo(previous).isFile())
         return {};
     QJsonObject settings;
     loadProjectObject(previous, &settings);
-    const bool untouched = settings.isEmpty()
-                           || (settings.size() == 1 && settings.value(QLatin1String("commands")).toArray().isEmpty()
-                               && settings.contains(QLatin1String("commands")));
-    if (untouched)
+    if (settings.isEmpty() || holdsOldDefault(previous))
         return {};
     QFile::copy(previous, folder.filePath(QLatin1String(kPreviousFile)));
     return QString::fromLatin1(kPreviousFile);

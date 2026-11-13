@@ -10,7 +10,41 @@
 // The parts of the Agent Client Protocol the editor reads and writes. The
 // agent is the child process; the editor is the client. See docs/agent.md.
 
-enum class AgentUpdateKind { AgentText, Thought, UserText, ToolCall, ToolCallUpdate, Plan, ConfigOptions, Ignored };
+enum class AgentUpdateKind {
+    AgentText,
+    Thought,
+    UserText,
+    ToolCall,
+    ToolCallUpdate,
+    Plan,
+    ConfigOptions,
+    Usage,
+    Ignored
+};
+
+// A `usage_update`: how full the session's context is, and what the session
+// has cost so far when the agent can say. The editor shows it and does not
+// work any of it out.
+struct AgentUsage
+{
+    // Tokens in the context now, and the size it is measured against.
+    qint64 used = 0;
+    qint64 size = 0;
+    // The session's cost so far, in `currency` (an ISO 4217 code).
+    bool hasCost = false;
+    double cost = 0;
+    QString currency;
+    // The session's token totals, which the reference agent adds under
+    // `_meta.crlf`. Another agent leaves them out.
+    bool hasTotals = false;
+    qint64 inputTokens = 0;
+    qint64 cachedTokens = 0;
+    qint64 outputTokens = 0;
+};
+
+// The usage as one line, with only the parts the agent sent:
+// "Context 42% (84k of 200k) · session 312k in (250k cached), 18k out · about $0.42".
+QString usageLine(const AgentUsage &usage);
 
 // One value a select option can take. `group` is the label of the group the
 // agent listed it under, or empty.
@@ -77,6 +111,8 @@ struct AgentUpdate
     QList<AgentPlanEntry> plan;
     // The whole list, on a config_option_update.
     QList<AgentConfigOption> configOptions;
+    // On a usage_update.
+    AgentUsage usage;
 };
 
 Q_DECLARE_METATYPE(AgentUpdate)

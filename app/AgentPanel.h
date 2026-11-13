@@ -44,6 +44,9 @@ public:
     // On: the agent's thinking is drawn in full as it streams. Off: one
     // "Thinking" line while it streams, and nothing afterwards.
     void setShowThinking(bool show);
+    // The usage line under the status is drawn from the agent's usage
+    // updates and stays until this clears it, when the session ends.
+    void clearUsage();
     void setStatus(const QString &text);
     // While busy, Send is Stop.
     void setBusy(bool busy);
@@ -104,6 +107,7 @@ private:
     QWidget *m_options = nullptr;
     QGridLayout *m_optionLayout = nullptr;
     QLabel *m_status = nullptr;
+    QLabel *m_usage = nullptr;
     QTextBrowser *m_transcript = nullptr;
     QWidget *m_cards = nullptr;
     QVBoxLayout *m_cardLayout = nullptr;

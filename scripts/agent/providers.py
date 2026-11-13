@@ -74,6 +74,16 @@ class Reply:
         self.stop = "end"
         # Kept on the assistant message for this adapter's next request.
         self.provider_state = None
+        # The tokens this reply was billed for, as token_usage() shapes them.
+        # Empty when the server reported none.
+        self.usage = {}
+
+
+def token_usage(input, cached, cache_write, output):
+    """One reply's token counts, the same for every provider. `input` is
+    every token sent, the cached ones included: `cached` of them were read
+    from the provider's cache and `cache_write` were written to it."""
+    return {"input": input, "cached": cached, "cache_write": cache_write, "output": output}
 
 
 def read_key(key_file, key_name, file_flag="--api-key-file"):
@@ -249,6 +259,8 @@ class ChatCompletions:
             "tools": [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                          "parameters": t["parameters"]}} for t in tools],
             "stream": True,
+            # A stream reports its token counts only when asked, in a last chunk with no choices.
+            "stream_options": {"include_usage": True},
         }
         if _chosen(settings, "max_tokens"):
             body["max_tokens"] = int(settings["max_tokens"])
@@ -260,6 +272,11 @@ class ChatCompletions:
         for chunk in _events(self.base_url + "/chat/completions", self.headers, body, cancel):
             if chunk.get("error"):
                 raise ProviderError(chunk["error"].get("message", str(chunk["error"])))
+            if chunk.get("usage"):
+                used = chunk["usage"]
+                reply.usage = token_usage(used.get("prompt_tokens", 0),
+                                          (used.get("prompt_tokens_details") or {}).get("cached_tokens", 0), 0,
+                                          used.get("completion_tokens", 0))
             for choice in chunk.get("choices", []):
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
@@ -395,6 +412,11 @@ class OpenAIResponses:
             elif kind in ("response.completed", "response.incomplete"):
                 response = event["response"]
                 output = response.get("output") or []
+                if response.get("usage"):
+                    used = response["usage"]
+                    reply.usage = token_usage(used.get("input_tokens", 0),
+                                              (used.get("input_tokens_details") or {}).get("cached_tokens", 0), 0,
+                                              used.get("output_tokens", 0))
                 if (response.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
                     reply.stop = "max_tokens"
             elif kind == "response.failed":
@@ -514,7 +536,16 @@ class Anthropic:
             kind = event.get("type")
             if kind == "error":
                 raise ProviderError(event.get("error", {}).get("message", "Anthropic returned an error"))
-            if kind == "content_block_start":
+            if kind == "message_start":
+                # Anthropic counts the tokens it read from its cache and wrote
+                # to it apart from the rest of the input. The output count
+                # here is a first figure; message_delta carries the last.
+                used = event["message"].get("usage") or {}
+                cached = used.get("cache_read_input_tokens") or 0
+                written = used.get("cache_creation_input_tokens") or 0
+                reply.usage = token_usage(used.get("input_tokens", 0) + cached + written, cached, written,
+                                          used.get("output_tokens", 0))
+            elif kind == "content_block_start":
                 block = dict(event["content_block"])
                 if block["type"] == "tool_use":
                     block["json"] = ""
@@ -535,6 +566,8 @@ class Anthropic:
             elif kind == "message_delta":
                 if event.get("delta", {}).get("stop_reason") == "max_tokens":
                     reply.stop = "max_tokens"
+                if reply.usage and "output_tokens" in (event.get("usage") or {}):
+                    reply.usage["output"] = event["usage"]["output_tokens"]
 
         kept = []
         for index in sorted(blocks):

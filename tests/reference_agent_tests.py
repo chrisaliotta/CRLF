@@ -35,6 +35,7 @@ import history  # noqa: E402
 import index  # noqa: E402
 import providers  # noqa: E402
 import tools  # noqa: E402
+import usage  # noqa: E402
 from tools import files  # noqa: E402
 
 TOOLS = [{"name": "read_file", "description": "Read a file",
@@ -127,6 +128,16 @@ def tool_results(post):
     return [message["content"] for message in post["messages"] if message["role"] == "tool"]
 
 
+def chat_usage(prompt, cached, completion):
+    """The last Chat Completions event of a reply: the tokens it was billed for."""
+    return [{"choices": [], "usage": {"prompt_tokens": prompt, "prompt_tokens_details": {"cached_tokens": cached},
+                                      "completion_tokens": completion}}]
+
+
+def usage_updates(updates):
+    return [update for update in updates if update["sessionUpdate"] == "usage_update"]
+
+
 class TemporaryFolderTest(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
@@ -181,6 +192,45 @@ class ProviderTests(unittest.TestCase):
 
         run(adapter, [{"role": "user", "content": "hi"}], {"model": "local", "max_tokens": "default"})
         self.assertNotIn("max_tokens", fake.posts[1])
+
+    def test_each_wire_format_reports_the_tokens_of_a_reply(self):
+        """The usage line and the cost are built from the tokens a provider
+        says a reply used. Each API reports them in its own place and with
+        its own meaning: OpenAI's input count includes the cached tokens,
+        and Anthropic's leaves them out and counts cache reads and writes
+        apart. All three come out in one shape, where input is everything
+        sent. A server that reports nothing leaves the usage empty."""
+        expected = {"input": 1000, "cached": 600, "cache_write": 0, "output": 50}
+        history_ = [{"role": "user", "content": "hi"}]
+
+        chat = self.serve(lambda path, body: [{"choices": [{"delta": {"content": "ok"}}]}] + chat_usage(1000, 600, 50))
+        reply, _, _ = run(providers.create("openai-compatible", chat.url), history_, {"model": "local"})
+        self.assertEqual(reply.usage, expected)
+        # A stream carries its counts only when the request asks for them.
+        self.assertEqual(chat.posts[0]["stream_options"], {"include_usage": True})
+
+        os.environ["OPENAI_API_KEY"] = "k"
+        responses = self.serve(lambda path, body: [{"type": "response.completed", "response": {
+            "output": [], "usage": {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 600},
+                                    "output_tokens": 50}}}])
+        reply, _, _ = run(providers.create("openai", responses.url), history_, {"model": "gpt-4.1"})
+        self.assertEqual(reply.usage, expected)
+
+        os.environ["ANTHROPIC_API_KEY"] = "k"
+        anthropic = self.serve(lambda path, body: [
+            {"type": "message_start", "message": {"usage": {
+                "input_tokens": 100, "cache_read_input_tokens": 600, "cache_creation_input_tokens": 300,
+                "output_tokens": 1}}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ok"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 50}}])
+        reply, _, _ = run(providers.create("anthropic", anthropic.url), history_,
+                          {"model": "claude", "thinking": "off", "max_tokens": "8192"})
+        self.assertEqual(reply.usage, dict(expected, cache_write=300))
+
+        silent = self.serve(lambda path, body: [{"choices": [{"delta": {"content": "ok"}}]}])
+        reply, _, _ = run(providers.create("openai-compatible", silent.url), history_, {"model": "local"})
+        self.assertEqual(reply.usage, {})
 
     def test_anthropic_thinking_is_streamed_and_handed_back(self):
         """With thinking on, Anthropic rejects a tool result unless the reply
@@ -479,6 +529,37 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(history.shorten(conversation, "2000"), 0)
 
 
+class UsageTests(TemporaryFolderTest):
+    def test_prices_match_a_model_and_its_snapshots(self):
+        """No provider reports a price, so the cost comes from a file the
+        user keeps, by model id. Providers serve one model under several
+        ids, such as a dated snapshot, and nobody lists them all: an id uses
+        the longest listed name it starts with. A model that is not listed
+        has no price, and a missing file prices nothing, so the client
+        shows no cost instead of a wrong one. Cached input is cheaper and
+        cache writes dearer than fresh input, and each is charged at its own
+        price."""
+        path = os.path.join(self.folder, "prices.json")
+        write(self.folder, "prices.json", json.dumps({"currency": "EUR", "models": {
+            "gpt-5": {"input": 3.0, "cached_input": 0.3, "cache_write": 3.75, "output": 15.0, "context": 400000},
+            "gpt-5-mini": {"input": 0.25, "output": 2.0}}}))
+        prices = usage.load(path)
+        self.assertEqual(prices.currency, "EUR")
+        self.assertEqual(prices.entry("gpt-5")["context"], 400000)
+        self.assertEqual(prices.entry("gpt-5-2025-08-07")["input"], 3.0)
+        self.assertEqual(prices.entry("gpt-5-mini-2025-08-07")["input"], 0.25)
+        self.assertIsNone(prices.entry("gpt-4.1"))
+        self.assertIsNone(usage.load(os.path.join(self.folder, "none.json")).entry("gpt-5"))
+        self.assertIsNone(usage.load(None).entry("gpt-5"))
+
+        # 100 fresh, 600 read from the cache, 300 written to it, and 50 out.
+        reply = providers.token_usage(1000, 600, 300, 50)
+        self.assertAlmostEqual(usage.cost(reply, prices.entry("gpt-5")),
+                               (100 * 3.0 + 600 * 0.3 + 300 * 3.75 + 50 * 15.0) / 1000000)
+        # With no price of their own, cached tokens cost what fresh ones do.
+        self.assertAlmostEqual(usage.cost(reply, prices.entry("gpt-5-mini")), (1000 * 0.25 + 50 * 2.0) / 1000000)
+
+
 class AgentTests(TemporaryFolderTest):
     """The agent as the editor sees it: over ACP, with a scripted provider
     and a scripted client."""
@@ -607,6 +688,67 @@ class AgentTests(TemporaryFolderTest):
         self.assertTrue(results[-1].startswith("     1|xxx"))
         self.assertEqual(len(sent["messages"][2]["tool_calls"]), 8)
         self.assertNotIn(history.OPTION_ID, sent)
+
+    def test_a_turn_reports_the_context_in_use_and_the_cost(self):
+        """The client's usage line is drawn from usage_update, which the
+        agent sends after each model reply. `used` is what the next request
+        will carry, `size` is the model's window from the prices file, the
+        cost is the session's tokens at the listed prices, and the totals
+        keep running across replies. Setting a Context budget makes that the
+        size, because it is then the limit the conversation is held to."""
+        write(self.folder, "prices.json", json.dumps({"currency": "USD", "models": {
+            "small": {"input": 2.0, "cached_input": 0.5, "output": 10.0, "context": 100000}}}))
+        self.start("--prices", os.path.join(self.folder, "prices.json"))
+        self.answers["fs/read_text_file"] = {"content": "text"}
+        self.replies.append(tool_calls(("read_file", {"path": "a.txt"})) + chat_usage(1000, 0, 100))
+        self.replies.append([{"choices": [{"delta": {"content": "done"}}]}] + chat_usage(3000, 1000, 200))
+
+        _, updates = self.prompt("read it")
+        first, second = usage_updates(updates)
+        self.assertEqual((first["used"], first["size"]), (1100, 100000))
+        self.assertEqual(first["cost"], {"amount": 0.003, "currency": "USD"})
+        self.assertEqual(first["_meta"]["crlf"], {"inputTokens": 1000, "cachedTokens": 0, "outputTokens": 100})
+        self.assertEqual((second["used"], second["size"]), (3200, 100000))
+        # The second reply: 2,000 fresh, 1,000 cached, 200 out.
+        self.assertAlmostEqual(second["cost"]["amount"], 0.003 + (2000 * 2.0 + 1000 * 0.5 + 200 * 10.0) / 1000000)
+        self.assertEqual(second["_meta"]["crlf"], {"inputTokens": 4000, "cachedTokens": 1000, "outputTokens": 300})
+
+        _, updates = self.call("session/set_config_option",
+                               {"sessionId": self.session, "configId": history.OPTION_ID, "value": "50000"})
+        self.assertEqual([(update["used"], update["size"]) for update in usage_updates(updates)], [(3200, 50000)])
+
+    def test_usage_is_not_reported_without_a_size(self):
+        """usage_update has no way to say the context's size is unknown, and
+        a percentage of a guess would mislead. With no prices file, no
+        --context-window, and no Context budget, the agent sends nothing,
+        and the client shows no line. A budget set later gives it a size."""
+        self.start()
+        self.replies.append([{"choices": [{"delta": {"content": "done"}}]}] + chat_usage(1000, 0, 100))
+        _, updates = self.prompt("hello")
+        self.assertEqual(usage_updates(updates), [])
+
+        _, updates = self.call("session/set_config_option",
+                               {"sessionId": self.session, "configId": history.OPTION_ID, "value": "50000"})
+        reported = usage_updates(updates)
+        self.assertEqual([(update["used"], update["size"]) for update in reported], [(1100, 50000)])
+        # The model has no listed price, so no cost is claimed.
+        self.assertNotIn("cost", reported[0])
+
+    def test_the_budget_counts_what_the_provider_counted(self):
+        """The context budget is held against the tokens the provider counts,
+        not only the size of the history. The system prompt and the tool
+        definitions are sent with every request and are in no message, so a
+        budget measured on the history alone would be passed long before it
+        acted. Here the provider counts 45,000 tokens for a request whose
+        history is a few words; one 30,000-character result on top passes a
+        50,000 budget, and is shortened before the next request."""
+        self.start("--context-budget", "50000")
+        self.answers["fs/read_text_file"] = {"content": "x" * 30000}
+        self.replies.append(tool_calls(("read_file", {"path": "big.txt"})) + chat_usage(45000, 0, 20))
+        ended, _ = self.prompt("read it")
+        self.assertEqual(ended["result"], {"stopReason": "end_turn"})
+        self.assertTrue(tool_results(self.fake.posts[1])[0].startswith(
+            '[The result of read_file({"path": "big.txt"}) was dropped'))
 
     def test_a_background_command_returns_before_it_exits(self):
         """A server or a watcher never exits, so a turn that waited for it

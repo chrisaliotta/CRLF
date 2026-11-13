@@ -16,29 +16,29 @@
     {
       "name": "Claude",
       "command": {
-        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file \"${appDir}/keys/anthropic\" --rules .crlf/rules --rules \"${appDir}/rules\"",
-        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file \"${appDir}/keys/anthropic\" --rules .crlf/rules --rules \"${appDir}/rules\""
+        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file \"${appDir}/keys/anthropic\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\"",
+        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider anthropic --model claude-sonnet-4-5 --api-key-file \"${appDir}/keys/anthropic\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\""
       }
     },
     {
       "name": "GPT",
       "command": {
-        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --reasoning-effort low --api-key-file \"${appDir}/keys/openai\" --rules .crlf/rules --rules \"${appDir}/rules\"",
-        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --reasoning-effort low --api-key-file \"${appDir}/keys/openai\" --rules .crlf/rules --rules \"${appDir}/rules\""
+        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --reasoning-effort low --api-key-file \"${appDir}/keys/openai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\"",
+        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider openai --model gpt-5 --reasoning-effort low --api-key-file \"${appDir}/keys/openai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\""
       }
     },
     {
       "name": "Grok",
       "command": {
-        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\"",
-        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\""
+        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\"",
+        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider xai --model grok-4 --api-key-file \"${appDir}/keys/xai\" --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\""
       }
     },
     {
       "name": "Local",
       "command": {
-        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder --rules .crlf/rules --rules \"${appDir}/rules\"",
-        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder --rules .crlf/rules --rules \"${appDir}/rules\""
+        "windows": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\"",
+        "wsl": "python3 \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder --rules .crlf/rules --rules \"${appDir}/rules\" --prices \"${appDir}/prices.json\""
       }
     }
   ]

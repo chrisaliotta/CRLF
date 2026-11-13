@@ -80,6 +80,7 @@ AgentController::AgentController(AgentSession *session, AgentHost *host, AgentPa
         m_panel->setBusy(false);
         m_panel->dismissAll();
         m_panel->setConfigOptions({});
+        m_panel->clearUsage();
         m_panel->setStatus(QStringLiteral("%1 exited. The next message starts it again.").arg(m_running.name));
     }, Qt::QueuedConnection);
     connect(m_session, &AgentSession::terminalOutput, m_output, &OutputPanel::record, Qt::QueuedConnection);
@@ -164,6 +165,7 @@ void AgentController::stop()
     m_panel->setBusy(false);
     m_panel->dismissAll();
     m_panel->setConfigOptions({});
+    m_panel->clearUsage();
     QMetaObject::invokeMethod(m_session, [session = m_session] { session->stop(); }, Qt::QueuedConnection);
 }
 
@@ -192,6 +194,7 @@ void AgentController::start()
     m_panel->setBusy(m_busy);
     m_panel->dismissAll();
     m_panel->setConfigOptions({});
+    m_panel->clearUsage();
     m_host->begin(m_running.process.workingDirectory, m_running.permissions);
     m_panel->setStatus(QStringLiteral("Starting %1\u2026").arg(m_running.name));
     const AgentLaunch launch{m_running.name, m_running.process.command, m_running.process.workingDirectory,

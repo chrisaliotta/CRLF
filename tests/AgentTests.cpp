@@ -107,6 +107,37 @@ private slots:
         QCOMPARE(readUpdate(json(R"({"sessionUpdate":"available_commands_update"})")).kind, AgentUpdateKind::Ignored);
     }
 
+    // The usage line is drawn from this update alone. Context use and its
+    // size are always there; the cost and the session's token totals are
+    // shown only when the agent sent them, so an agent that reports less
+    // gets a shorter line and never a made-up figure.
+    void readsUsageUpdate()
+    {
+        const AgentUpdate plain = readUpdate(json(R"({"sessionUpdate":"usage_update","used":84000,"size":200000})"));
+        QCOMPARE(plain.kind, AgentUpdateKind::Usage);
+        QCOMPARE(plain.usage.used, qint64(84000));
+        QCOMPARE(plain.usage.size, qint64(200000));
+        QVERIFY(!plain.usage.hasCost);
+        QVERIFY(!plain.usage.hasTotals);
+        QCOMPARE(usageLine(plain.usage), QStringLiteral("Context 42% (84k of 200k)"));
+
+        const AgentUsage full = readUpdate(json(R"({"sessionUpdate":"usage_update","used":186000,"size":200000,
+            "cost":{"amount":0.4235,"currency":"USD"},
+            "_meta":{"crlf":{"inputTokens":1300000,"cachedTokens":250000,"outputTokens":18400}}})")).usage;
+        QVERIFY(full.hasCost);
+        QCOMPARE(full.currency, QStringLiteral("USD"));
+        QCOMPARE(full.inputTokens, qint64(1300000));
+        QCOMPARE(usageLine(full),
+                 QStringLiteral("Context 93% (186k of 200k), nearly full \u00B7 session 1.3M in (250k cached), 18k out"
+                                " \u00B7 about $0.42"));
+
+        AgentUsage other = plain.usage;
+        other.hasCost = true;
+        other.cost = 0.004;
+        other.currency = QStringLiteral("EUR");
+        QCOMPARE(usageLine(other), QStringLiteral("Context 42% (84k of 200k) \u00B7 less than 0.01 EUR"));
+    }
+
     // The panel draws one control per option from this list and knows
     // nothing else about it: a flat select, a grouped select flattened in
     // order, and a boolean. A type the editor cannot draw is left out, and

@@ -323,6 +323,9 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/resources/blank.crlf"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/blank.crlf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/resources/prices.json"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/prices.json"
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/scripts"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -364,6 +367,7 @@ install(FILES "${CMAKE_SOURCE_DIR}/resources/default.crlf"
     DESTINATION .
     RENAME application.crlf)
 install(FILES "${CMAKE_SOURCE_DIR}/resources/blank.crlf"
+    "${CMAKE_SOURCE_DIR}/resources/prices.json"
     DESTINATION .)
 install(FILES "${CMAKE_SOURCE_DIR}/scripts/syntax.sh"
     "${CMAKE_SOURCE_DIR}/scripts/autocomplete.sh"

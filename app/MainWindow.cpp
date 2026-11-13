@@ -214,7 +214,7 @@ SourceControlPanel QComboBox { background: %7; color: %2; border: 1px solid %3; 
 SourceControlPanel QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %6; }
 AgentPanel { background: %1; }
 #agentTitle { color: %2; font-weight: bold; padding: 0 4px; }
-#agentStatus { color: %9; padding: 0 12px; }
+#agentStatus, #agentUsage { color: %9; padding: 0 12px; }
 AgentPanel QTextBrowser { background: %7; color: %2; border: none; padding: 6px 10px; }
 AgentPanel QPlainTextEdit { background: %7; color: %2; border: 1px solid %3; border-radius: 6px; padding: 2px; }
 AgentPanel QToolButton { border: none; border-radius: 4px; background: transparent; color: %2; padding: 2px 6px; }

@@ -134,6 +134,10 @@ constexpr char kApplicationFile[] = "application.crlf";
 constexpr char kBlankFile[] = "blank.crlf";
 // The defaults a user had beside the program before the application folder.
 constexpr char kPreviousFile[] = "previous.crlf";
+// Shipped beside the program and kept in the application's .crlf folder:
+// prices and context windows by model, which the shipped agents read to
+// report what a session has used. See scripts/agent/usage.py.
+constexpr char kPricesFile[] = "prices.json";
 
 // The settings of one project: every <name>.crlf file in the project root,
 // merged in file-name order with the first definition winning, and the
@@ -191,8 +195,11 @@ QStringList settingsFiles(const QString &directory);
 QString activeApplicationFile(const QString &applicationFolder, const QString &name);
 
 // Gives `applicationFolder` the files shipped beside the program that it
-// does not have yet (application.crlf and blank.crlf), and its .crlf/scripts,
-// .crlf/keys, and .crlf/rules. A file already there is never replaced.
+// does not have yet (application.crlf, blank.crlf, and .crlf/prices.json),
+// and its .crlf/scripts, .crlf/keys, and .crlf/rules. A file already there
+// is never replaced, with one exception: an application.crlf that holds
+// only the empty command list earlier versions shipped. An earlier version
+// put it there, and the configured file takes its place.
 //
 // On the first run, a file named .crlf beside the program, which was the
 // application's settings before, is copied as previous.crlf, unless it

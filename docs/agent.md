@@ -32,6 +32,7 @@ An entry can live in a workspace file or in the application file. The `applicati
 | New | Ends the session and starts another with an empty transcript |
 | Settings | One list or check box for each setting the agent offers, such as its model. See [Settings](#settings) |
 | Status | Starting, ready, working, or the last error |
+| Usage | How full the agent's context is, the tokens the session has used, and an estimated cost, when the agent reports them. See [Usage](#usage) |
 | Transcript | Your messages, the agent's replies as Markdown, its thinking, each tool call with its state, and its plan. A file named by a tool call is a link that opens it at that line |
 | Cards | Questions waiting for you: a permission, a command, or a write to review. A card stays until it is answered or the turn ends |
 | Prompt | Enter sends; Shift+Enter starts a new line. Send is Stop while a turn runs |
@@ -49,6 +50,27 @@ The editor does not know what a model or a reasoning level is. The agent says wh
 - Each choice is remembered per agent name. A new session is sent every remembered value it still offers and does not already have, one at a time, before any waiting message. So the command line in the `.crlf` file sets where an agent starts, and the panel's choices replace that once made.
 
 Thinking arrives as `agent_thought_chunk` updates. Whether an agent sends any is the agent's business; how much is shown is the Thinking button's.
+
+## Usage
+
+The line under the status shows what the session has used:
+
+```
+Context 42% (84k of 200k) · session 312k in (250k cached), 18k out · about $0.42
+```
+
+It is drawn from ACP's `usage_update`, which an agent sends when it has the figures. The editor works none of them out, and shows only the parts that arrived.
+
+| Part | From | Meaning |
+| --- | --- | --- |
+| `Context 42% (84k of 200k)` | `used` and `size` | The tokens in the agent's context now, against the size it is measured by. At 90 percent or more the line adds "nearly full" |
+| `session 312k in (250k cached), 18k out` | `_meta.crlf`, which the reference agent adds | The tokens every request of the session sent, how many of them the provider read from its cache, and the tokens the model wrote. The same conversation is sent again with each request, so the input total grows faster than the context |
+| `about $0.42` | `cost` | The session's cost so far, in the currency the agent names. A currency other than US dollars is shown by its code, such as `about 0.42 EUR`. An amount under a cent reads `less than $0.01` |
+
+- **No line.** An agent that sends no `usage_update` has none. The update cannot say that the context's size is unknown, so an agent that does not know it sends nothing.
+- **When it changes.** The reference agent sends an update after each model reply, and when the model or the Context option changes.
+- **When it is cleared.** With the session: on New, on another agent, and when the agent stops.
+- **The cost is an estimate.** The reference agent multiplies the tokens the provider reported by prices from a file the user keeps; see [Usage and prices](agent-tools.md#usage-and-prices). No provider reports a price, and none gives an ordinary API key its balance, so the line has no funds remaining.
 
 ## Permissions
 

@@ -66,8 +66,70 @@ AgentUpdate readUpdate(const QJsonObject &update)
     } else if (kind == QLatin1String("config_option_update")) {
         result.kind = AgentUpdateKind::ConfigOptions;
         result.configOptions = readConfigOptions(update.value(QLatin1String("configOptions")).toArray());
+    } else if (kind == QLatin1String("usage_update")) {
+        result.kind = AgentUpdateKind::Usage;
+        AgentUsage &usage = result.usage;
+        usage.used = update.value(QLatin1String("used")).toInteger();
+        usage.size = update.value(QLatin1String("size")).toInteger();
+        const QJsonValue cost = update.value(QLatin1String("cost"));
+        usage.hasCost = cost.isObject();
+        usage.cost = cost.toObject().value(QLatin1String("amount")).toDouble();
+        usage.currency = cost.toObject().value(QLatin1String("currency")).toString();
+        const QJsonValue totals = update.value(QLatin1String("_meta")).toObject().value(QLatin1String("crlf"));
+        usage.hasTotals = totals.isObject();
+        usage.inputTokens = totals.toObject().value(QLatin1String("inputTokens")).toInteger();
+        usage.cachedTokens = totals.toObject().value(QLatin1String("cachedTokens")).toInteger();
+        usage.outputTokens = totals.toObject().value(QLatin1String("outputTokens")).toInteger();
     }
     return result;
+}
+
+namespace {
+
+constexpr int kNearlyFullPercent = 90;
+
+// 842, 84k, 1.2M: enough to judge a size by.
+QString tokenCount(qint64 tokens)
+{
+    if (tokens < 1000)
+        return QString::number(tokens);
+    if (tokens < 1000000)
+        return QString::number(qRound64(tokens / 1000.0)) + QLatin1Char('k');
+    return QString::number(tokens / 1000000.0, 'f', 1) + QLatin1Char('M');
+}
+
+QString money(double amount, const QString &currency)
+{
+    const bool dollars = currency == QLatin1String("USD");
+    const auto shown = [&](double value) {
+        const QString number = QString::number(value, 'f', 2);
+        return dollars ? QLatin1Char('$') + number : number + QLatin1Char(' ') + currency;
+    };
+    // A cost too small for two decimals is still a cost.
+    if (amount > 0 && amount < 0.01)
+        return QStringLiteral("less than ") + shown(0.01);
+    return QStringLiteral("about ") + shown(amount);
+}
+
+} // namespace
+
+QString usageLine(const AgentUsage &usage)
+{
+    const int percent = usage.size > 0 ? qRound(usage.used * 100.0 / double(usage.size)) : 0;
+    QString line = QStringLiteral("Context %1% (%2 of %3)")
+                       .arg(percent)
+                       .arg(tokenCount(usage.used), tokenCount(usage.size));
+    if (percent >= kNearlyFullPercent)
+        line += QStringLiteral(", nearly full");
+    if (usage.hasTotals) {
+        line += QStringLiteral(" \u00B7 session %1 in").arg(tokenCount(usage.inputTokens));
+        if (usage.cachedTokens > 0)
+            line += QStringLiteral(" (%1 cached)").arg(tokenCount(usage.cachedTokens));
+        line += QStringLiteral(", %1 out").arg(tokenCount(usage.outputTokens));
+    }
+    if (usage.hasCost)
+        line += QStringLiteral(" \u00B7 ") + money(usage.cost, usage.currency);
+    return line;
 }
 
 QList<AgentConfigOption> readConfigOptions(const QJsonArray &options)

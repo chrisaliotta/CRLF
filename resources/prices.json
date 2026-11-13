@@ -1,0 +1,8 @@
+{
+  "currency": "USD",
+  "models": {
+    "gpt-5": { "input": 1.25, "cached_input": 0.125, "output": 10.0, "context": 400000 },
+    "claude-sonnet-4-5": { "input": 3.0, "cached_input": 0.3, "cache_write": 3.75, "output": 15.0, "context": 200000 },
+    "grok-4.7": { "input": 2.0, "cached_input": 0.5, "output": 6.0, "context": 500000 }
+  }
+}

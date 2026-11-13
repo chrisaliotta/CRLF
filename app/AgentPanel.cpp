@@ -113,6 +113,13 @@ AgentPanel::AgentPanel(QWidget *parent)
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("agentStatus"));
     m_status->setWordWrap(true);
+    m_usage = new QLabel(this);
+    m_usage->setObjectName(QStringLiteral("agentUsage"));
+    m_usage->setWordWrap(true);
+    m_usage->setToolTip(QStringLiteral(
+        "How full the agent's context is, the tokens this session has used, and what they cost at the agent's "
+        "price list. The cost is an estimate."));
+    m_usage->hide();
 
     m_transcript = new QTextBrowser(this);
     m_transcript->setOpenLinks(false);
@@ -152,6 +159,7 @@ AgentPanel::AgentPanel(QWidget *parent)
     layout->addLayout(header);
     layout->addWidget(m_options);
     layout->addWidget(m_status);
+    layout->addWidget(m_usage);
     layout->addWidget(m_transcript, 1);
     layout->addWidget(m_cards);
     auto *inputRow = new QHBoxLayout;
@@ -243,6 +251,12 @@ void AgentPanel::setConfigOptions(const QList<AgentConfigOption> &options)
     m_options->setVisible(!options.isEmpty());
 }
 
+void AgentPanel::clearUsage()
+{
+    m_usage->clear();
+    m_usage->hide();
+}
+
 void AgentPanel::setShowThinking(bool show)
 {
     m_thinking->setChecked(show);
@@ -303,6 +317,10 @@ void AgentPanel::applyUpdate(const AgentUpdate &update)
             m_entries.append(entry);
         break;
     }
+    case AgentUpdateKind::Usage:
+        m_usage->setText(usageLine(update.usage));
+        m_usage->show();
+        return;
     case AgentUpdateKind::UserText:
     case AgentUpdateKind::ConfigOptions:
     case AgentUpdateKind::Ignored:

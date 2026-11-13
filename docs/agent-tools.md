@@ -30,6 +30,8 @@ An agent is one entry under `agents` in a `.crlf` file. Everything in this guide
 | `--embed-api-key-env` | A variable name | `OPENAI_API_KEY` for `openai` | The variable that holds the embedding server's key |
 | `--rules` | A folder, relative to the session's working directory, or absolute. May be given more than once | `.crlf/rules` | The rule folders. Giving the flag replaces the default. See [Rules](#rules) |
 | `--context-budget` | `unlimited`, or a count of tokens | `unlimited` | Where the Context option starts. See [Keeping it fast and cheap](#keeping-it-fast-and-cheap) |
+| `--prices` | A JSON file, relative to the agent's working directory, or absolute | none | Prices and context windows by model, for the panel's usage line. See [Usage and prices](#usage-and-prices) |
+| `--context-window` | A count of tokens | none | The model's context window, when the prices file does not list it |
 
 The chat flags (`--provider`, `--model`, `--api-key-file`, `--max-tokens`, `--reasoning-effort`, `--thinking`) are in [agent.md](agent.md#the-reference-agent). The chat provider and the embedding provider are independent: Claude can answer while a local model embeds.
 
@@ -1005,7 +1007,9 @@ A long session's conversation is mostly old tool results. The Context option set
 | Unlimited | Nothing is shortened. The default |
 | 50k tokens, 100k tokens, 200k tokens | The conversation is shortened when it passes this size |
 
-Before each model call the agent estimates the conversation's size as its characters divided by four. There is no tokenizer, so the figure is approximate. When the estimate is over the budget, the oldest tool results are replaced, one at a time, with a line that names the call. This stops when the estimate is at 70 percent of the budget.
+Before each model call the agent works out the size of the request. There is no tokenizer, so it starts from the conversation's characters divided by four. Each reply then corrects it: the provider reports how many tokens the request really was, and the difference from the estimate is added to the next one. That difference is mostly the system prompt and the tool definitions, which go with every request and are in no message, so the budget is held against what the provider counts and not only the conversation. A server that reports no token counts leaves the plain estimate in use.
+
+When the size is over the budget, the oldest tool results are replaced, one at a time, with a line that names the call. This stops when the size is at 70 percent of the budget.
 
 What shortening looks like: a session at the 50k setting read three large files, about 25,000 tokens each. Before the next model call the estimate was 75,212 tokens. The two oldest results were replaced and the estimate fell to 25,274. Each replaced result now reads:
 
@@ -1031,6 +1035,67 @@ What shortening looks like: a session at the 50k setting read three large files,
 A count that is not one of the listed values, such as `--context-budget 30000`, is added to the list.
 
 Set the budget below the model's own context size. A lower budget costs less for each call and makes the model read files again more often.
+
+### Usage and prices
+
+The Agent panel shows a usage line under the status when the agent reports what the session has used; [agent.md](agent.md#usage) describes the line. The agent takes the token counts from each provider reply. Two things no provider reports come from a prices file: what a token costs, and how large a model's context window is.
+
+```json
+{
+  "currency": "USD",
+  "models": {
+    "gpt-5": { "input": 1.25, "cached_input": 0.125, "output": 10.0, "context": 400000 },
+    "claude-sonnet-4-5": { "input": 3.0, "cached_input": 0.3, "cache_write": 3.75, "output": 15.0, "context": 200000 },
+    "qwen3-coder": { "context": 32768 }
+  }
+}
+```
+
+| Field | Meaning | When it is left out |
+| --- | --- | --- |
+| `currency` | The ISO 4217 code the prices are in | `USD` |
+| `input` | The price of a million input tokens | The model has no cost |
+| `output` | The price of a million output tokens | The model has no cost |
+| `cached_input` | The price of a million input tokens read from the provider's cache | The `input` price |
+| `cache_write` | The price of a million input tokens written to the cache, which Anthropic charges more for | The `input` price |
+| `context` | The model's context window, in tokens | No percentage, unless `--context-window` or a Context budget gives a size |
+
+- **Matching.** A model uses the entry with its exact id, or else the longest listed id it starts with. `gpt-5-2025-08-07` uses the `gpt-5` entry. `gpt-5-mini` uses its own entry when it has one, and the `gpt-5` entry when it does not, so list any model that should not take a shorter name's prices.
+- **An entry with only `context`,** as for the local model above, gives a percentage and no cost.
+- **A model that is not listed** has no cost. It has a percentage only when `--context-window` or a Context budget supplies a size.
+- **The file is read when a session starts,** so an edit applies after New. A file that is not there prices nothing. A file that is there and is not valid JSON fails the session with the file's path in the message.
+
+The file that ships is `prices.json` in the application's `.crlf` folder, `%APPDATA%\CRLF\CRLF\.crlf\prices.json`, and the shipped agents name it as `--prices "${appDir}/prices.json"`. It is copied there once and never replaced, so it is yours to keep current. It lists three models:
+
+| Model | Checked against the provider's page on 12 November 2026 |
+| --- | --- |
+| `gpt-5` | Prices and the 400,000 window match OpenAI's model page, which lists the model as deprecated |
+| `claude-sonnet-4-5` | Prices match Anthropic's pricing page, which lists the model as deprecated. The 200,000 window was not checked |
+| `grok-4.7` | Prices and the 500,000 window match xAI's model page for prompts under 200,000 tokens. xAI charges twice as much for a request whose prompt is longer, which the file cannot express, so a long session's cost reads low |
+
+Prices change and models are replaced. A wrong price gives a wrong cost and nothing else, and a model missing from the file gives no cost.
+
+What the line measures against:
+
+| Setting | The context's size |
+| --- | --- |
+| A Context budget is set | The budget, because that is the limit the conversation is held to |
+| Unlimited, and `--context-window` is given | That count |
+| Unlimited, and the model's entry has `context` | That count |
+| None of these | Unknown. The agent reports nothing and the panel shows no line |
+
+The cost is an estimate: the tokens each reply reported, at the listed prices. It leaves out anything a provider bills that is not a token of a chat reply, and embedding calls for a vector index. A provider's own usage page is the bill.
+
+A local model has a window and no price. `--context-window` gives its size with no file:
+
+```json
+{
+  "name": "Local",
+  "command": "python \"${programDir}/scripts/agent/crlf_agent.py\" --provider ollama --model qwen3-coder --context-window 32768"
+}
+```
+
+To price a model, add its entry to `prices.json` under its id as the provider lists it, and start a new session.
 
 ### Prompt caching
 
